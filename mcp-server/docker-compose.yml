@@ -1,0 +1,111 @@
+name: guardrail-hub
+
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: docker/fastapi/Dockerfile
+    image: guardrail-mcp-server:local
+    container_name: guardrail-mcp-server
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      PATH: "/app/.venv/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      MCP_SERVER_PORT: "${MCP_SERVER_PORT:-8787}"
+      DATABASE_URL: "${DATABASE_URL:-postgresql://guardrail:guardrail@postgres:5432/guardrail_hub}"
+      DYNAMODB_ENDPOINT_URL: "${DYNAMODB_ENDPOINT_URL:-}"
+      AWS_REGION: "${AWS_REGION:-ap-southeast-1}"
+    ports:
+      - "${MCP_SERVER_PORT:-8787}:${MCP_SERVER_PORT:-8787}"
+    volumes:
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./reports:/app/reports
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - python -c "import os, urllib.request; port=os.getenv('MCP_SERVER_PORT', '8787'); urllib.request.urlopen(f'http://127.0.0.1:{port}/health/live', timeout=300).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: guardrail-postgres
+    profiles:
+      - postgres
+      - local-db
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-guardrail_hub}"
+      POSTGRES_USER: "${POSTGRES_USER:-guardrail}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-guardrail}"
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U "$${POSTGRES_USER:-guardrail}" -d "$${POSTGRES_DB:-guardrail_hub}"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - app-network
+
+  zap:
+    build:
+      context: .
+      dockerfile: docker/owasp_zap/Dockerfile
+    container_name: guardrail-zap
+    profiles:
+      - zap
+    command:
+      - zap.sh
+      - -addonuninstall
+      - insights
+      - -daemon
+      - -host
+      - 0.0.0.0
+      - -port
+      - "8080"
+      - -config
+      - api.key=${OWASP_ZAP_API_KEY:-change-this-zap-key}
+      - -config
+      - api.addrs.addr.name=.*
+      - -config
+      - api.addrs.addr.regex=true
+      - -config
+      - connection.timeoutInSecs=60
+      - -config
+      - api.debug=true
+      - -config
+      - network.http.maxHeaderSize=102400
+      - -config
+      - http.useragent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36
+    expose:
+      - "8080"
+      - "8090"
+    volumes:
+      - ./data/zap:/zap/wrk
+      - ./reports/zap:/zap/reports
+    restart: unless-stopped
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres-data:
