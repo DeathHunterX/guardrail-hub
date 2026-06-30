@@ -23,4 +23,4 @@ RUN mkdir -p /app/data /app/logs /app/reports
 
 EXPOSE 8787
 
-CMD ["sh", "-c", "uvicorn app.main:app --host ${MCP_SERVER_HOST:-0.0.0.0} --port ${MCP_SERVER_PORT:-8787}"]
+CMD ["sh", "-c", "uvicorn app.main:app --host ${MCP_SERVER_HOST:-0.0.0.0} --port ${MCP_SERVER_PORT:-8787} --reload"]

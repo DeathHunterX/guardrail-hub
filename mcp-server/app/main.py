@@ -1,8 +1,17 @@
-from fastapi import FastAPI
-from fastapi_mcp import FastApiMCP
-from fastapi.middleware.cors import CORSMiddleware
+"""
+Main entry point for the GuardRail MCP Server.
+"""
 
+from pathlib import Path
+
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi_mcp import FastApiMCP
+
+from app.constants.paths import ReportPaths
 from app.core.config import settings
+from app.routers.endpoints import MCP_OPERATIONS, tools_router
 from app.routers.public.health_router import health_router
 
 app = FastAPI(
@@ -23,17 +32,28 @@ if settings.cors_enabled:
 
 # Routers
 app.include_router(health_router)
+app.include_router(tools_router)
 
-# MCP
+# Static files — generic public asset server (reports, future tools UI, etc.)
+_public_dir = Path(ReportPaths.BASE_DIR)
+_public_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/public", StaticFiles(directory=str(_public_dir), html=True), name="public")
+
+# MCP — only expose tool endpoints (not health/root) as MCP tools
 mcp = FastApiMCP(
     app,
     name="GuardRail MCP Server",
-    description="Tools for security and testing",
-    include_operations=[]
+    description=(
+        "Security testing tools powered by OWASP ZAP. "
+        "Scan APIs and websites for vulnerabilities, run authenticated spider scans, "
+        "and perform interactive browser-based security assessments."
+    ),
+    include_operations=MCP_OPERATIONS,
 )
 
 mcp.mount_http(mount_path="/mcp")
 mcp.setup_server()
+
 
 @app.get("/")
 async def root():
@@ -42,7 +62,10 @@ async def root():
         "mode": settings.mcp_mode,
         "token_authority": settings.token_authority,
         "database_provider": settings.database_provider,
+        "zap_container_prefix": settings.zap_container_name_prefix,
+        "zap_containers": settings.zap_amount_of_containers,
         "status": "running",
         "health": "/health",
         "mcp": "/mcp",
+        "tools": MCP_OPERATIONS,
     }

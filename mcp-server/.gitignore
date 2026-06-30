@@ -37,3 +37,5 @@ guardrail-runtime/
 build/
 dist/
 *.egg-info/
+logs/
+public/
