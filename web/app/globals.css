@@ -1,0 +1,242 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Guardrail Hub — design token layer.
+ * Source of truth: design spec Part 0.1. All components consume semantic
+ * Tailwind utilities mapped to these variables; raw color literals are
+ * forbidden in components.
+ */
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222.2 84% 4.9%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222.2 84% 4.9%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222.2 84% 4.9%;
+
+    /* Indigo 600 */
+    --primary: 243 75% 59%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96.1%;
+    --secondary-foreground: 222.2 47.4% 11.2%;
+
+    --muted: 210 40% 96.1%;
+    --muted-foreground: 215.4 16.3% 46.9%;
+
+    /* Neutral hover surface used by shadcn primitives (menus, tabs). */
+    --accent: 210 40% 96.1%;
+    --accent-foreground: 222.2 47.4% 11.2%;
+
+    /* Brand purple — AI highlights and gradient endpoints. */
+    --highlight: 271 91% 65%;
+    --highlight-foreground: 210 40% 98%;
+
+    /* Red 600 */
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 40% 98%;
+
+    /* Emerald 600 */
+    --success: 160 84% 39%;
+    --success-foreground: 210 40% 98%;
+
+    /* Amber 500 */
+    --warning: 38 92% 50%;
+    --warning-foreground: 222.2 47.4% 11.2%;
+
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+    --ring: 243 75% 59%;
+
+    --radius: 0.5rem;
+
+    /* Signature gradient stops: indigo 500 -> blue 500 -> purple 500. */
+    --gradient-from: 239 84% 67%;
+    --gradient-via: 217 91% 60%;
+    --gradient-to: 271 91% 65%;
+
+    /* Ambient glow intensity — light mode uses faint tints on white. */
+    --glow-opacity: 0.1;
+  }
+
+  .dark {
+    /* Near-black slate canvas (spec: 224 25% 5%), never pure black. */
+    --background: 224 25% 5%;
+    --foreground: 210 40% 98%;
+
+    /* Elevation via surface lightness steps (+3% L) instead of shadows. */
+    --card: 224 25% 8%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 224 25% 8%;
+    --popover-foreground: 210 40% 98%;
+
+    /* Indigo 400 — lighter primary for dark-surface contrast. */
+    --primary: 234 89% 74%;
+    --primary-foreground: 222.2 47.4% 11.2%;
+
+    --secondary: 217.2 32.6% 17.5%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 223 25% 11%;
+    --muted-foreground: 215 20.2% 65.1%;
+
+    --accent: 217.2 32.6% 17.5%;
+    --accent-foreground: 210 40% 98%;
+
+    /* Purple 400 */
+    --highlight: 270 95% 75%;
+    --highlight-foreground: 222.2 47.4% 11.2%;
+
+    /* Red 400 */
+    --destructive: 0 91% 71%;
+    --destructive-foreground: 222.2 47.4% 11.2%;
+
+    /* Emerald 400 */
+    --success: 158 64% 52%;
+    --success-foreground: 222.2 47.4% 11.2%;
+
+    /* Amber 400 */
+    --warning: 43 96% 56%;
+    --warning-foreground: 222.2 47.4% 11.2%;
+
+    /*
+     * Kept alpha-free so Tailwind opacity modifiers (border-border/40)
+     * stay valid; the spec's 60%-alpha hairline is applied at usage sites.
+     */
+    --border: 217.2 32.6% 17.5%;
+    --input: 217.2 32.6% 17.5%;
+    --ring: 234 89% 74%;
+
+    /* Dark mode: luminous glows on near-black. */
+    --glow-opacity: 0.2;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  /* Anchor targets clear the sticky header (h-16 + breathing room). */
+  [id] {
+    scroll-margin-top: 5.5rem;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    @apply bg-primary/20;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+  }
+}
+
+/*
+ * Theme switch transition (spec Part 0.4). The `theme-transitioning` class is
+ * added by ThemeToggle for the duration of the swap so the whole page never
+ * animates colors during normal interaction. Heavy composited surfaces opt
+ * out via `data-theme-static`.
+ */
+@layer base {
+  .theme-transitioning body,
+  .theme-transitioning [class*="bg-"],
+  .theme-transitioning [class*="text-"],
+  .theme-transitioning [class*="border-"] {
+    transition:
+      background-color 0.3s ease,
+      border-color 0.3s ease,
+      color 0.3s ease;
+  }
+
+  .theme-transitioning [data-theme-static],
+  .theme-transitioning [data-theme-static] * {
+    transition: none;
+  }
+}
+
+@layer components {
+  /* Icon container used across feature cards, capability rows, pain cards. */
+  .icon-tile {
+    @apply flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary;
+  }
+
+  /* Horizontal edge fade for marquees and overflow rows. */
+  .edge-fade-x {
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      black 10%,
+      black 90%,
+      transparent
+    );
+  }
+
+  /* "Engineering paper" dotted grid backdrop (agent demo, mock surfaces). */
+  .dot-grid-bg {
+    background-image: radial-gradient(
+      hsl(var(--border)) 1px,
+      transparent 1px
+    );
+    background-size: 20px 20px;
+  }
+
+  /* Glass surface recipe shared by GlassPanel and the scrolled header. */
+  .glass-surface {
+    @apply border bg-card/70 backdrop-blur-xl;
+  }
+
+  /*
+   * Gradient sheen sweep for primary CTAs (header Start Free, final CTA).
+   * Pure CSS so it stays a microinteraction, not a GSAP concern. The white
+   * highlight is intentionally a literal — it reads correctly on the
+   * saturated indigo button surface in both themes.
+   */
+  .btn-sheen {
+    @apply relative overflow-hidden;
+  }
+
+  .btn-sheen::after {
+    content: "";
+    @apply pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/25 to-transparent transition-transform duration-500 ease-out;
+  }
+
+  @media (hover: hover) {
+    .btn-sheen:hover::after {
+      @apply translate-x-full;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn-sheen::after {
+      transition: none;
+    }
+  }
+}
+
+/*
+ * View Transitions API — theme switch circular reveal (theme-toggle.tsx).
+ * Default cross-fade is disabled; the toggle animates a clip-path circle on
+ * the new snapshot instead.
+ */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}

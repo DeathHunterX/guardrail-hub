@@ -1,0 +1,16 @@
+{
+  "extends": ["next/core-web-vitals", "next/typescript"],
+  "rules": {
+    "no-restricted-imports": [
+      "error",
+      {
+        "patterns": [
+          {
+            "group": ["@/components/sections/*/*"],
+            "message": "Sections must not import from other sections. Promote shared UI to @/components/shared instead."
+          }
+        ]
+      }
+    ]
+  }
+}
