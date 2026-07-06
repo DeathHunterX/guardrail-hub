@@ -1,10 +1,26 @@
 # Guardrails
 ## Cross-Cutting Policy Layer
 
-Status: **Stub.** Not one of the twelve modules enumerated in [Phase 1](../foundation/architecture.md#module-hierarchy) by name, but required by it: the Architecture Philosophy inherited from [Phase 0](../foundation/vision.md#architecture-philosophy) states "Policy is a distinct, cross-cutting layer consulted before action, not folded into knowledge." This directory is where that layer lives. It pre-existed as an empty placeholder before this phase; this README makes its role explicit rather than leaving it undocumented. **Flagged for your confirmation** — see the implementation report for this phase.
+Status: **Stub — structure specified by [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md); no rules authored yet (planned for Roadmap M1/M3).** Not one of the twelve modules enumerated in [Phase 1](../foundation/architecture.md#module-hierarchy) by name, but required by it: the Architecture Philosophy inherited from [Phase 0](../foundation/vision.md#architecture-philosophy) states "Policy is a distinct, cross-cutting layer consulted before action, not folded into knowledge." This directory is where that layer lives.
 
 ## Purpose
 The authoritative source of safety and security policy — what the AI is never allowed to do, regardless of task, Agent, or how confidently a plan is reasoned. Distinct from [Standards](../standards/README.md) (mandatory *quality/consistency* rules) and from [Kernel/Guardrails](../kernel/guardrails/README.md) (the Kernel's *checkpoints* that consult this layer).
+
+## Structure: Core vs. Domain
+
+Mirrors [Standards](../standards/README.md#categories--hierarchy)'s core/category split, for the same reason: a single flat guardrail set would eventually violate the "Tier G stays small" invariant ([kernel/README.md](../kernel/README.md#context-budget--loading-strategy)).
+
+```
+guardrails/
+├── core.md         # Tier G — loaded every session, unconditionally. Bounded (~50 lines even at scale):
+│                     universal "never do X" rules that apply regardless of task or Domain.
+└── <domain>/        # Tier 1/2 — loaded like Standards, only when the matched Domain needs it
+                      # (e.g., guardrails/security/, guardrails/infrastructure/)
+```
+
+Only `core.md` is unconditional. A rule belongs in `core.md` only if it must hold for *every* task regardless of Domain — anything narrower belongs in a `<domain>/` file, keeping the always-loaded surface bounded no matter how many domain-specific guardrails accumulate.
+
+> **Frontmatter (machine half):** every guardrail unit carries frontmatter validated against [schema/guardrail.schema.json](../schema/guardrail.schema.json) (base + Guardrail extension — note it omits the `Stale` status and adds `checkpoint`/`enforcement`). See [schema/README.md](../schema/README.md).
 
 ## Responsibility
 Author and version policy rules; answer allow/deny/escalate queries from [Kernel/Guardrails](../kernel/guardrails/README.md) at each of its four checkpoints (Boot activation, Routing dispatch, Validation security check, Recovery safety-relevance determination).
@@ -24,5 +40,14 @@ None — foundational, alongside Standards.
 ## Owner
 Architecture/governance owners, with security sign-off.
 
+## Acceptance Criteria
+
+Per [RFC-0001](../governance/rfcs/0001-acceptance-criteria.md), a guardrail unit that has passed Review must additionally meet these readiness checks before reaching `Active`:
+
+- **A1** A **security sign-off** by a human with security authority is recorded (a guardrail is a security control; readiness includes human security attestation).
+- **A2** Each rule states its checkpoint(s), `block`-vs-`escalate`, and a concrete violation example.
+- **A3** The change merged through a full [RFC](../governance/README.md#rfc-process) (guardrails have no informal-edit path).
+- **A4** `aios validate` passes (correctness precondition).
+
 ## Lifecycle
-Near-immutable, like the Kernel itself — changes here have the same blast radius as a Kernel change and should go through the same governance review (Phase 15). No policy rules are authored yet.
+Near-immutable, like the Kernel itself — changes here have the same blast radius as a Kernel change and should go through the same governance review (Phase 15). Per [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) and [governance/README.md](../governance/README.md#rfc-process), **every** change to `core.md` or a `<domain>/` guardrail file — including what would elsewhere count as Patch — requires a full RFC; there is no informal-edit path. Guardrails also has no `Stale` state (unlike Knowledge/Standards) — a guardrail does not go quietly out of date, it is only ever changed through an explicit, reviewed RFC. No policy rules are authored yet.

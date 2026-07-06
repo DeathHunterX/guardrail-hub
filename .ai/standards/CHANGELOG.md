@@ -1,0 +1,9 @@
+# Changelog — standards
+
+Per-module changelog, per [governance/README.md](../governance/README.md#changelog-release-notes-migration-guides). One entry per version bump / status transition. Newest first.
+
+| Date | Unit | Change | Reason / Ref |
+|---|---|---|---|
+| 2026-07-06 | architecture/frontend-component-layering, architecture/frontend-config-content, coding/frontend-hooks-location, coding/frontend-shadcn-usage | 1.0.0 authored; status → **Active** | Frontend Domain (M5); passed [Review Pass 0002](../review/passes/0002-frontend-slice.md) + Acceptance. |
+| 2026-07-06 | architecture/backend-layering, architecture/persistence-dao, coding/backend-naming, operational/logging | status Review → **Active** (all at 1.0.0) | Passed [Review Pass 0001](../review/passes/0001-m3-backend-slice.md) + Acceptance Criteria (M4). |
+| 2026-07-06 | (same four) | 1.0.0 authored | Distilled from `intelligence/conventions.md` (M3). |

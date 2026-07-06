@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "guardrail.schema.json",
+  "title": "AIOS Unit — Guardrail",
+  "description": "Frontmatter for a guardrails/ policy unit (guardrails/core.md rules, or guardrails/<domain>/ rules). Extends base.schema.json. Guardrails never enter the Stale state and every change requires a full RFC, per guardrails/README.md and governance/README.md.",
+  "allOf": [{ "$ref": "base.schema.json" }],
+  "properties": {
+    "status": {
+      "description": "Guardrails omit 'Stale' — a guardrail does not go quietly out of date; it changes only through an explicit RFC.",
+      "enum": ["Proposed", "Draft", "Review", "Approved", "Active", "UnderRevision", "Deprecated", "Archived"]
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "'core' (Tier G, loaded every session) or a domain name (loaded like a Standard when that domain is in scope)."
+    },
+    "checkpoint": {
+      "type": "array",
+      "items": { "enum": ["boot", "routing", "validation", "recovery"] },
+      "minItems": 1,
+      "description": "Which of Kernel/Guardrails' four checkpoints consult this rule (kernel/guardrails/README.md)."
+    },
+    "enforcement": {
+      "enum": ["block", "escalate"],
+      "description": "Whether a hit blocks the action outright or escalates to a human."
+    }
+  },
+  "required": ["scope", "checkpoint", "enforcement"]
+}

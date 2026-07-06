@@ -13,6 +13,8 @@ Contract origin: [foundation/architecture.md#agents-capability-agents](../founda
 
 Every capability agent — whenever one is created — must fill in all thirteen fields below before it can move past `Draft` in its lifecycle. This is the interface; individual agents are implementations of it.
 
+> **Frontmatter (machine half):** every agent unit also carries frontmatter validated against [schema/agent.schema.json](../schema/agent.schema.json) (base + Agent extension). Fields the materialized Router and mechanical checks consume — `domain`, `decision_authority`, `standards_enforced`, … — live in frontmatter; the thirteen prose fields below stay in the body. See [schema/README.md](../schema/README.md).
+
 | Field | Meaning |
 |---|---|
 | Purpose | One sentence: what domain this agent owns. |
@@ -105,8 +107,8 @@ stateDiagram-v2
     Active --> UnderRevision: scope or contract change proposed
     UnderRevision --> Active: revision approved
     Active --> Deprecated: superseded or scope absorbed elsewhere
-    Deprecated --> Retired: no longer dispatched to
-    Retired --> [*]
+    Deprecated --> Archived: no longer dispatched to
+    Archived --> [*]
 ```
 
 ## Agent Dependency Graph (per instance)
@@ -124,7 +126,7 @@ graph TD
 
 ## Capability Hierarchy (known future domains)
 
-Flat by design — no agent is a parent of another; all sit as peers under Kernel/Routing's dispatch table, collaborating laterally per the model above.
+Flat **authority** by design — no agent is a parent of another, and the Consult/Delegate/Escalate model above is unchanged. Amended by [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md): each node below is a **Domain**, a routing namespace (not an authority level) that Kernel/Routing and the top-level [Router](../router/README.md) use to keep dispatch lookup bounded once Agent count grows into the hundreds — Domain count grows far slower than Agent count, since a Domain like Backend may hold several sibling Agents (e.g., Backend-API, Backend-Data) that all remain peers under Consult/Delegate/Escalate, including across Domain boundaries.
 
 ```mermaid
 graph TD
@@ -152,10 +154,22 @@ None of these are instantiated yet — this list is the anticipated domain set f
 - **Deprecating an agent** — mark `Deprecated` in the Registry; Kernel/Routing stops dispatching to it; anything that named it directly gets a migration note pointing to its successor.
 - **Versioning** — a Decision-Authority or scope change is a breaking (major) change and requires a full Review pass; adding a Knowledge Source, Skill, or Standard to an existing contract without changing its scope is additive (minor) and does not require re-approval. Full semantic versioning mechanics are governed project-wide by [Phase 15 Governance](../governance/README.md).
 
+## Acceptance Criteria
+
+Per [RFC-0001](../decisions/0001-aios-bootstrap-roadmap.md), an Agent that has passed Review (`Approved`) must additionally meet these readiness checks before reaching `Active`:
+
+- **A1** `decision_authority` is non-empty and does **not** overlap any other `Active` Agent's authority — no two Agents may own the same repository path.
+- **A2** Every `standards_enforced` id resolves and is itself `Active` — an Agent cannot be runtime-ready enforcing a Standard that isn't yet live.
+- **A3** Escalation Rules and the Decision Authority boundary are both present in the contract (an Agent that can't say when to stop isn't ready to dispatch).
+- **A4** `aios validate` passes (correctness precondition).
+
+(Acceptance introduced by [RFC-0001](../governance/rfcs/0001-acceptance-criteria.md); the Decision-0001 reference above is to the roadmap that scheduled it.)
+
 ## Registry
 
-No agents have been created yet — this framework defines the contract they'll be created against. The Registry becomes the [Router](../router/README.md)'s source for capability-detection once the first agent reaches `Active`.
+Per [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md), there is no single flat Registry table here — at 100+ Agents, one global table becomes exactly the "God File" bottleneck [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) analyzed and rejected for the Router. Instead, each Domain's own Agent registry lives in that Domain's `<domain>/ROUTER.md`, which [Kernel/Routing](../kernel/routing/README.md) reads once a task is classified into that Domain via `router/MANIFEST.md`. This section stays as the *global list of registered Domains* only — a Domain is added here (one line) when it's created; the Agents within it are added to that Domain's own `ROUTER.md`, not here.
 
-| Agent | Domain | Status | Contract |
-|---|---|---|---|
-| — | — | — | — |
+| Domain | `ROUTER.md` | Status |
+|---|---|---|
+| Backend | [agents/backend/ROUTER.md](backend/ROUTER.md) | Active (M3) |
+| Frontend | [agents/frontend/ROUTER.md](frontend/ROUTER.md) | Active (M5) |

@@ -22,6 +22,9 @@ Contract origin: [foundation/architecture.md#memory](../foundation/architecture.
 
 ---
 
+## Frontmatter
+Memory entries are captured automatically by the Kernel, not hand-authored as units, so they don't carry the full [unit schema](../schema/README.md) while in `Session`/`Persistent` state. A Persistent entry adopts the schema only at the moment it is **Promoted** into a Knowledge or Standard unit — at which point it becomes a normal schema-validated unit in that module. Noted here so the schema-reference expectation resolves explicitly for this module.
+
 ## What Should Be Stored
 
 Corrections ("no, don't do X, because Y"), confirmations of a non-obvious choice ("yes, that approach was right"), and standing project facts that shape decisions but aren't derivable from code (deadlines, ownership, initiative context) — always with the *why*, never just the *what*.

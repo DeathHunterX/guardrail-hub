@@ -11,6 +11,8 @@ Contract origin: [foundation/architecture.md#workflows](../foundation/architectu
 
 ## Workflow Contract
 
+> **Frontmatter (machine half):** every workflow unit also carries frontmatter validated against [schema/base.schema.json](../schema/base.schema.json). A Workflow-specific extension schema is authored when this module gets its first real unit, per [schema/README.md](../schema/README.md).
+
 | Field | Meaning |
 |---|---|
 | Purpose | The process this workflow governs. |
@@ -111,7 +113,7 @@ graph LR
 
 ## Workflow Lifecycle (as a unit)
 
-Follows [Architecture: per-unit lifecycle](../foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module): `Proposed → Draft → Review → Approved → Active → Deprecated`. Distinct from the *state machine a workflow instance runs through* (Planning → … → Completion) shown above — one is the lifecycle of the workflow definition, the other is the lifecycle of a single execution of it.
+Follows [Architecture: per-unit lifecycle](../foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module): `Proposed → Draft → Review → Approved → Active → Deprecated → Archived`. Distinct from the *state machine a workflow instance runs through* (Planning → … → Completion) shown above — one is the lifecycle of the workflow definition, the other is the lifecycle of a single execution of it.
 
 ---
 

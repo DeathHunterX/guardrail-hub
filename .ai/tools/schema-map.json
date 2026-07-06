@@ -1,0 +1,10 @@
+{
+  "comment": "Maps a unit's path (relative to .ai/, posix form) to the schema that validates its frontmatter. First matching glob wins. Files WITHOUT a YAML frontmatter block are not units and are skipped regardless of glob. guardrails/core.md is the Tier G container (validated against base) until M3 resolves the guardrail rule-granularity open question — see milestones/M1-schema-and-skeleton.md.",
+  "rules": [
+    { "glob": "guardrails/core.md", "schema": "base.schema.json" },
+    { "glob": "guardrails/**/*.md", "schema": "guardrail.schema.json" },
+    { "glob": "standards/**/*.md", "schema": "standard.schema.json" },
+    { "glob": "agents/*/*.md", "schema": "agent.schema.json" }
+  ],
+  "default": "base.schema.json"
+}

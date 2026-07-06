@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "agent.schema.json",
+  "title": "AIOS Unit — Capability Agent",
+  "description": "Frontmatter for an agent unit (lives at agents/<domain>/<agent>.md). Extends base.schema.json. The 13-field prose contract (Purpose, Responsibilities, Escalation Rules, ...) stays in the markdown body per agents/README.md; frontmatter carries the fields the materialized Router and mechanical checks consume.",
+  "allOf": [{ "$ref": "base.schema.json" }],
+  "properties": {
+    "domain": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Routing namespace this agent belongs to (Backend, Frontend, Security, ...). A grouping for dispatch lookup only — NOT an authority level; agents stay flat-authority per agents/README.md."
+    },
+    "decision_authority": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "description": "Repository path globs this agent owns. Enables the mechanical 'did the agent stay in its lane' check (git diff vs. these globs) instead of an LLM judgment call. An agent with no Decision Authority boundary is invalid per agents/README.md."
+    },
+    "knowledge_sources": {
+      "type": "array", "items": { "type": "string" }, "default": [],
+      "description": "knowledge/ category ids this agent is scoped to read."
+    },
+    "skills_used": {
+      "type": "array", "items": { "type": "string" }, "default": [],
+      "description": "skills/ ids this agent applies."
+    },
+    "standards_enforced": {
+      "type": "array", "items": { "type": "string" }, "default": [],
+      "description": "standards/ ids this agent validates its output against. May pin versions as '{id}@^{version}'."
+    },
+    "workflows_used": {
+      "type": "array", "items": { "type": "string" }, "default": []
+    },
+    "templates_used": {
+      "type": "array", "items": { "type": "string" }, "default": []
+    }
+  },
+  "required": ["domain", "decision_authority"]
+}

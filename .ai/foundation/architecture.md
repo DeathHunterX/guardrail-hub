@@ -249,6 +249,8 @@ sequenceDiagram
 
 ## Lifecycle (per knowledge unit, in any module)
 
+Amended by [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md), which added `Archived` as a terminal state and an in-place `UnderRevision` loop within `Active` — both generalized from patterns Agents and Knowledge had already introduced independently for their own modules. Every module's own "Lifecycle" section still just links back to this one diagram rather than restating it.
+
 ```mermaid
 stateDiagram-v2
     [*] --> Proposed
@@ -256,12 +258,19 @@ stateDiagram-v2
     Draft --> Review
     Review --> Draft: changes requested
     Review --> Approved
-    Approved --> Active
+    Approved --> Active: Acceptance Criteria met
+    Active --> UnderRevision: in-place revision proposed
+    UnderRevision --> Active: revision approved, no state change
     Active --> Stale: freshness expired
     Stale --> Review: refreshed
     Active --> Deprecated: superseded
-    Deprecated --> [*]
+    Deprecated --> Archived: N Releases elapsed since Deprecated
+    Archived --> [*]
 ```
+
+Guardrails is the one documented exception: no `Stale` state, and every change — including what would elsewhere be Patch-level — requires a full RFC rather than following this diagram's informal `Draft`/`Review` path. See [guardrails/README.md](../guardrails/README.md#lifecycle).
+
+The `Approved → Active` transition is guarded by **Acceptance Criteria** (introduced by [RFC-0001](../governance/rfcs/0001-acceptance-criteria.md)): passing Review (`Approved`) establishes *quality*; meeting the unit-type's Acceptance Criteria establishes *readiness to be runtime*. Both are required to reach `Active`. The criteria are per-type and live in each module's contract; see [governance/README.md](../governance/README.md#acceptance).
 
 ## Context Flow (per task)
 

@@ -11,7 +11,22 @@ Status: Approved
 
 For a given task, the Router produces exactly one thing: an ordered list of addresses (category → unit, per module) that [Kernel/Loading](../kernel/loading/README.md) will fetch. It never fetches content itself, and it never decides *what to do* with the content — that's the dispatched [Agent](../agents/README.md)'s job.
 
+## The Router Is a Materialized Artifact, Not a Runtime Algorithm
+
+Per [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md): no software in this repository executes the algorithm below. For a Claude Code/Cursor/Gemini-CLI-class consumer, "the Router" is not code that runs on their behalf — it is a set of static, versioned files an AI reads directly:
+
+```mermaid
+graph TD
+    G["router/MANIFEST.md<br/>(Global tier — task-pattern → Domain)"] --> D["&lt;domain&gt;/ROUTER.md<br/>(Domain tier — task-subtype → Category Index, + Agent registry)"]
+    D --> C["&lt;module&gt;/&lt;category&gt;/INDEX.md<br/>(Category tier — unit list)"]
+    C --> U["Unit<br/>(actual content)"]
+```
+
+Each file is bounded in size (soft ceiling, ~150 lines); a file that would exceed it splits along its next natural partition and registers one line in its parent, keeping every hop cheap regardless of total corpus size — see [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) and [Architecture: Scalability Strategy](../foundation/architecture.md#scalability-strategy-100--200--500-documents). The "algorithm" below describes how these files are *authored and regenerated* — by a human, or by [Automation tooling](../governance/README.md) of the kind `.ai/intelligence/scripts/check_drift.py` already precedents in this repo — when a Domain, Agent, or unit is registered or changed. It is not re-executed by an AI reasoning through it every session; an AI consuming the Router simply reads the one file its position in the hierarchy points to next.
+
 ## Routing Algorithm
+
+> Describes how the materialized files above are built and regenerated — not a sequence re-run by an AI per task.
 
 ```mermaid
 flowchart TD
@@ -65,7 +80,7 @@ In both cases the address list is short (4–5 entries) regardless of how large 
 
 ## Routing Cache
 
-Keyed by **task shape** (capability + the specific Knowledge/Skill/Standard/Workflow/Template categories the Agent's contract names), not by the literal task text — two differently-worded "implement an API endpoint" requests resolve to the same cache entry. The cache stores the *address list*, never the fetched content, so a cache hit still respects lazy loading downstream. Cache entries invalidate when the underlying Agent contract or a referenced module's index changes (a new/removed unit in a walked category).
+The "cache" is not an in-memory structure computed per session — it **is** `router/MANIFEST.md`, every `<domain>/ROUTER.md`, and every `<module>/<category>/INDEX.md`, persisted in the repository. Keyed by **task shape** (Domain + the specific categories a Domain Router names), not by literal task text — two differently-worded "implement an API endpoint" requests resolve to the same MANIFEST/ROUTER entries. These files store *address lists*, never fetched content, so reading them still respects lazy loading downstream (Tier 2 units are fetched only when named). Invalidation means **regenerating the affected file** — an `INDEX.md` regenerates when a unit is added/removed/changed in its category (via an Index generator script, part of the Automation tooling [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) schedules for Roadmap M2); a `<domain>/ROUTER.md` changes only when that Domain's Agent registry or category set changes; `router/MANIFEST.md` changes only when a Domain itself is added or removed — the rarest event of the three.
 
 ## Fallback Strategy
 

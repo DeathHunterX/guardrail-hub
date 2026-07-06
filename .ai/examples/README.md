@@ -9,6 +9,8 @@ Show, not tell. A worked example grounds a [Skill](../skills/README.md) or [Stan
 ## Responsibility
 Stay grounded in code that actually exists in the repository right now — an example that has drifted from the current codebase is worse than no example, because it's presented with the same confidence as one that hasn't.
 
+> **Frontmatter:** example units carry frontmatter validated against [schema/base.schema.json](../schema/base.schema.json); an Example-specific extension schema is authored when this module gets its first real unit, per [schema/README.md](../schema/README.md).
+
 ## Inputs
 A completed, correct task.
 

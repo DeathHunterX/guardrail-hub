@@ -13,6 +13,8 @@ A reusable, pre-resolved binding from a recognizable request ("create API," "fix
 
 ## Blueprint Contract
 
+> **Frontmatter (machine half):** every Blueprint unit also carries frontmatter validated against [schema/base.schema.json](../schema/base.schema.json). A Blueprint-specific extension schema is authored when this module gets its first real unit, per [schema/README.md](../schema/README.md).
+
 | Field | Meaning |
 |---|---|
 | Purpose | The request shape this Blueprint answers. |

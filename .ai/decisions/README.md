@@ -4,10 +4,12 @@
 Status: **Stub** — contract fixed in [Phase 1](../foundation/architecture.md#decisions-decision-records). No dedicated phase in the current roadmap defines this module further; it follows standard ADR practice until one is added.
 
 ## Purpose
-The durable record of *why* a non-obvious choice was made about the Guardrail Hub product itself — e.g., "why Postgres over Mongo," "why this scanner architecture." This is distinct from the AIOS's own governance records, which belong to **Phase 15 (Governance)**.
+The durable record of *why* a non-obvious choice was made — about the Guardrail Hub product itself (e.g., "why Postgres over Mongo," "why this scanner architecture"), or about the AIOS's own foundational strategy when no other mechanism captures the narrative reasoning. [Governance](../governance/README.md) (Phase 15) owns the *mechanics* of how AIOS changes are versioned, RFC'd, and gated — it does not itself hold a "why we chose this sequence, what we rejected" record. Decisions owns that narrative, whether the subject is product or AIOS-process.
 
 ## Responsibility
 Capture context, options considered, the decision, and its consequences, at the time the decision was made — not reconstructed later from memory.
+
+> **Frontmatter:** Decision records are append-only narrative records, not Router-addressable units, so they use a light ADR header (`Status`, `Owner`, `Date`) rather than the full [unit schema](../schema/README.md). This is a deliberate exception noted here so the "every module references the schema" expectation resolves to an explicit "does not apply, and why," not silence.
 
 ## Inputs
 A human or Agent decision moment worth recording.
@@ -25,4 +27,12 @@ None.
 Whoever made the decision.
 
 ## Lifecycle
-Append-only. A later decision that changes course adds a new record marking the old one superseded — it does not edit or delete the original. No decisions are recorded yet.
+Append-only. A later decision that changes course adds a new record marking the old one superseded — it does not edit or delete the original.
+
+## Index
+
+| Decision | Status | Date |
+|---|---|---|
+| [0001 — AIOS Implementation Roadmap & Bootstrap Strategy](0001-aios-bootstrap-roadmap.md) | Accepted | 2026-07-06 |
+| [0002 — Guardrail Rule Granularity](0002-guardrail-rule-granularity.md) | Accepted | 2026-07-06 |
+| [0003 — Bootstrap Complete; Steady-State Operating Model](0003-bootstrap-complete-steady-state.md) | Accepted | 2026-07-06 |

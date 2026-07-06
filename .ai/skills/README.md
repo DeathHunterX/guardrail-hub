@@ -11,6 +11,8 @@ Contract origin: [foundation/architecture.md#skills](../foundation/architecture.
 
 ## Skill Contract
 
+> **Frontmatter (machine half):** every skill unit also carries frontmatter validated against [schema/base.schema.json](../schema/base.schema.json). A Skill-specific extension schema is authored when this module gets its first real unit, per [schema/README.md](../schema/README.md).
+
 | Field | Meaning |
 |---|---|
 | Purpose | The one execution capability this skill provides. |
@@ -108,7 +110,7 @@ A Skill's procedure changes when the underlying tool/framework/convention it des
 
 ## Lifecycle
 
-Follows [Architecture: per-unit lifecycle](../foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module): `Proposed → Draft → Review → Approved → Active → Deprecated`. A Skill additionally cannot leave `Draft` without at least one Example.
+Follows [Architecture: per-unit lifecycle](../foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module): `Proposed → Draft → Review → Approved → Active → Deprecated → Archived`. A Skill additionally cannot leave `Draft` without at least one Example.
 
 ---
 

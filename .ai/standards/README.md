@@ -11,6 +11,8 @@ Contract origin: [foundation/architecture.md#standards](../foundation/architectu
 
 ## Standard Contract
 
+> **Frontmatter (machine half):** every standard unit also carries frontmatter validated against [schema/standard.schema.json](../schema/standard.schema.json) (base + Standard extension). The prose contract below is the human half; the schema is what Automation reads (indexing, Impact Analysis, enforcement). See [schema/README.md](../schema/README.md).
+
 | Field | Meaning |
 |---|---|
 | Purpose | The one rule-cluster this standard enforces. |
@@ -99,7 +101,8 @@ stateDiagram-v2
     Review --> Approved
     Approved --> Active
     Active --> Deprecated: superseded
-    Deprecated --> [*]
+    Deprecated --> Archived: N Releases elapsed
+    Archived --> [*]
 ```
 
 ---
@@ -120,17 +123,16 @@ Enforcement is a Validation-gate lookup, not free-form judgment — an AI flags 
 
 ---
 
+## Acceptance Criteria
+
+Per [RFC-0001](../governance/rfcs/0001-acceptance-criteria.md), a Standard that has passed Review (`Approved`) must additionally meet these readiness checks before reaching `Active`:
+
+- **A1** At least one concrete Anti-pattern is present (a rule an AI can't recognize in the wild isn't enforceable).
+- **A2** `applies_to` globs resolve to at least one real path in the current repository — the Standard actually governs code that exists.
+- **A3** Every `depends_on` and `enforced_by` reference resolves and is itself at least `Approved` (never depend on something not yet quality-approved).
+- **A4** No open `NeedsRevalidation` flag against it from [Impact Analysis](../governance/README.md#impact-analysis).
+- **A5** `aios validate` passes (correctness precondition).
+
 ## Index
 
-No standards exist yet.
-
-| Category | Standards | Status |
-|---|---|---|
-| core | 0 | — |
-| architecture | 0 | — |
-| coding | 0 | — |
-| infrastructure | 0 | — |
-| security | 0 | — |
-| testing | 0 | — |
-| documentation | 0 | — |
-| operational | 0 | — |
+Per-category unit lists are **generated** into each category's `INDEX.md` by `aios index` — that is the single source of truth, not a hand-maintained table here. Categories with units: [architecture/](architecture/INDEX.md), [coding/](coding/INDEX.md), [operational/](operational/INDEX.md). Categories `core`, `infrastructure`, `security`, `testing`, `documentation` have no units yet (their `INDEX.md` is generated when they gain their first).

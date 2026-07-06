@@ -42,6 +42,8 @@ Chosen to exercise the full path — Kernel → Router → Agent → module disc
 
 ## Benchmark Contract
 
+> **Frontmatter:** benchmark units carry frontmatter validated against [schema/base.schema.json](../schema/base.schema.json); a Benchmark-specific extension schema (for `Expected Context`, `Scoring`, etc.) is authored when the first benchmark is created, per [schema/README.md](../schema/README.md). Note benchmarks keep their own `Retired` lifecycle state (see the Benchmark Lifecycle diagram below), distinct from the general unit lifecycle's `Archived`.
+
 | Field | Meaning |
 |---|---|
 | Objective | What correct completion looks like, in one sentence. |
@@ -108,13 +110,14 @@ Not a specific tool (binding to one would repeat the vendor-lock-in mistake Phas
 
 ## Index
 
-No benchmark results exist yet — no Agents or Workflows are instantiated to run them against.
+The first benchmark ([Fix Bug](benchmarks/fix-bug.md)) was established and run in M4, against the Backend vertical slice. It is the regression baseline for future RFCs. The rest await the Domains/Workflows they exercise.
 
 | Benchmark | Version | Last Run | Result |
 |---|---|---|---|
+| [Fix Bug](benchmarks/fix-bug.md) | 1.0.0 | 2026-07-06 | **Pass** (baseline) |
 | Implement API | — | — | not yet run |
 | Create Scanner | — | — | not yet run |
-| Fix Bug | — | — | not yet run |
+| Review PR | — | — | not yet run |
 | Review PR | — | — | not yet run |
 | Deploy Service | — | — | not yet run |
 | Create Dashboard | — | — | not yet run |

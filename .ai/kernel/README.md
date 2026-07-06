@@ -1,7 +1,7 @@
 # AI Kernel
 ## Phase 2: Kernel Specification
 
-> Continues from the approved [AIOS Architecture](../foundation/architecture.md). Every AI assistant session starts here — this is the module every session loads, in full, before anything else.
+> Continues from the approved [AIOS Architecture](../foundation/architecture.md). Every AI assistant session starts here procedurally, via [Boot](boot/README.md) — but per the [Context Budget & Loading Strategy](#context-budget--loading-strategy) below, this document is read *in full* only during Bootstrap/first-contact ([foundation/bootstrap.md](../foundation/bootstrap.md)) or when the task itself is AIOS meta-work. An already-bootstrapped session handling an ordinary product task loads only Tier G and Tier 0, never this file's full text — see [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) for why this replaced the original "every session loads this in full" model.
 
 Status: Approved
 
@@ -32,16 +32,29 @@ A note on naming: **Kernel/Routing** (this module) decides *which capability/Age
 
 ## Startup Sequence
 
+Every session enters through one of three lanes, determined immediately after Tier G + Tier 0 load — not through one linear chain that always touches Foundation, full Kernel detail, Router's algorithm description, and Agents' framework doc regardless of task:
+
 ```mermaid
 flowchart TD
     Start([AI Session Starts]) --> Boot
-    Boot --> Identity[Load Project Identity<br/>foundation/vision.md + architecture.md]
-    Identity --> RoutingRules[Load Routing Rules<br/>.ai/README.md index]
-    RoutingRules --> TaskDet[Determine Task]
-    TaskDet --> CapDet["Determine Capability / Agent<br/>(Kernel Routing)"]
-    CapDet --> KnowDet["Determine Required Knowledge<br/>(Router address resolution)"]
-    KnowDet --> MinLoad[Load Minimal Context<br/>under budget — Loading]
-    MinLoad --> Plan[Generate Plan]
+    Boot --> TierG[Load Tier G: guardrails/core.md]
+    TierG --> Tier0[Load Tier 0: router/MANIFEST.md]
+    Tier0 --> Classify{Classify task}
+
+    Classify -->|Ordinary product task<br/>~95% of tasks| Product[PRODUCT LANE]
+    Product --> DomainR[Load matched Domain Router]
+    DomainR --> CatIdx[Load matched Category Index/es]
+    CatIdx --> Units[Load specific addressed Units]
+    Units --> Plan[Generate Plan]
+
+    Classify -->|AIOS meta-work:<br/>new Standard, new Agent,<br/>change .ai/ structure| Meta[META LANE]
+    Meta --> Constitution[Load Constitution:<br/>foundation/ + kernel/ full<br/>+ router/README.md + agents/README.md]
+    Constitution --> Plan
+
+    Classify -->|Manifest has no match /<br/>tool never seen this repo| First[FIRST-CONTACT LANE]
+    First --> Bootstrap["Run Bootstrap once<br/>(foundation/bootstrap.md)"]
+    Bootstrap --> Product
+
     Plan --> Validate{Validate Output}
     Validate -->|fail, fixable| Recovery[Recovery]
     Recovery --> Plan
@@ -49,20 +62,24 @@ flowchart TD
     Validate -->|pass| Return([Return Result])
 ```
 
+The Product Lane never touches `foundation/`, this document's full text beyond what Bootstrap already covered, `router/README.md`, or `agents/README.md` — those four are Constitution-tier, reserved for the Meta Lane. This is the two-lane model adopted in [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md); it replaces the single linear chain this diagram previously described, which forced every task through the full Foundation→Kernel→Router→Agents chain regardless of task type.
+
 ---
 
 ## Context Budget & Loading Strategy
 
-The Kernel enforces the tiering defined in the [Architecture](../foundation/architecture.md#scalability-strategy-100--200--500-documents):
+Supersedes the original Tier 0 definition in [Architecture: Scalability Strategy](../foundation/architecture.md#scalability-strategy-100--200--500-documents), which named `foundation/` + `kernel/` as the always-loaded tier. [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) replaced that with the tiering below, because the original definition made every session pay Constitution-sized cost regardless of task:
 
-- **Tier 0 — Constitution.** `foundation/` + `kernel/`. Always loaded, every session, regardless of task. Kept small by convention; this is the one tier with no lazy-loading option.
-- **Tier 1 — Domain index.** The Router's index for whichever domain(s) the task touches. Loaded once capability/domain is determined.
-- **Tier 2 — Addressed units.** Individual Knowledge/Skill/Standard/Workflow/Template entries. Loaded one address at a time, narrowest first, only as Loading determines they're needed.
-- **Tier 3 — Task-local.** Anything fetched purely for this task (file contents, command output). Never persisted; if it's worth keeping across sessions, it goes through Memory's feedback path instead, not through Tier 0–2.
+- **Tier G — Guardrail core.** `guardrails/core.md`. Always loaded, every session, no exceptions — kept small by contract (a bounded core rule set; domain-scoped guardrails are Tier 1/2, loaded like Standards).
+- **Tier 0 — Router Manifest.** `router/MANIFEST.md`. Always loaded, every session. A static lookup table (task-pattern → Domain), not prose — this is the actual "small, always-loaded" surface; it replaces `foundation/` + `kernel/` in that role.
+- **Tier 1 — Domain Router + Category Index.** `<domain>/ROUTER.md` for the matched Domain, then the specific Category Index/es it names. Two hops, loaded only once Tier 0 classifies the task.
+- **Tier 2 — Addressed units.** Individual Knowledge/Skill/Standard/Workflow/Template/Agent entries named by the Category Index. Loaded one address at a time, narrowest first.
+- **Tier 3 — Task-local.** Anything fetched purely for this task (file contents, command output). Never persisted; if it's worth keeping across sessions, it goes through Memory's feedback path instead.
+- **Constitution (not a numbered tier — Meta Lane / Bootstrap only).** `foundation/`, this document in full, `router/README.md`, `agents/README.md` (framework). Loaded only when the task is AIOS meta-work, or once during Bootstrap/first-contact. Never loaded for an ordinary product task.
 
-**Priority loading**: within Tier 2, addresses the Router marked as required for the detected task type are fetched before addresses marked as merely related. **Dependency loading**: if a fetched unit declares a dependency on another unit (e.g., a Skill that requires a Knowledge concept), that dependency is fetched next, not deferred. **Lazy loading**: nothing beyond Tier 0 is fetched speculatively — a unit is loaded because a specific step in the sequence above asked for it by address.
+**Priority loading**: within Tier 2, addresses a Category Index marks as required for the detected task type are fetched before addresses marked as merely related. **Dependency loading**: if a fetched unit declares a dependency on another unit (via its `depends_on` metadata), that dependency is fetched next, not deferred. **Lazy loading**: nothing beyond Tier G/0 is fetched speculatively — a unit is loaded because a specific step in the sequence above asked for it by address.
 
-Full algorithmic detail (routing cache, fallback ordering, missing-knowledge strategy) is deferred to the [Router](../router/README.md) and [Loading](loading/README.md) specs — this section fixes the budget contract they must honor.
+Full algorithmic detail (Router materialization, fallback ordering, missing-knowledge strategy) is deferred to the [Router](../router/README.md) and [Loading](loading/README.md) specs — this section fixes the budget contract they must honor.
 
 ---
 

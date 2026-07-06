@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "base.schema.json",
+  "title": "AIOS Unit — Base Frontmatter",
+  "description": "Fields every addressable AIOS unit carries in its YAML frontmatter, in every module. Type-specific schemas (standard, agent, guardrail, ...) reference this via allOf and add their own fields. Consumed by the M2 schema validator; authored in M1 per Decision 0001.",
+  "type": "object",
+  "required": ["id", "title", "version", "status", "owner", "category"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Canonical address. MUST equal the file's path under .ai/ with no extension — e.g. a file at standards/security/no-plaintext-secrets.md has id 'standards/security/no-plaintext-secrets'. This makes the namespace machine-checkable: a rename that breaks a reference is detectable, not a matter of luck.",
+      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$"
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable name."
+    },
+    "version": {
+      "type": "string",
+      "description": "Semantic version MAJOR.MINOR.PATCH, per governance/README.md#semantic-versioning-applied.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$"
+    },
+    "status": {
+      "description": "Unified lifecycle state, per foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module.",
+      "enum": ["Proposed", "Draft", "Review", "Approved", "Active", "UnderRevision", "Stale", "Deprecated", "Archived"]
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The single role/person who can attest this unit is still true. Never empty, never co-owned."
+    },
+    "category": {
+      "type": "string",
+      "minLength": 1,
+      "description": "First-level Router partition within the unit's module (e.g. 'security' for a Standard). Type schemas constrain this to the module's declared category set."
+    },
+    "depends_on": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "ids of other units this one assumes as already true. Drives the reverse-dependency index and Impact Analysis (governance/README.md#impact-analysis)."
+    },
+    "validated_against": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^.+@[0-9]+\\.[0-9]+\\.[0-9]+$"
+      },
+      "default": [],
+      "description": "For each dependency, the '{id}@{version}' it was last checked against. A mismatch with the dependency's current version is what Impact Analysis flags as NeedsRevalidation. Enables producer/consumer sync without lockstep bumping (governance/README.md#release-management)."
+    },
+    "supersedes": {
+      "type": "string",
+      "description": "id of the unit this one replaces, if any. Set when a Deprecated unit names its successor."
+    },
+    "created": { "type": "string", "format": "date" },
+    "updated": { "type": "string", "format": "date" }
+  },
+  "additionalProperties": true
+}

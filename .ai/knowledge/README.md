@@ -13,6 +13,8 @@ Contract origin: [foundation/architecture.md#knowledge](../foundation/architectu
 
 Every knowledge unit, whenever one is authored, defines:
 
+> **Frontmatter (machine half):** every knowledge unit also carries frontmatter validated against [schema/base.schema.json](../schema/base.schema.json). A Knowledge-specific extension schema (adding `update_frequency` etc.) is authored when this module gets its first real unit, per [schema/README.md](../schema/README.md)'s "don't build ahead of need."
+
 | Field | Meaning |
 |---|---|
 | Purpose | The one fact or fact-cluster this unit exists to state. |
@@ -107,7 +109,7 @@ Dependency chains are meant to stay shallow (2–3 hops). A unit requiring a lon
 
 ## Lifecycle
 
-Follows the general unit lifecycle from [Architecture](../foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module): `Proposed → Draft → Review → Approved → Active → Stale → Deprecated`. A knowledge unit additionally cannot leave `Draft` without all nine contract fields populated.
+Follows the general unit lifecycle from [Architecture](../foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module): `Proposed → Draft → Review → Approved → Active → Stale → Deprecated → Archived`. A knowledge unit additionally cannot leave `Draft` without all nine contract fields populated.
 
 ---
 

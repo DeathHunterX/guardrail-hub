@@ -15,7 +15,7 @@ Every addressable unit, in every module, versions the same way (already stated p
 - **Minor** — an additive change (a new Extension Point, a new Related Standard, a widened Scope that doesn't remove anything).
 - **Patch** — a clarification that changes no behavior (wording, an added Example).
 
-The Kernel and Router (near-immutable per [Architecture](../foundation/architecture.md)) follow the same scheme but require a full RFC (below) even for Minor changes, since their consumers are every module rather than a scoped few.
+The Kernel, Router, and — per [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) — **Guardrails** (near-immutable per [Architecture](../foundation/architecture.md) and per [guardrails/README.md](../guardrails/README.md)) follow the same scheme but require a full RFC (below) even for Minor or Patch changes, since their consumers are every module/every Agent dispatch rather than a scoped few. Guardrails additionally never has a `Stale` lifecycle state — a guardrail does not go quietly out of date; it is only ever changed through this same explicit RFC gate.
 
 ## Ownership & Contribution Model
 
@@ -25,7 +25,7 @@ Every unit already names an Owner in its own contract (Knowledge, Skills, Standa
 
 ## RFC Process
 
-Required for: any Kernel or Router change (any severity), any Major change to another module, and any new top-level module (as this very phase and Phase 13/14 were).
+Required for: any Kernel, Router, or Guardrails change (any severity), any Major change to another module's *framework/contract* (its category set, its contract fields — a structural change), and any new top-level module (as this very phase and Phase 13/14 were). A Major version bump on a single *unit* within an already-approved module (one Standard, one Knowledge entry) does **not** require a full RFC — it requires [Impact Analysis](#impact-analysis) instead, a lighter, more frequent gate defined below. Conflating the two would make routine unit evolution as expensive as a structural change, which is disproportionate to its blast radius.
 
 ```mermaid
 flowchart TD
@@ -62,11 +62,59 @@ These are RFC-level structural reviews — distinct from the per-asset [Review F
 
 ---
 
+## Acceptance
+
+Introduced by [RFC-0001](rfcs/0001-acceptance-criteria.md). A gate on the `Approved → Active` transition ([foundation/architecture.md](../foundation/architecture.md#lifecycle-per-knowledge-unit-in-any-module)), separating three distinct guarantees that were previously conflated:
+
+| Layer | Establishes | Checked by | When |
+|---|---|---|---|
+| **Validation** | Correctness (schema, `id`=path, links resolve) | Automation (`aios`) | Continuously / at authoring |
+| **Review** | Quality (the [12-dimension checklist](../review/README.md#what-every-review-evaluates)) | Review + module Owner | `Review` state → `Approved` |
+| **Acceptance** | **Readiness** to be depended on at runtime (per-type criteria) | module Owner | `Approved` → `Active` |
+
+Acceptance answers a question neither of the others does: *a unit can be correct and well-written yet not ready to be runtime* — e.g. a Standard whose `applies_to` globs match nothing real, or an Agent whose enforced Standards aren't themselves `Active` yet. Acceptance Criteria are **per unit type** and live in each module's own contract (e.g. [standards/README.md](../standards/README.md#acceptance-criteria), [agents/README.md](../agents/README.md#acceptance-criteria), [guardrails/README.md](../guardrails/README.md#acceptance-criteria)); other module types add theirs when they author their first real unit.
+
+Acceptance never weakens Review: it cannot waive a Review `Blocking` finding, and it runs *after* `Approved`, not instead of it. It is a readiness gate, orthogonal to quality — consistent with this framework's rule that no gate bypasses another.
+
+---
+
+## Impact Analysis
+
+A third gate, distinct from both [Review](../review/README.md) (asset quality, every unit) and the RFC process above (structural/Kernel/Router/Guardrails changes only) — added by [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) to close the gap between them: an ordinary unit's Major version bump previously triggered neither gate, meaning the highest-blast-radius everyday change went unchecked.
+
+```mermaid
+flowchart LR
+    Change[Unit version change] --> Classify[Classify Patch/Minor/Major<br/>from frontmatter version diff]
+    Classify -->|Patch| NoOp[No propagation]
+    Classify -->|Minor| Info[Consumers flagged Informational only]
+    Classify -->|Major| Lookup[Walk reverse-dependency index<br/>direct + transitive consumers]
+    Lookup --> Report[Impact Report attached to PR]
+    Report --> Gate{All flagged consumers<br/>revalidated or waived?}
+    Gate -- No --> Block[Blocks merge]
+    Gate -- Yes --> Merge[Merge]
+```
+
+Propagation rules:
+
+| Change | Direct consumers | Transitive consumers |
+|---|---|---|
+| Patch | None | None |
+| Minor | Flagged `Informational` (non-blocking) | None |
+| Major | Flagged `NeedsRevalidation` (blocks merge until resolved or Owner-waived) | Yes — walked through the full `depends_on` chain |
+| Guardrail change (any severity) | Every `Active` Agent flagged `NeedsRevalidation` | N/A — every Agent passes through the Kernel/Guardrails checkpoint |
+| Any change where a Playbook is a consumer | Always `NeedsRevalidation`, even on Minor | A Playbook's value is a pre-resolved binding; a stale cache is worse than a slow lookup, so it never gets the Minor free pass ordinary consumers get |
+
+This is entirely mechanical — reverse-dependency computation and version-diff classification are Automation's job, not an AI's judgment call, per the frozen operating principle "Automation is responsible for determinism." Only the *waiver* of a flagged consumer requires a human — the Owner of the consumer, mirroring how [Review](../review/README.md#review-ownership--responsibilities) already routes Major-severity waivers.
+
+---
+
 ## Migration & Deprecation
 
 A Major version bump on any module ships with a migration note: what changed, what breaks, and what the replacement path is — the same pattern already established per-module (e.g., [Standards: Deprecation](../standards/README.md#deprecation), [Templates: Evolution & Obsolescence](../templates/README.md#evolution--obsolescence)). Governance's role is only to guarantee every module actually follows that pattern consistently, via the RFC gate above — it does not introduce a second, separate migration mechanism.
 
 Deprecated units are never deleted outright; they move to `Deprecated` in their module's lifecycle state machine (every module already defines this state) and are excluded from Router resolution going forward, exactly as [Router: Fallback Strategy](../router/README.md#fallback-strategy) already assumes.
+
+Per [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md), the unified lifecycle adds one terminal state after `Deprecated`: **`Archived`**. A unit past a defined number of [Releases](#release-management) since it entered `Deprecated` is physically relocated (e.g., `standards/security/_archive/`) by the Index generator — not just flagged. This exists because `Deprecated` alone only removes a unit from *resolution*; over years of accumulation, Deprecated units left in place would still inflate directory listings and the cost of regenerating a Category Index, even though the Router never resolves to them. Archival keeps that cost bounded by the *active* corpus, not the all-time-cumulative one.
 
 ## Quality Control
 
@@ -76,8 +124,8 @@ Enforced at two points, not a third new one: [Review](../review/README.md) for e
 
 ## Changelog, Release Notes, Migration Guides
 
-- **Changelog** — one entry per merged RFC or per-unit version bump, minimally: unit/module, old version → new version, one-line reason. Lives alongside whichever module changed (not centralized into one giant file, which would itself violate the minimal-context principle for anyone trying to find what changed in one module).
-- **Release Notes** — a rollup of Changelog entries at whatever cadence the human governance owners choose (this framework doesn't mandate a cadence — that's an operational decision, not an architectural one).
+- **Changelog** — one entry per merged RFC or per-unit version bump, minimally: unit/module, old version → new version, one-line reason. Lives alongside whichever module changed (not centralized into one giant file, which would itself violate the minimal-context principle for anyone trying to find what changed in one module). Instantiated in M4: per-module `CHANGELOG.md` files (e.g. [guardrails/CHANGELOG.md](../guardrails/CHANGELOG.md), [standards/CHANGELOG.md](../standards/CHANGELOG.md), [agents/CHANGELOG.md](../agents/CHANGELOG.md)) for unit changes; **an [RFC record](rfcs/README.md) is itself the changelog entry** for a Constitution-tier/governance change (no separate governance changelog).
+- **Release Notes** — a rollup of Changelog entries, cut at each [AIOS Release](#release-management) rather than on a calendar cadence.
 - **Migration Guides** — required for every Major bump (see Migration above); optional for Minor/Patch.
 
 ## Semantic Versioning, Applied
@@ -86,13 +134,24 @@ Enforced at two points, not a third new one: [Review](../review/README.md) for e
 
 ---
 
+## Release Management
+
+Added by [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md) to answer a question per-unit versioning alone doesn't: is there ever a version for `.ai/` as a whole, and how do units stay in sync with what they depend on without bumping in lockstep?
+
+- **An AIOS Release is a tag cut only when a Constitution-tier RFC merges** (Kernel, Router, Guardrails, or Foundation) — never on a calendar cadence, and never for ordinary additive unit growth (adding a Standard or Knowledge unit is, per "Additive by default" below, not release-worthy on its own). This keeps Release meaningful: it marks the only kind of change large enough to risk breaking a vendor adapter's assumptions about the AIOS.
+- **No lockstep version bumping.** Units keep independent versions (unchanged from above). Instead, each unit's frontmatter carries `validated_against: {producer_id}@{version}` for every unit it `depends_on` — recording which version of its dependency it was last checked against. [Impact Analysis](#impact-analysis) is the mechanism that checks this field still matches the dependency's current version; a mismatch is exactly what a Major-bump `NeedsRevalidation` flag means in practice.
+- **Vendor adapters may pin to a Release** (e.g., "this Cursor adapter is compatible with AIOS Release 3.x") without needing to track individual unit versions — Release is the one version number meant to be externally referenced; unit versions are meant to be referenced only by other units.
+
+---
+
 ## How the AIOS Evolves Without Breaking Compatibility
 
-Three mechanisms already established across every phase, restated here as the single governance answer:
+Four mechanisms already established across every phase, restated here as the single governance answer:
 
 1. **Additive by default** (Phase 0's "additive evolution" principle) — new domains, new units, new Extension/Customization Points never require existing consumers to change.
-2. **Breaking changes are RFC-gated and versioned** — nothing Major merges without Architecture Review + regression Evaluation passing.
-3. **Deprecation, not deletion** — a consumer referencing a superseded unit gets a migration path, not a silent break.
+2. **Structural breaking changes are RFC-gated and versioned** — nothing touching Kernel/Router/Guardrails or a module's contract merges without Architecture Review + regression Evaluation passing.
+3. **Unit-level breaking changes are Impact-Analysis-gated** — a Major bump on an ordinary Standard/Knowledge/Agent unit can't merge while a direct or transitive consumer is left unrevalidated and unwaived (see [Impact Analysis](#impact-analysis)).
+4. **Deprecation, then Archival, not deletion** — a consumer referencing a superseded unit gets a migration path, not a silent break; the superseded unit itself is only physically removed from the active tree once it's old enough to Archive.
 
 ## Lifecycle
 

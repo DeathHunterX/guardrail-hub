@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "standard.schema.json",
+  "title": "AIOS Unit — Standard",
+  "description": "Frontmatter for a standards/ unit. Extends base.schema.json. Prose content (Rule Definitions, Anti-patterns, Examples) lives in the markdown body per standards/README.md; frontmatter carries only machine-actionable fields.",
+  "allOf": [{ "$ref": "base.schema.json" }],
+  "properties": {
+    "category": {
+      "enum": ["core", "architecture", "coding", "infrastructure", "security", "testing", "documentation", "operational"]
+    },
+    "scope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What this standard applies to (a language, a layer, all of Guardrail Hub)."
+    },
+    "applies_to": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "Repository path globs this standard is checked against — enables the mechanical diff-vs-glob enforcement described in Decision 0001's Automation split."
+    },
+    "severity_default": {
+      "enum": ["blocking", "recommended"],
+      "description": "Whether a violation blocks by default (Mandatory Rule) or is a recommendation. Individual rules in the body may refine this."
+    },
+    "enforced_by": {
+      "type": "array",
+      "items": { "type": "string" },
+      "default": [],
+      "description": "ids of skills/ units that enforce this standard when applied."
+    }
+  },
+  "required": ["scope", "severity_default"]
+}
