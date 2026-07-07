@@ -7,10 +7,10 @@ import {
   ShieldCheck,
   Sparkles,
   TestTubeDiagonal,
-  type LucideIcon,
 } from "lucide-react";
 
-import { siteConfig } from "@/config/site";
+import { externalLinks } from "@/constants/external-links";
+import type { Announcement, Navigation } from "@/types/navigation";
 
 /**
  * Chrome-level copy and navigation data (architecture §12: colocated data
@@ -18,53 +18,34 @@ import { siteConfig } from "@/config/site";
  * *.data.ts — this file owns only the header, announcement, and footer.
  */
 
-export interface NavLink {
-  label: string;
-  href: string;
-  external?: boolean;
-}
-
-export interface NavMegaItem extends NavLink {
-  description: string;
-  icon: LucideIcon;
-}
-
-export interface NavGroup {
-  label: string;
-  items: NavMegaItem[];
-}
-
-export interface Navigation {
-  groups: NavGroup[];
-  links: NavLink[];
-}
-
 export const navigation: Navigation = {
   groups: [
     {
       label: "Product",
       items: [
         {
+          // "/#" anchors resolve from any route: they navigate home first
+          // when needed, then scroll to the section.
           label: "Features",
-          href: "#features",
+          href: "/#features",
           description: "Everything the platform does, at a glance.",
           icon: Sparkles,
         },
         {
           label: "AI Agents",
-          href: "#agent",
+          href: "/#agent",
           description: "Conversational security validation on demand.",
           icon: Bot,
         },
         {
           label: "Dashboard",
-          href: "#showcase",
+          href: "/#showcase",
           description: "A security command center that runs itself.",
           icon: Gauge,
         },
         {
           label: "Integrations",
-          href: "#integrations",
+          href: "/#integrations",
           description: "ZAP, Nuclei, Trivy, Semgrep, CI/CD, and more.",
           icon: Plug,
         },
@@ -77,25 +58,25 @@ export const navigation: Navigation = {
       items: [
         {
           label: "Developers",
-          href: "#features",
+          href: "/#features",
           description: "Security checks that live where you ship.",
           icon: Code2,
         },
         {
           label: "QA Engineers",
-          href: "#agent",
+          href: "/#agent",
           description: "Describe the test — the agent runs the suite.",
           icon: TestTubeDiagonal,
         },
         {
           label: "DevSecOps",
-          href: "#compliance",
+          href: "/#compliance",
           description: "Continuous controls, audit-ready evidence.",
           icon: ShieldCheck,
         },
         {
           label: "Enterprise",
-          href: "#pricing",
+          href: "/pricing",
           description: "SSO, on-prem runners, custom compliance packs.",
           icon: ClipboardCheck,
         },
@@ -103,29 +84,18 @@ export const navigation: Navigation = {
     },
   ],
   links: [
-    { label: "Pricing", href: "#pricing" },
-    { label: "Docs", href: siteConfig.links.docs, external: true },
-    {
-      label: "Changelog",
-      href: `${siteConfig.links.github}/releases`,
-      external: true,
-    },
+    // On the landing page Pricing scrolls to the section; everywhere else it
+    // opens the dedicated /pricing page with plan, role, and benefit details.
+    { label: "Pricing", href: "/pricing", landingHref: "#pricing" },
+    { label: "Docs", href: externalLinks.docs, external: true },
+    { label: "Changelog", href: "/changelog" },
   ],
 };
-
-export interface Announcement {
-  /** Bump the id to re-show the bar to users who dismissed a previous one. */
-  id: string;
-  message: string;
-  shortMessage: string;
-  linkLabel: string;
-  href: string;
-}
 
 export const announcement: Announcement = {
   id: "agents-2-0",
   message: "Introducing Guardrail Agents 2.0 — autonomous remediation PRs.",
   shortMessage: "Guardrail Agents 2.0 is here.",
   linkLabel: "Read the announcement",
-  href: `${siteConfig.links.github}/releases`,
+  href: `${externalLinks.github}/releases`,
 };

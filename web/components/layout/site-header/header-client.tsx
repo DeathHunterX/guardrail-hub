@@ -2,9 +2,9 @@
 
 import { useRef } from "react";
 
-import { Container } from "@/components/shared/container";
+import { Container } from "@/components/common/container";
 import { Logo } from "@/components/layout/logo";
-import { useMotion } from "@/lib/gsap/gsap-provider";
+import { useMotion } from "@/providers/gsap-provider";
 import { durations, eases, staggers } from "@/lib/gsap/motion";
 import { gsap, useGSAP } from "@/lib/gsap/register";
 import { cn } from "@/lib/utils";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { HeaderActions } from "./header-actions";
 import { MainNav } from "./main-nav";
 import { MobileNav } from "./mobile-nav";
-import { useHeaderScroll } from "./use-header-scroll";
+import { useHeaderScroll } from "@/hooks/use-header-scroll";
 
 interface HeaderClientProps {
   stars: number | null;

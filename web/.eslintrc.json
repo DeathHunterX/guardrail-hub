@@ -6,8 +6,8 @@
       {
         "patterns": [
           {
-            "group": ["@/components/sections/*/*"],
-            "message": "Sections must not import from other sections. Promote shared UI to @/components/shared instead."
+            "group": ["@/features/marketing/*/*"],
+            "message": "Marketing feature modules must not import from sibling modules. Promote shared UI to @/components/common or @/components/effects instead."
           }
         ]
       }

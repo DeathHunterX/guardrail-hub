@@ -12,7 +12,7 @@ import {
   Testimonials,
   TrustedBy,
   Workflow,
-} from "@/components/sections";
+} from "@/features/marketing";
 
 /**
  * Home page — the narrative order is the spec's eight-act arc:

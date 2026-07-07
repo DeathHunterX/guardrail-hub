@@ -5,10 +5,10 @@ import { useRef } from "react";
 
 import { Button } from "@/components/ui/button";
 import { announcement } from "@/content/site";
-import { useMotion } from "@/lib/gsap/gsap-provider";
+import { useMotion } from "@/providers/gsap-provider";
 import { durations, eases } from "@/lib/gsap/motion";
 import { gsap, useGSAP } from "@/lib/gsap/register";
-import { useLocalStorage } from "@/lib/hooks/use-local-storage";
+import { useLocalStorage } from "@/hooks/use-local-storage";
 
 /**
  * Announcement bar (spec §1). SSR renders the bar for everyone (most

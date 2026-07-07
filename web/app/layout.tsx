@@ -3,9 +3,9 @@ import { GeistSans } from "geist/font/sans";
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 
-import { ThemeProvider } from "@/components/shared/theme-provider";
 import { siteConfig } from "@/config/site";
-import { GsapProvider } from "@/lib/gsap/gsap-provider";
+import { GsapProvider } from "@/providers/gsap-provider";
+import { ThemeProvider } from "@/providers/theme-provider";
 
 import "./globals.css";
 

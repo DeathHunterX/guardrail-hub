@@ -1,22 +1,22 @@
 import { Github, Linkedin, MessageCircle, Twitter, Youtube } from "lucide-react";
-import Link from "next/link";
 
 import { Logo } from "@/components/layout/logo";
-import { Container } from "@/components/shared/container";
-import { StatusDot } from "@/components/shared/status-dot";
-import { ThemeToggle } from "@/components/shared/theme-toggle";
+import { Container } from "@/components/common/container";
+import { StatusDot } from "@/components/common/status-dot";
+import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
-import { siteConfig } from "@/config/site";
+import { externalLinks } from "@/constants/external-links";
 
+import { FooterNavLink } from "./footer-nav-link";
 import { footerGroups, footerTagline } from "./footer.data";
 
 const socials = [
-  { label: "GitHub", href: siteConfig.links.github, icon: Github },
-  { label: "X (Twitter)", href: siteConfig.links.x, icon: Twitter },
-  { label: "LinkedIn", href: siteConfig.links.linkedin, icon: Linkedin },
-  { label: "Discord", href: siteConfig.links.discord, icon: MessageCircle },
-  { label: "YouTube", href: siteConfig.links.youtube, icon: Youtube },
+  { label: "GitHub", href: externalLinks.github, icon: Github },
+  { label: "X (Twitter)", href: externalLinks.x, icon: Twitter },
+  { label: "LinkedIn", href: externalLinks.linkedin, icon: Linkedin },
+  { label: "Discord", href: externalLinks.discord, icon: MessageCircle },
+  { label: "YouTube", href: externalLinks.youtube, icon: Youtube },
 ];
 
 /** Footer (spec §16): sitemap, status, social, legal — dense but effortless. */
@@ -94,12 +94,7 @@ export function SiteFooter() {
                           {link.label}
                         </a>
                       ) : (
-                        <Link
-                          href={link.href}
-                          className="inline-block text-muted-foreground transition-all hover:translate-x-0.5 hover:text-foreground motion-reduce:hover:translate-x-0"
-                        >
-                          {link.label}
-                        </Link>
+                        <FooterNavLink link={link} />
                       )}
                     </li>
                   ))}
@@ -119,7 +114,7 @@ export function SiteFooter() {
           </p>
           <div className="flex flex-wrap items-center justify-center gap-4">
             <a
-              href={siteConfig.links.status}
+              href={externalLinks.status}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-2 rounded-full border bg-card/60 px-3 py-1.5 transition-colors hover:border-success/40 hover:text-foreground"

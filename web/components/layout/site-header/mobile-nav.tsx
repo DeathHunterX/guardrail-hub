@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, Menu } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useRef, useState } from "react";
 
 import {
@@ -20,7 +21,7 @@ import {
 } from "@/components/ui/sheet";
 import { siteConfig } from "@/config/site";
 import { navigation } from "@/content/site";
-import { useMotion } from "@/lib/gsap/gsap-provider";
+import { useMotion } from "@/providers/gsap-provider";
 import { durations, eases, staggers } from "@/lib/gsap/motion";
 import { gsap, useGSAP } from "@/lib/gsap/register";
 
@@ -32,6 +33,11 @@ export function MobileNav() {
   const [open, setOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const { tier } = useMotion();
+  const pathname = usePathname();
+
+  /** Resolves a link's destination — landing-only anchors apply on "/". */
+  const resolveHref = (link: { href: string; landingHref?: string }) =>
+    pathname === "/" && link.landingHref ? link.landingHref : link.href;
 
   useGSAP(
     () => {
@@ -123,7 +129,7 @@ export function MobileNav() {
                   </a>
                 ) : (
                   <Link
-                    href={link.href}
+                    href={resolveHref(link)}
                     onClick={close}
                     className="block rounded-lg px-2 py-3 text-base font-medium transition-colors hover:bg-accent"
                   >

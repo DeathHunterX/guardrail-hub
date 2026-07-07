@@ -2,7 +2,7 @@
 
 import { useRef, type RefObject } from "react";
 
-import { useMotion } from "@/lib/gsap/gsap-provider";
+import { useMotion } from "@/providers/gsap-provider";
 import {
   durations,
   eases,

@@ -2,6 +2,7 @@
 
 import { ArrowUpRight } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useMemo } from "react";
 
 import {
@@ -13,10 +14,11 @@ import {
   NavigationMenuTrigger,
   navigationMenuTriggerStyle,
 } from "@/components/ui/navigation-menu";
-import { navigation, type NavMegaItem } from "@/content/site";
+import { navigation } from "@/content/site";
+import type { NavMegaItem } from "@/types/navigation";
 import { cn } from "@/lib/utils";
 
-import { useActiveSection } from "./use-active-section";
+import { useActiveSection } from "@/hooks/use-active-section";
 
 function MegaMenuItem({ item }: { item: NavMegaItem }) {
   return (
@@ -45,12 +47,25 @@ function MegaMenuItem({ item }: { item: NavMegaItem }) {
 
 /** Desktop navigation: mega-dropdowns for Product/Solutions + direct links. */
 export function MainNav() {
+  const pathname = usePathname();
+  const onLanding = pathname === "/";
+
+  // Links can carry a landing-only anchor (e.g. Pricing -> #pricing); the
+  // active indicator tracks whichever links resolve to an anchor here.
+  const resolvedLinks = useMemo(
+    () =>
+      navigation.links.map((link) => ({
+        ...link,
+        href: onLanding && link.landingHref ? link.landingHref : link.href,
+      })),
+    [onLanding],
+  );
   const anchorIds = useMemo(
     () =>
-      navigation.links
+      resolvedLinks
         .filter((link) => link.href.startsWith("#"))
         .map((link) => link.href.slice(1)),
-    [],
+    [resolvedLinks],
   );
   const activeId = useActiveSection(anchorIds);
 
@@ -69,7 +84,7 @@ export function MainNav() {
             </NavigationMenuContent>
           </NavigationMenuItem>
         ))}
-        {navigation.links.map((link) => (
+        {resolvedLinks.map((link) => (
           <NavigationMenuItem key={link.label}>
             <NavigationMenuLink asChild>
               {link.external ? (

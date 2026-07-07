@@ -5,8 +5,8 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { GitHubStarsButton } from "@/components/shared/github-stars-button";
-import { ThemeToggle } from "@/components/shared/theme-toggle";
+import { GitHubStarsButton } from "@/components/common/github-stars-button";
+import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Button } from "@/components/ui/button";
 import { siteConfig } from "@/config/site";
 
@@ -14,7 +14,7 @@ import { siteConfig } from "@/config/site";
 // first intent — ⌘K or a click on the search button (architecture §2).
 const CommandMenu = dynamic(
   () =>
-    import("@/components/shared/command-menu").then((mod) => mod.CommandMenu),
+    import("@/components/common/command-menu").then((mod) => mod.CommandMenu),
   { ssr: false },
 );
 
