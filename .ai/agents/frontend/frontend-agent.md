@@ -9,11 +9,11 @@ domain: Frontend
 decision_authority: [web/**]
 knowledge_sources: []
 skills_used: []
-standards_enforced: [standards/architecture/frontend-component-layering@^1.0, standards/architecture/frontend-config-content@^1.0, standards/coding/frontend-hooks-location@^1.0, standards/coding/frontend-shadcn-usage@^1.0]
+standards_enforced: [standards/architecture/frontend-component-layering@^2.0, standards/architecture/frontend-config-content@^2.0, standards/coding/frontend-hooks-location@^2.0, standards/coding/frontend-shadcn-usage@^1.0]
 workflows_used: []
 templates_used: []
 depends_on: []
-validated_against: [standards/architecture/frontend-component-layering@1.0.0, standards/architecture/frontend-config-content@1.0.0, standards/coding/frontend-hooks-location@1.0.0, standards/coding/frontend-shadcn-usage@1.0.0]
+validated_against: [standards/architecture/frontend-component-layering@2.0.0, standards/architecture/frontend-config-content@2.0.0, standards/coding/frontend-hooks-location@2.0.0, standards/coding/frontend-shadcn-usage@1.0.0]
 ---
 
 # Frontend Agent

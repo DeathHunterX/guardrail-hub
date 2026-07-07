@@ -10,7 +10,7 @@ severity_default: blocking
 applies_to: [web/components/ui/**]
 enforced_by: []
 depends_on: [standards/architecture/frontend-component-layering]
-validated_against: [standards/architecture/frontend-component-layering@1.0.0]
+validated_against: [standards/architecture/frontend-component-layering@2.0.0]
 ---
 
 # Frontend shadcn/ui Primitive Usage
@@ -22,7 +22,7 @@ The `web/components/ui/` primitives layer. Assumes [frontend-component-layering]
 
 ## Rule Definitions
 - **R1** `components/ui/` primitives are generated/vendored via the shadcn/ui CLI — added with `npx shadcn@latest add <component>`, not hand-rolled.
-- **R2** Do not heavily hand-edit a generated primitive; extend it via composition in `components/shared/` instead.
+- **R2** Do not heavily hand-edit a generated primitive; extend it via composition in `components/common/` instead.
 
 ## Mandatory Rules
 R1–R2 are Mandatory (blocking).
