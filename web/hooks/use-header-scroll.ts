@@ -1,10 +1,14 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useRef, useSyncExternalStore } from "react";
 
 import { ScrollTrigger } from "@/lib/gsap/register";
 
 const SCROLL_THRESHOLD_PX = 24;
+
+function getServerSnapshot(): boolean {
+  return false;
+}
 
 /**
  * Scrolled-state detection for the sticky header (spec §2). This is state
@@ -12,17 +16,25 @@ const SCROLL_THRESHOLD_PX = 24;
  * treatment must appear for reduced-motion users too.
  */
 export function useHeaderScroll(): boolean {
-  const [scrolled, setScrolled] = useState(false);
+  const activeRef = useRef(false);
 
-  useEffect(() => {
+  const subscribe = useCallback((onChange: () => void) => {
     const trigger = ScrollTrigger.create({
       start: SCROLL_THRESHOLD_PX,
       end: "max",
-      onToggle: (self) => setScrolled(self.isActive),
+      onToggle: (self) => {
+        activeRef.current = self.isActive;
+        onChange();
+      },
     });
-    setScrolled(trigger.isActive);
+    // Catches the case where the page loads already scrolled past the
+    // threshold (e.g. restored scroll position on back-navigation).
+    activeRef.current = trigger.isActive;
+    onChange();
     return () => trigger.kill();
   }, []);
 
-  return scrolled;
+  const getSnapshot = useCallback(() => activeRef.current, []);
+
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

@@ -1,6 +1,18 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
+
+function subscribe(): () => void {
+  return () => {};
+}
+
+function getSnapshot(): boolean {
+  return true;
+}
+
+function getServerSnapshot(): boolean {
+  return false;
+}
 
 /**
  * Returns true after the component has mounted on the client. Used to gate
@@ -8,11 +20,5 @@ import { useEffect, useState } from "react";
  * client markup never mismatch.
  */
 export function useMounted(): boolean {
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  return mounted;
+  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
 }

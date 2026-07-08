@@ -41,7 +41,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     // suppressHydrationWarning is required: next-themes mutates the <html>
     // class before hydration to prevent a theme flash.
-    <html lang="en" suppressHydrationWarning>
+    // data-scroll-behavior="smooth" keeps Next.js's instant-scroll-on-navigation
+    // override, since globals.css sets `scroll-behavior: smooth` for in-page anchors.
+    <html lang="en" suppressHydrationWarning data-scroll-behavior="smooth">
       <body
         className={`${GeistSans.variable} ${GeistMono.variable} min-h-dvh font-sans`}
       >
