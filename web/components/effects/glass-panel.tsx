@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ComponentPropsWithoutRef } from "react";
 
 import { cn } from "@/lib/utils";
 
@@ -8,17 +8,15 @@ const elevationClasses = {
   3: "shadow-elevation-3 dark:ring-1 dark:ring-white/10",
 } as const;
 
-interface GlassPanelProps {
+interface GlassPanelProps extends ComponentPropsWithoutRef<"div"> {
   elevation?: keyof typeof elevationClasses;
-  className?: string;
-  children: ReactNode;
 }
 
 /** Floating glass surface (spec §0.5) — the base of every mock-UI panel. */
 export function GlassPanel({
   elevation = 2,
   className,
-  children,
+  ...props
 }: GlassPanelProps) {
   return (
     <div
@@ -27,8 +25,7 @@ export function GlassPanel({
         elevationClasses[elevation],
         className,
       )}
-    >
-      {children}
-    </div>
+      {...props}
+    />
   );
 }
