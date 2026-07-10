@@ -15,7 +15,7 @@ Usage
     dao = get_operation_dao()
     dao.create_operation(
         op_id="zap_api_scan:abc123",
-        status=OperationStatus.PENDING,
+        status=OperationStatus.QUEUED,
         batch_type=BatchType.API_SCAN,
         metadata={"target_url": "https://api.example.com"},
         log_path="logs/ZapApiScanService_20260615.log",

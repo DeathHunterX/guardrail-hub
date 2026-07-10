@@ -38,4 +38,4 @@ build/
 dist/
 *.egg-info/
 logs/
-public/
+/public/

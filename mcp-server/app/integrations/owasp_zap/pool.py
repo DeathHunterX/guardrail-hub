@@ -1,199 +1,100 @@
+"""
+ZAP Pool Manager.
+
+Assigns queued operations to registered ZAP workers. It never generates a
+worker address (no ``http://prefix-1``, no ``http://prefix-2``) — every
+assignment comes from the Worker Registry, which holds whatever a worker
+reported at registration.
+
+Split of responsibilities:
+
+* :class:`~app.integrations.owasp_zap.registry.OwaspZapWorkerRegistry` — the
+  source of truth for *who* is registered, their endpoint, and busy/idle
+  (``op_id``). Also handles maintenance lifecycle (drain/offline/remove).
+* :class:`~app.integrations.owasp_zap.scheduler.WorkerScheduler` — *which*
+  idle worker to pick next (Round Robin by default, swappable).
+* ``OwaspZapPoolManager`` (this class) — ties the two together for the
+  dispatcher: try to assign one operation, hand back a ready ``ZapClient``,
+  release when done.
+
+This class does not poll or block waiting for a slot — that loop lives in the
+dispatcher (``app/services/tools/owasp_zap/dispatcher.py``), which re-tries
+queued operations (persisted in the Operations table) on its own schedule.
+"""
+
 import threading
-import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
-from zapv2 import ZAPv2
-
-from app.core.config import settings
 from app.core.mcp_logger import MCPLogger
 from app.integrations.owasp_zap.client import ZapClient
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.integrations.owasp_zap.registry import OwaspZapWorkerRegistry
+from app.integrations.owasp_zap.scheduler import WorkerScheduler
+from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
 
 
-class OwaspZapPool:
-    """
-    In-memory registry of ZAP client instances, one per Docker container.
+class OwaspZapPoolManager:
+    """Coordinates worker selection and ``ZapClient`` access for the dispatcher."""
 
-    Each ZAP container is a separate Docker service reachable via the internal
-    Docker network by its service name — ports are NEVER exposed to the host.
+    def __init__(
+        self,
+        registry: OwaspZapWorkerRegistry,
+        scheduler: WorkerScheduler,
+        api_key: Optional[str] = None,
+    ) -> None:
+        self.registry = registry
+        self.scheduler = scheduler
+        self._api_key = api_key
 
-    Naming convention
-    -----------------
-    Given ``zap_container_name_prefix = "zap"`` and
-    ``zap_amount_of_containers = 3``, the pool manages:
+        self._clients: Dict[str, ZapClient] = {}
+        self._clients_lock = threading.Lock()
+        self._logger = MCPLogger("OwaspZapPoolManager")
 
-        zap-1  →  http://zap-1:8080   (internal Docker URL)
-        zap-2  →  http://zap-2:8080
-        zap-3  →  http://zap-3:8080
+    # ── Assignment ─────────────────────────────────────────────────────────
 
-    The container name ``zap-{i}`` must match the Docker Compose service name
-    exactly so that DNS resolution works inside the shared network.
+    def try_assign(self, operation_id: str) -> Optional[ZapWorkerInfo]:
+        """Try to assign *operation_id* to one eligible worker.
 
-    Thread safety
-    -------------
-    ``acquire_node`` / ``update_node`` / ``get_ready_node`` are guarded by a
-    single ``threading.Lock``.  Each ``ZapClient`` is itself thread-safe.
-    """
-
-    def __init__(self, number: int = 1) -> None:
-        prefix = settings.zap_container_name_prefix
-        port = settings.zap_api_port
-
-        self._pairs: Dict[str, dict] = {
-            f"{prefix}-{i}": {
-                "operation_id": None,
-                "client": ZapClient(
-                    api_url=f"http://{prefix}-{i}:{port}",
-                    api_key=settings.zap_api_key,
-                ),
-            }
-            for i in range(1, number + 1)
-        }
-
-        self.state_logger = MCPLogger("OwaspZapPool")
-        self._lock = threading.Lock()
-
-    # ── Node lifecycle ────────────────────────────────────────
-
-    def acquire_node(self, operation_id: str) -> Optional[str]:
+        Returns the assigned :class:`ZapWorkerInfo` (with ``op_id`` already
+        set) or ``None`` if no worker is currently idle and Active — in which
+        case the operation simply stays ``QUEUED`` and the dispatcher will
+        retry it on the next poll.
         """
-        Atomically claim the first idle node for *operation_id*.
-
-        Returns:
-            The container name (e.g. ``"zap-1"``) if a node was claimed;
-            ``None`` when all nodes are busy.
-        """
-        with self._lock:
-            for container_name, info in self._pairs.items():
-                if info["operation_id"] is None:
-                    info["operation_id"] = operation_id
-                    return container_name
-
-            self.state_logger.warning(
-                f"No idle node found for operation_id: {operation_id}, "
-                "all nodes are busy, waiting for a node to become idle..."
-            )
+        candidates = self.registry.list_all()
+        chosen = self.scheduler.select(candidates)
+        if chosen is None:
             return None
 
-    def get_ready_node(self) -> Optional[str]:
-        """Return the name of the first idle container, or ``None`` if all are busy."""
-        with self._lock:
-            for container_name, info in self._pairs.items():
-                if info["operation_id"] is None:
-                    return container_name
+        self.registry.assign(chosen.worker_id, operation_id)
+        self._logger.info(
+            "Assigned operation '%s' -> worker '%s' (%s)",
+            operation_id,
+            chosen.worker_id,
+            chosen.endpoint,
+        )
+        return self.registry.get(chosen.worker_id) or chosen
 
-            self.state_logger.warning(
-                "No idle node found, all nodes are busy, "
-                "waiting for a node to become idle..."
-            )
-            return None
+    def release_worker(self, worker_id: str, operation_id: str) -> None:
+        """Release a worker back to Idle once *operation_id* has finished."""
+        self.registry.release(worker_id, operation_id)
 
-    def update_node(self, container_name: str, operation_id: Optional[str]) -> None:
+    # ── Client access ──────────────────────────────────────────────────────
+
+    def get_client(self, worker: ZapWorkerInfo) -> ZapClient:
+        """Return a (cached) :class:`ZapClient` bound to *worker*'s endpoint.
+
+        Cached per ``worker_id`` and rebuilt if the worker re-registered with
+        a different endpoint (e.g. it restarted and picked up a new address).
         """
-        Assign or release an operation on a node.
+        with self._clients_lock:
+            cached = self._clients.get(worker.worker_id)
+            if cached is not None and cached.proxy_url == worker.endpoint:
+                return cached
 
-        Args:
-            container_name: Docker service name, e.g. ``"zap-1"``.
-            operation_id:   Operation to assign, or ``None`` to release the
-                            node back to idle.
+            client = ZapClient(api_url=worker.endpoint, api_key=self._api_key)
+            self._clients[worker.worker_id] = client
+            return client
 
-        Raises:
-            KeyError: if *container_name* is not registered in the pool.
-        """
-        with self._lock:
-            if container_name not in self._pairs:
-                raise KeyError(
-                    f"ZAP container '{container_name}' not found in pool"
-                )
-            self._pairs[container_name]["operation_id"] = operation_id
-
-    # ── Client access ─────────────────────────────────────────
-    def get_zap_client(self, container_name: str) -> ZapClient:
-        """
-        Return the ``ZapClient`` bound to *container_name*.
-
-        Raises:
-            KeyError: if *container_name* is not registered in the pool.
-        """
-        try:
-            return self._pairs[container_name]["client"]
-        except KeyError as exc:
-            raise KeyError(
-                f"ZAP container '{container_name}' not found in pool"
-            ) from exc
-        except Exception as exc:
-            raise RuntimeError(
-                f"Error getting ZAP client for container '{container_name}'"
-            ) from exc
-
-    def is_slot_available(self) -> bool:
-        """Return True if a slot is available, False otherwise."""
-        return self.get_ready_node() is not None
-
-    def list_slots(self) -> List[str]:
-        """Return a list of all slots even if they are busy."""
-        with self._lock:
-            return list(self._pairs.keys())
-
-    def get_status(self) -> Dict[str, Dict[str, Any]]:
-        """Return the status of all slots."""
-        with self._lock:
-            return {"slots": {k: dict(v) for k, v in self._pairs.items()}}
-
-    
-    # ── Node management ─────────────────────────────────────────
-    def book_zap_slot(self, operation_id: str, poll_seconds: float = 2.0) -> Tuple[str, ZapClient, ZAPv2]:
-        """Book a ZAP slot for the given operation_id.
-
-        Returns a ``(container_name, zap_client, zap_api)`` tuple where:
-
-        * ``zap_client`` — :class:`ZapClient` wrapper methods
-        * ``zap_api``    — raw ``ZAPv2`` SDK object
-        """
-        while True:
-            # Will handle it later when we have set up database in local (postgresql) or remote (dynamodb)
-            # Exit early if a stop call already marked this operation as cancelled
-            # try:
-            #     op = self.operation_dao.get_operation(operation_id)
-            #     if isinstance(op, dict) and op.get("status") == OperationStatus.CANCELLED:
-            #         raise ValueError(
-            #             f"Operation {operation_id} was cancelled while waiting for a ZAP slot"
-            #         )
-            # except ValueError:
-            #     raise
-            # except Exception:
-            #     pass  # transient DB error; keep polling for a slot
-
-            zap_container = self.acquire_node(operation_id)
-            if zap_container is not None:
-                zap_client = self.get_zap_client(zap_container)
-                return zap_container, zap_client, zap_client.zap_api
-
-            time.sleep(poll_seconds)  # Wait for a slot to become available
-
-    def release_zap_slot(self, zap_container: str, operation_id: str) -> None:
-        """Release a ZAP slot for the given operation_id."""
-        try:
-            # Ensure atomic read + update
-            if operation_id is not None:
-                status = self.get_status()
-                # Check current owner to avoid releasing someone else's slot
-                current_owner = (
-                    status["slots"].get(zap_container, {}).get("operation_id")
-                )
-
-                if current_owner != operation_id:
-                    # Skip if slot was already reassigned
-                    self.state_logger.debug(
-                        "release_zap_slot: skipped [%s] — owned by %s, not %s",
-                        zap_container,
-                        current_owner,
-                        operation_id,
-                    )
-                    return
-
-            # Release slot (make it available)
-            self.update_node(zap_container, None)
-
-        except Exception:
-            pass  # Fail-safe: avoid breaking worker flow
+    def forget_client(self, worker_id: str) -> None:
+        """Drop a cached client, e.g. after a worker is removed from the registry."""
+        with self._clients_lock:
+            self._clients.pop(worker_id, None)

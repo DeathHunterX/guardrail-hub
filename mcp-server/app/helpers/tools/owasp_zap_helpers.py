@@ -26,7 +26,7 @@ from app.schemas.tools.owasp_zap.scan_result import (
     ZapTlsResult,
 )
 
-logger = MCPLogger("OWASP ZAP")
+logger = MCPLogger("OwaspZapApiScanHelpers")
 
 
 class ZapApiScanHelpers:
@@ -236,4 +236,5 @@ class ZapApiScanHelpers:
                 matchregex="false",
                 matchstring="Cookie",
                 replacement=request.cookie,
+  
             )

@@ -5,7 +5,15 @@ from pydantic import BaseModel, Field
 
 
 class OperationStatus(str, Enum):
-    PENDING = "pending"
+    """Operation lifecycle.
+
+    ``QUEUED`` operations are the persisted work queue itself (see the
+    Operations table / DAO) — there is no separate in-memory waiting queue.
+    A worker never has its own status; it only ever knows which
+    ``operation_id`` (if any) it is currently executing.
+    """
+
+    QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"

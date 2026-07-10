@@ -288,6 +288,63 @@ class DynamoDBOperationDAO(DynamoDBDAO, BaseOperationDAO):
             )
             raise
 
+    def get_queued_operations(self) -> list[OperationRecord]:
+        """
+        Return every ``QUEUED`` operation, oldest first — the Pool Manager's queue.
+
+        DynamoDB scans have no native ordering, so results are sorted by
+        ``created_at`` in Python after the (filtered) scan completes.
+
+        Returns:
+            A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
+            oldest first.
+        """
+        records = self.get_by_status(OperationStatus.QUEUED)
+        return sorted(records, key=lambda r: r.created_at)
+
+    def initialize_schema(self) -> None:
+        """
+        Verify the operations table exists before the server accepts requests.
+
+        Against real AWS, table provisioning is expected to be managed by
+        infrastructure-as-code — this only verifies and raises if missing.
+        Against DynamoDB Local / an emulator (``DYNAMODB_ENDPOINT_URL`` set),
+        the table is created automatically so a fresh local environment works
+        without a manual step.
+
+        Raises:
+            RuntimeError: If the table is missing and cannot (or should not)
+                be auto-created.
+        """
+        try:
+            self.table.load()
+            self._logger.info("Verified DynamoDB table '%s' exists", self.table.name)
+            return
+        except Exception as exc:  # noqa: BLE001 - botocore raises ClientError here
+            if not settings.dynamodb_endpoint_url:
+                raise RuntimeError(
+                    f"DynamoDB table '{self.table.name}' does not exist and cannot "
+                    "be auto-created against real AWS — provision it via "
+                    "infrastructure-as-code before starting the server."
+                ) from exc
+
+        self._logger.info(
+            "DynamoDB table '%s' missing — creating it (local endpoint)", self.table.name
+        )
+        client = self.table.meta.client
+        client.create_table(
+            TableName=self.table.name,
+            AttributeDefinitions=[
+                {"AttributeName": self.PARTITION_KEY, "AttributeType": "S"},
+            ],
+            KeySchema=[
+                {"AttributeName": self.PARTITION_KEY, "KeyType": "HASH"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        client.get_waiter("table_exists").wait(TableName=self.table.name)
+        self._logger.info("Created DynamoDB table '%s'", self.table.name)
+
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _paginated_scan(self, scan_kwargs: dict[str, Any]) -> list[dict[str, Any]]:

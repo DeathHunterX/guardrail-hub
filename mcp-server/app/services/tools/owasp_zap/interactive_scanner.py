@@ -18,7 +18,6 @@ Step 2 — ``run_scan``
 Sessions are kept in-process memory. They survive server restarts poorly
 but are sufficient for the typical short-lived MCP tool interaction.
 """
-import logging
 import time
 import uuid
 from typing import Optional
@@ -37,9 +36,10 @@ from app.schemas.tools.owasp_zap.scan_result import (
     ZapScanResult,
     ZapScanSummary,
 )
-from app.services.owasp_zap.client import ZapClient, ZapNotAvailableError
+from app.integrations.owasp_zap.client import ZapClient, ZapNotAvailableError
+from app.core.mcp_logger import MCPLogger
 
-logger = logging.getLogger(__name__)
+logger = MCPLogger("OwaspZapInteractiveScanner")
 
 # In-process session registry  {operation_id → session_dict}
 _sessions: dict[str, dict] = {}

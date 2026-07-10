@@ -7,7 +7,7 @@ import logging as _logging
 from logging.handlers import TimedRotatingFileHandler
 from typing import Optional
 
-from app.utils.public.logger_utils import LoggerUtils
+from app.core.logger_utils import LoggerUtils
 
 
 class MCPLogger:
@@ -34,7 +34,7 @@ class MCPLogger:
         self.log_file_path = os.path.join(log_dir, f"{log_name}_{date_str}.log")
 
         # 1. Ensure the log directory exists
-        os.makedirs(log_dir, exist_ok=True)  # ✅ W0125: thay if+exists bằng exist_ok
+        os.makedirs(log_dir, exist_ok=True)  # exist_ok avoids a separate existence check
 
         # 2. Initialize the logger instance
         self.logger = _logging.getLogger(log_name)
@@ -75,7 +75,7 @@ class MCPLogger:
         level: str,
         msg: str,
         *args,
-        extra: Optional[dict] = None,  # ✅ W0102: dùng Optional[dict] thay dict = None
+        extra: Optional[dict] = None,  # Optional[dict] instead of a mutable default
         **kwargs,
     ) -> None:
         """Internal logging method that handles both text and JSON logging.
@@ -87,7 +87,7 @@ class MCPLogger:
             extra (Optional[dict]): Additional context to log.
             **kwargs: Additional keyword arguments to pass to the logging function.
         """
-        log_fn = getattr(self.logger, level.lower())  # ✅ C0103: đổi tên biến rõ nghĩa hơn
+        log_fn = getattr(self.logger, level.lower())  # resolve the bound level method
 
         # Write the main message to the local log file and stdout
         log_fn(msg, *args, **kwargs)

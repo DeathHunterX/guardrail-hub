@@ -10,7 +10,6 @@ Flow:
   6. For FULL mode: run Active Scan after spidering.
   7. Collect and return alerts.
 """
-import logging
 import time
 import uuid
 from urllib.parse import urlparse
@@ -27,9 +26,10 @@ from app.schemas.tools.owasp_zap.website_scan import (
     ZapWebsiteScanWithLLMRequest,
 )
 from app.schemas.tools.owasp_zap.common import ZapScanMode
-from app.services.owasp_zap.client import ZapClient, ZapNotAvailableError
+from app.integrations.owasp_zap.client import ZapClient, ZapNotAvailableError
+from app.core.mcp_logger import MCPLogger
 
-logger = logging.getLogger(__name__)
+logger = MCPLogger("OwaspZapWebScanner")
 
 
 # ---------------------------------------------------------------------------

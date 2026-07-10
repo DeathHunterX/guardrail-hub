@@ -12,6 +12,18 @@ The ``with_llm`` variants accept a ``prompt`` field for natural-language
 scanner tuning. The LLM integration is stubbed here — in the future a
 language model can map the prompt to ``ScannerThresholdOverride`` rules
 that adjust scanner sensitivity before scanning.
+
+Queueing model
+--------------
+``init_api_scan`` no longer picks a worker or submits work itself. It only
+persists a ``QUEUED`` operation (the full request goes into ``metadata`` so
+the operation can be resumed even after a server restart) and returns
+immediately. The background dispatcher
+(``app/services/tools/owasp_zap/dispatcher.py``) polls the Operations table
+for queued work, assigns it to an idle worker via the Pool Manager, and only
+then calls :meth:`ZapApiScanService.run_assigned_scan`, which is what
+actually submits ``zap_scan_worker`` / ``zap_full_scan_worker`` to the thread
+pool below.
 """
 
 import re
@@ -31,17 +43,21 @@ from app.core.mcp_logger import MCPLogger
 from app.dao.operation_dao import get_operation_dao
 from app.helpers.tools.owasp_zap_helpers import ZapApiScanHelpers
 from app.integrations.owasp_zap.client import ZapClient
-from app.integrations.owasp_zap.pool import OwaspZapPool
+from app.integrations.owasp_zap.runtime import pool_manager as default_pool_manager
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
 from app.schemas.tools.owasp_zap.common import OperationStatus, ZapScanMode
 from app.schemas.tools.owasp_zap.scan_result import ZapScanReports, ZapScanResult
+from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
 
-zap_amount = int(max(1, settings.zap_amount_of_containers))
-executor = ThreadPoolExecutor(max_workers=zap_amount)
+# Thread-pool sizing is decoupled from worker count on purpose: how many
+# scans can actually run concurrently is bounded by how many ZAP workers are
+# registered and Active (see the Pool Manager), not by this executor. A
+# generous fixed cap just bounds in-process thread overhead.
+executor = ThreadPoolExecutor(max_workers=32, thread_name_prefix="zap-scan-worker")
 
 
 class ZapApiScanService:
-    """Singleton service that dispatches OWASP ZAP API scans to a thread-pool worker."""
+    """Singleton service that runs OWASP ZAP API scans on a thread-pool worker."""
 
     _instance: Optional["ZapApiScanService"] = None
     _instance_lock: Lock = Lock()
@@ -59,8 +75,8 @@ class ZapApiScanService:
         if getattr(self, "_initialized", False):
             return
 
-        self.app_logger = MCPLogger("OWASP ZAP")
-        self.zap_pool = OwaspZapPool(zap_amount)
+        self.app_logger = MCPLogger("OwaspZapApiScanService")
+        self.pool_manager = default_pool_manager
         self.zap_helpers = ZapApiScanHelpers()
         self.operation_dao = get_operation_dao()
 
@@ -113,13 +129,16 @@ class ZapApiScanService:
         return html_url, json_url
 
     # ------------------------------------------------------------------
-    # Public: init scan (async dispatch)
+    # Public: init scan (persist as QUEUED, no assignment yet)
     # ------------------------------------------------------------------
 
     def init_api_scan(self, request: ZapApiScanRequest) -> Dict:
         """
-        Validate *request*, create a PENDING operation record, and dispatch
-        the appropriate scan worker to the thread pool.
+        Validate *request* and persist a ``QUEUED`` operation record.
+
+        The full request is stored under ``metadata["request"]`` so the
+        dispatcher can reconstruct it and run the scan later — including
+        after an mcp-server restart, since this row is the queue.
 
         Returns:
             Dict with ``operation_id``, ``status``, and a status-check message.
@@ -131,57 +150,87 @@ class ZapApiScanService:
             op_id = str(uuid.uuid4())
             self.operation_dao.create_operation(
                 op_id=op_id,
-                status=OperationStatus.PENDING,
+                status=OperationStatus.QUEUED,
                 batch_type=BatchType.API_SCAN,
                 metadata={
                     "name": "Owasp Zap check",
                     "target_url": request.url,
                     "method": request.method,
-                    "headers": request.headers,
-                    "body": request.body,
+                    "request": request.model_dump(mode="json", by_alias=True),
                 },
             )
 
-            if request.scan_mode == ZapScanMode.QUICK:
-                self.app_logger.info(f"Initialized QUICK API scan with operation_id: {op_id}")
-                executor.submit(self.zap_scan_worker, op_id, request)
-            else:
-                self.app_logger.info(f"Initialized FULL API scan with operation_id: {op_id}")
-                executor.submit(self.zap_full_scan_worker, op_id, request)
+            self.app_logger.info(
+                f"Queued {request.scan_mode.value} API scan with operation_id: {op_id}"
+            )
 
             return {
                 "operation_id": op_id,
-                "status": OperationStatus.PENDING,
+                "status": OperationStatus.QUEUED,
                 "message": (
-                    f"Zap API scan initialized with operation_id: {op_id}. "
-                    f"Check status at API api/history/get-result with param operation_id: {op_id}"
+                    f"Zap API scan queued with operation_id: {op_id}. It will start as soon as "
+                    f"a ZAP worker is available. Check status at API api/history/get-result "
+                    f"with param operation_id: {op_id}"
                 ),
             }
 
         except Exception as e:
             raise HTTPException(
-                status_code=500, 
-                detail=f"Error initializing API scan:\n{str(e)}"
+                status_code=500,
+                detail=f"Error initializing API scan:\n{str(e)}",
             ) from e
+
+    @staticmethod
+    def request_from_metadata(metadata: dict) -> ZapApiScanRequest:
+        """Reconstruct the original :class:`ZapApiScanRequest` from a persisted operation.
+
+        Used by the dispatcher to resume a ``QUEUED`` operation without
+        needing anything held in memory — including across a server restart.
+        """
+        return ZapApiScanRequest.model_validate(metadata["request"])
+
+    # ------------------------------------------------------------------
+    # Public: run an already-assigned scan (called by the dispatcher)
+    # ------------------------------------------------------------------
+
+    def run_assigned_scan(
+        self, operation_id: str, request: ZapApiScanRequest, worker: ZapWorkerInfo
+    ) -> None:
+        """Submit the worker function matching *request.scan_mode* to the thread pool.
+
+        Called by the dispatcher only after the Pool Manager has already
+        assigned *worker* to *operation_id* — this method does no scheduling
+        of its own.
+        """
+        if request.scan_mode == ZapScanMode.QUICK:
+            executor.submit(self.zap_scan_worker, operation_id, request, worker)
+        else:
+            executor.submit(self.zap_full_scan_worker, operation_id, request, worker)
 
     # ------------------------------------------------------------------
     # Workers
     # ------------------------------------------------------------------
 
-    def zap_scan_worker(self, operation_id: str, request: ZapApiScanRequest) -> None:
+    def zap_scan_worker(
+        self, operation_id: str, request: ZapApiScanRequest, worker: ZapWorkerInfo
+    ) -> None:
         """
         QUICK scan: passive scan → spider → single-target active scan.
 
         Active scan targets URL parameters only (injectable mask = 3).
         Body fuzzing is disabled to keep the scan fast.
+
+        *worker* was already assigned by the Pool Manager before this method
+        is invoked (see :meth:`run_assigned_scan`) — this method only runs
+        the scan and releases the worker when done.
         """
-        zap_container = None
         start_time = time.time()
 
         try:
-            zap_container, zap_client, zap_api = self.zap_pool.book_zap_slot(operation_id)
+            zap_client = self.pool_manager.get_client(worker)
+            zap_api = zap_client.zap_api
             self.app_logger.info(
-                f"[{zap_container}] Start QUICK API scan {request.url}: {operation_id}"
+                f"[{worker.worker_id}] Start QUICK API scan {request.url}: {operation_id}"
             )
 
             zap_client.require_healthy()
@@ -203,13 +252,13 @@ class ZapApiScanService:
             zap_client.wait_for_passive_scan(timeout_seconds=settings.zap_passive_scan_timeout_seconds)
 
             # Spider scan
-            self.app_logger.info(f"[{zap_container}] Starting spider scan: {operation_id}")
+            self.app_logger.info(f"[{worker.worker_id}] Starting spider scan: {operation_id}")
             spider_id = zap_client.run_spider(url=request.url, context_name=context_name)
             zap_client.wait_for_spider(spider_id, timeout_seconds=settings.zap_spider_timeout_seconds)
-            self.app_logger.info(f"[{zap_container}] Spider scan done: {operation_id}")
+            self.app_logger.info(f"[{worker.worker_id}] Spider scan done: {operation_id}")
 
             # Active scan — single URL, no recursion
-            self.app_logger.info(f"[{zap_container}] Starting active scan: {operation_id}")
+            self.app_logger.info(f"[{worker.worker_id}] Starting active scan: {operation_id}")
             body_bytes, _ = self.zap_helpers.serialize_body(request)
             postdata = body_bytes.decode() if body_bytes else None
             ascan_id = zap_client.run_active_scan(
@@ -225,7 +274,7 @@ class ZapApiScanService:
                 result={"ascan_scan_id": ascan_id, "ascan_progress": "0%"},
             )
             zap_client.wait_for_active_scan(ascan_id, timeout_seconds=settings.zap_scan_timeout_seconds)
-            self.app_logger.info(f"[{zap_container}] Active scan done: {operation_id}")
+            self.app_logger.info(f"[{worker.worker_id}] Active scan done: {operation_id}")
 
             raw_alerts = zap_client.get_alerts(base_url=request.url)
             alerts = [self.zap_helpers.convert_raw_alert(a) for a in raw_alerts]
@@ -258,23 +307,28 @@ class ZapApiScanService:
             )
 
         finally:
-            if zap_container:
-                self.zap_pool.release_zap_slot(zap_container, operation_id)
+            self.pool_manager.release_worker(worker.worker_id, operation_id)
 
-    def zap_full_scan_worker(self, operation_id: str, request: ZapApiScanRequest) -> None:
+    def zap_full_scan_worker(
+        self, operation_id: str, request: ZapApiScanRequest, worker: ZapWorkerInfo
+    ) -> None:
         """
         FULL scan: passive scan → context-scoped active scan with body fuzzing.
 
         Active scan targets all injectable points including the request body
         (injectable mask = 31). No spider — the proxy-recorded request seeds the
         context directly so ZAP can fuzz the exact endpoint.
+
+        *worker* was already assigned by the Pool Manager before this method
+        is invoked (see :meth:`run_assigned_scan`) — this method only runs
+        the scan and releases the worker when done.
         """
-        zap_container = None
         start_time = time.time()
 
         try:
-            zap_container, zap_client, zap_api = self.zap_pool.book_zap_slot(operation_id)
-            self.app_logger.info(f"[{zap_container}] Start FULL API scan {request.url}: {operation_id}")
+            zap_client = self.pool_manager.get_client(worker)
+            zap_api = zap_client.zap_api
+            self.app_logger.info(f"[{worker.worker_id}] Start FULL API scan {request.url}: {operation_id}")
 
             zap_client.require_healthy()
             self.operation_dao.update_operation_status(operation_id=operation_id, status=OperationStatus.RUNNING)
@@ -297,7 +351,7 @@ class ZapApiScanService:
             zap_client.include_in_context(context_name, target_base + ".*")
 
             # Active scan — full context, recursive, body fuzzing enabled
-            self.app_logger.info(f"[{zap_container}] Starting full active scan: {operation_id}")
+            self.app_logger.info(f"[{worker.worker_id}] Starting full active scan: {operation_id}")
             ascan_id = zap_client.run_active_scan(url=request.url, context_id=context_id, recurse=True)
             self.operation_dao.update_operation_status(
                 operation_id=operation_id,
@@ -305,7 +359,7 @@ class ZapApiScanService:
                 result={"ascan_scan_id": ascan_id, "ascan_progress": "0%"},
             )
             zap_client.wait_for_active_scan(ascan_id, timeout_seconds=settings.zap_scan_timeout_seconds)
-            self.app_logger.info(f"[{zap_container}] Full active scan done: {operation_id}")
+            self.app_logger.info(f"[{worker.worker_id}] Full active scan done: {operation_id}")
 
             raw_alerts = zap_client.get_alerts(base_url=request.url)
             alerts = [self.zap_helpers.convert_raw_alert(a) for a in raw_alerts]
@@ -329,7 +383,7 @@ class ZapApiScanService:
                 ).model_dump(by_alias=True),
             )
 
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             self.app_logger.error(f"Error in zap_full_scan_worker for operation_id {operation_id}: {e}")
             self.operation_dao.update_operation_status(
                 operation_id=operation_id,
@@ -338,5 +392,4 @@ class ZapApiScanService:
             )
 
         finally:
-            if zap_container:
-                self.zap_pool.release_zap_slot(zap_container, operation_id)
+            self.pool_manager.release_worker(worker.worker_id, operation_id)

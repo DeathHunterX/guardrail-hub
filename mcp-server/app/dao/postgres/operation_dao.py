@@ -12,23 +12,14 @@ Configuration (via ``settings``)
 * ``POSTGRES_USER``      — username (default ``"guardrail"``).
 * ``POSTGRES_PASSWORD``  — password.
 
-Required table DDL
-------------------
-Run this once against your database before using this DAO:
-
-.. code-block:: sql
-
-    CREATE TABLE IF NOT EXISTS operations (
-        operation_id  TEXT        PRIMARY KEY,
-        status        TEXT        NOT NULL,
-        batch_type    TEXT        NOT NULL,
-        metadata      JSONB       NOT NULL DEFAULT '{}',
-        result        JSONB,
-        error         TEXT,
-        created_at    TIMESTAMPTZ NOT NULL,
-        updated_at    TIMESTAMPTZ NOT NULL,
-        log_path      TEXT
-    );
+Schema
+------
+The ``operations`` table (and supporting index) is no longer applied by hand —
+:meth:`initialize_schema` runs the versioned SQL files under
+``app/dao/postgres/migrations/`` on startup (see
+``app/dao/postgres/migration_runner.py``) and verifies the table exists
+before the server accepts requests. A failed migration aborts startup with a
+non-zero exit code rather than serving requests against a missing schema.
 """
 
 import json
@@ -304,6 +295,37 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
             self._logger.error(
                 "Failed to fetch operations by statuses=%s from PostgreSQL", statuses
             )
+            raise
+        finally:
+            conn.close()
+
+    def get_queued_operations(self) -> list[OperationRecord]:
+        """
+        Return every ``QUEUED`` operation, oldest first — the Pool Manager's queue.
+
+        Uses ``ORDER BY created_at ASC`` directly (backed by
+        ``idx_operations_status_created_at``) instead of the base class's
+        fetch-then-sort fallback.
+
+        Returns:
+            A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
+            oldest first.
+        """
+        self._logger.info("Fetching queued operations from PostgreSQL")
+
+        conn = self._connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT {_LIST_COLUMNS} FROM operations "
+                    "WHERE status = %(status)s ORDER BY created_at ASC",
+                    {"status": OperationStatus.QUEUED},
+                )
+                rows = cur.fetchall()
+                columns = [d[0] for d in cur.description]
+                return [self._from_row(dict(zip(columns, row))) for row in rows]
+        except Exception:
+            self._logger.error("Failed to fetch queued operations from PostgreSQL")
             raise
         finally:
             conn.close()

@@ -13,13 +13,14 @@ reused for the lifetime of the client.  All blocking ZAP SDK calls should still
 be offloaded to a thread pool by the caller (use ``asyncio.to_thread`` in async
 endpoints) so that the event loop is never blocked.
 
-Multiple containers
--------------------
-Pass ``api_url`` and ``api_key`` explicitly to point a client at a specific ZAP
-container.  ``OwaspZapPool`` uses this to create one ``ZapClient`` per container
-so that parallel scans run against independent ZAP processes.
+Multiple workers
+----------------
+``api_url`` is always required and always comes from a worker's *registered*
+``endpoint`` (see ``app/integrations/owasp_zap/registry.py``) — never derived
+from a configurable prefix. ``OwaspZapPoolManager`` creates (and caches) one
+``ZapClient`` per registered worker endpoint so that parallel scans run
+against independent ZAP processes.
 """
-import logging
 import threading
 import time
 import uuid
@@ -28,8 +29,9 @@ from typing import Optional
 from zapv2 import ZAPv2
 
 from app.core.config import settings
+from app.core.mcp_logger import MCPLogger
 
-logger = logging.getLogger(__name__)
+logger = MCPLogger("OwaspZapClient")
 
 
 class ZapNotAvailableError(Exception):
@@ -43,24 +45,25 @@ class ZapClient:
     Parameters
     ----------
     api_url:
-        Full base URL of the ZAP REST API / proxy endpoint,
-        e.g. ``"http://zap-1:8080"``.  Defaults to the URL of the first
-        container: ``http://{zap_container_name_prefix}-1:{zap_api_port}``.
-        In production the ZAP container is accessed via the Docker-internal
-        hostname — ports are never exposed to the host.
+        Full base URL of the ZAP REST API / proxy endpoint, e.g.
+        ``"http://guardrail-hub-zap-1:8080"``. Always the ``endpoint`` a
+        worker reported at registration — the server never generates this
+        from a prefix + index. In production the ZAP container is accessed
+        via the Docker-internal (or Kubernetes Service) hostname — ports are
+        never exposed to the host.
     api_key:
         ZAP API key.  Defaults to ``settings.zap_api_key``.
     """
 
     def __init__(
         self,
-        api_url: Optional[str] = None,
+        api_url: str,
         api_key: Optional[str] = None,
     ) -> None:
-        if api_url is None:
-            api_url = (
-                f"http://{settings.zap_container_name_prefix}-1"
-                f":{settings.zap_api_port}"
+        if not api_url:
+            raise ValueError(
+                "ZapClient requires an explicit api_url (a registered worker's "
+                "endpoint) — there is no prefix-derived default."
             )
         if api_key is None:
             api_key = settings.zap_api_key
