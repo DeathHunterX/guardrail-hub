@@ -1,6 +1,6 @@
 {
-  "verified_commit": "10bd79b",
-  "verified_date": "2026-07-03",
+  "verified_commit": "10bd79b-SUPERSEDED-see-ADR-0005",
+  "verified_date": "2026-07-03 (re-verification pending after 2026-07-10 hardening refactor, ADR-0005)",
   "documents": {
     "system-overview.md": {
       "sources": [

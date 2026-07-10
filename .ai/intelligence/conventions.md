@@ -1,5 +1,7 @@
 # Conventions
 
+> **2026-07-10 — Hardening Sync ([ADR-0005](../decisions/0005-architecture-hardening-refactor.md)).** The MCPLogger-only rule is now enforced everywhere (stdlib `logging` removed from `integrations/owasp_zap/client.py`, `web_scanner.py`, `interactive_scanner.py`; logger instance names standardized to `<ClassName>`). Routers stay HTTP-only: worker-lifecycle and health-probe logic live in `ZapWorkerService` / `HealthService`. Tests now mirror the source tree (grouped by architectural domain, not flat filenames).
+
 ## Purpose
 Capture the coding and structural conventions actually observed in this codebase, so new code matches existing patterns instead of introducing a competing style.
 
@@ -25,7 +27,9 @@ Follow these patterns when adding code. Where this document says "no convention 
 
 **Pydantic for all request/response/config models**, split by role: request/response schemas live in `app/schemas/`, config in `app/core/config/`. Class names for tool-specific schemas are prefixed with the tool name (e.g., `ZapApiTarget`, `ZapScanResult`, `ZapInteractiveScanRequest`) — a new tool's schemas should follow the same `<Tool><Purpose>` naming.
 
-**File naming**: snake_case throughout (`owasp_zap_router.py`, `api_scanner.py`). **Class naming**: PascalCase, often `<Tool><Role>` (`ZapApiScanService`, `ZapClient`, `OwaspZapPool`) or `<Role>` for generic infrastructure (`PostgresDAO`, `Settings`, `MCPLogger`).
+**File naming**: snake_case throughout (`owasp_zap_router.py`, `api_scanner.py`). **Class naming**: PascalCase, often `<Tool><Role>` (`ZapApiScanService`, `ZapClient`, `OwaspZapPoolManager`, `OwaspZapWorkerRegistry`, `OwaspZapDispatcher`) or `<Role>` for generic infrastructure (`PostgresDAO`, `Settings`, `MCPLogger`).
+
+**Worker discovery via self-registration, never generation.** A pool of external processes (ZAP workers today) is never derived from a configurable prefix + count (`prefix-{index}`). Each worker announces itself at runtime (`POST /workers/register`) and heartbeats periodically; a Worker Registry is the single source of truth, and a Scheduler strategy (Round Robin by default, isolated behind a small interface) picks who runs the next queued operation. See [module-map.md](module-map.md) and `architecture/zap-worker-pool/README.md` at the repo root.
 
 **No testing convention established.** `mcp-server/tests/` exists but is empty — there is no existing test file to pattern-match against. Do not assume a test framework (pytest, etc.) is configured; check `pyproject.toml`'s dev-dependencies (currently none declared) before writing tests.
 
@@ -43,12 +47,4 @@ Follow these patterns when adding code. Where this document says "no convention 
 
 ### Cross-Cutting
 
-**Environment-driven config everywhere** — both apps read from `.env`/`.env.example`; no hardcoded config values were found for anything environment-specific (ports, secrets, provider selection).
-
-**No commit/PR convention documented** — no `CONTRIBUTING.md`, no PR template, no commit-lint config found. Existing commit messages (`git log`) loosely follow Conventional Commits style (`feat:`, `chore:`) but this is not enforced by tooling.
-
-## Related Documents
-[module-map.md](module-map.md) · [dependency-graph.md](dependency-graph.md) · [`.ai/standards/README.md`](../standards/README.md)
-
-## Last Updated
-2026-07-03 — verified against commit `10bd79b`.
+**Environment-driven config everywhere** — both apps re

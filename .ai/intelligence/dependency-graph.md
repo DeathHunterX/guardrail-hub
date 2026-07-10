@@ -1,5 +1,7 @@
 # Dependency Graph
 
+> **2026-07-10 — Hardening Sync ([ADR-0005](../decisions/0005-architecture-hardening-refactor.md)).** The `core → utils` import inversion is resolved: `core/mcp_logger` now imports `app.core.logger_utils` (the `utils/` role was removed), so `core/` is genuinely the lowest layer as stated below. New service units `ZapWorkerService` and `HealthService` keep the worker/health routers free of DAO/registry calls (`routers → services → integrations|dao`).
+
 ## Purpose
 Document what depends on what — internal module dependencies, external packages, shared libraries, and any circular-dependency risk — so a change in one place can be evaluated for blast radius before it's made.
 

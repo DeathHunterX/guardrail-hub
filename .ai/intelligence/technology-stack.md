@@ -1,5 +1,7 @@
 # Technology Stack
 
+> **2026-07-10 — Hardening Sync ([ADR-0005](../decisions/0005-architecture-hardening-refactor.md)).** Frontend versions below are stale: `web/` is now **Next.js 16** and **ESLint 9 (flat config)**, not 15.x / 8.x. Backend: `LoggerUtils` moved from `app/utils/` to `app/core/logger_utils.py`; no runtime dependencies were added in this refactor.
+
 ## Purpose
 List the concrete technologies, versions, and package managers in use, in one place, so an AI assistant doesn't have to reconstruct this from multiple config files.
 

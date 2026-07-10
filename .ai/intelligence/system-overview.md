@@ -1,5 +1,7 @@
 # System Overview
 
+> **2026-07-10 — Hardening Sync ([ADR-0005](../decisions/0005-architecture-hardening-refactor.md)).** Beyond the ZAP path, the backend now also has a live **ChatOps/notification** subsystem (event bus + hexagonal ports + Slack adapter + platform lifecycle reporting; see [ADR-0004](../decisions/0004-chatops-platform-architecture.md)) and a **worker-pool** (self-registration, heartbeat, round-robin dispatch). This refactor recovered several corrupted source files and enforced layering/logging standards; external behavior is unchanged.
+
 ## Purpose
 Give an AI assistant a one-page mental model of what Guardrail Hub is, what it's for, and — critically — what actually exists in code today versus what the product vision describes but hasn't been built yet.
 

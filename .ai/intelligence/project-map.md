@@ -1,5 +1,7 @@
 # Project Map
 
+> **2026-07-10 — Hardening Sync ([ADR-0005](../decisions/0005-architecture-hardening-refactor.md)).** The empty scaffold directories previously listed under `app/` (`client/`, `policies/`, `runner/`, `security/`, `integrations/jmeter/`, `services/internal/`, `services/tools/jmeter/`, `schemas/public/`, `schemas/tools/{playwright,selenium}/`, `routers/internal/`) and the `prompts/`/`utils/` roles were **removed**. `tests/` is no longer flat — it mirrors the source tree (`tests/services/…`, `tests/integrations/chat/slack/`, `tests/flows/`).
+
 ## Purpose
 Map every top-level and second-level directory in the repository to its purpose and implementation status, so an AI assistant can find the right place to work without scanning the whole tree.
 
@@ -69,12 +71,4 @@ graph TD
 ### `mobile/`
 
 | Directory | Status |
-|---|---|
-| `android/` | Empty — zero files |
-| `apple/` | Empty — zero files |
-
-## Related Documents
-[system-overview.md](system-overview.md) · [module-map.md](module-map.md) · [technology-stack.md](technology-stack.md)
-
-## Last Updated
-2026-07-03 — verified against commit `10bd79b`.
+|--
