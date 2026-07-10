@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build
+dist/
+coverage/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+
+# VitePress
+docs/.vitepress/cache
+docs/.vitepress/dist
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.
+
+cache
