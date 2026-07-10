@@ -205,3 +205,40 @@ def build_notification_flow_from_settings(
         notification_service=notification_service,
         dispatcher=dispatcher,
     )
+
+
+def build_zap_dispatcher(*, dao: BaseOperationDAO, config=None):
+    """Assemble the ZAP queue dispatcher (background worker-pool dispatch).
+
+    Wires the process-wide Pool Manager singletons
+    (``app.integrations.owasp_zap.runtime``) to *dao* and the
+    ``ZapApiScanService`` singleton. The returned dispatcher is not started —
+    the caller (``app/core/startup.py``) is responsible for
+    ``.start()``/``.stop()`` as part of the app lifespan, matching this
+    module's existing "assemble here, run there" split.
+
+    Args:
+        dao: The persistence backend for operations — required, since a
+            dispatcher with nowhere to read the queue from cannot do
+            anything. Callers should only invoke this when
+            ``DATABASE_PROVIDER`` is not ``NONE``.
+        config: Settings object; defaults to ``app.core.config.settings``.
+
+    Returns:
+        A ready, unstarted ``OwaspZapDispatcher``.
+    """
+    if config is None:
+        from app.core.config import settings as config  # noqa: PLC0415
+
+    from app.integrations.owasp_zap.runtime import pool_manager  # noqa: PLC0415
+    from app.services.tools.owasp_zap.api_scanner import ZapApiScanService  # noqa: PLC0415
+    from app.services.tools.owasp_zap.dispatcher import OwaspZapDispatcher  # noqa: PLC0415
+
+    return OwaspZapDispatcher(
+        operation_dao=dao,
+        pool_manager=pool_manager,
+        scan_service=ZapApiScanService(),
+        queue_poll_interval_seconds=config.zap_queue_poll_interval_seconds,
+        heartbeat_sweep_interval_seconds=config.zap_worker_heartbeat_sweep_interval_seconds,
+        heartbeat_timeout_seconds=config.zap_worker_heartbeat_timeout_seconds,
+    )

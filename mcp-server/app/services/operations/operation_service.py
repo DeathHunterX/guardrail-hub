@@ -62,7 +62,12 @@ class OperationService:
         metadata: Optional[dict[str, Any]] = None,
         log_path: Optional[str] = None,
     ) -> str:
-        """Create a new PENDING operation, persist it, and publish ``operation.created``.
+        """Create a new QUEUED operation, persist it, and publish ``operation.created``.
+
+        The operation is persisted with ``status=QUEUED`` — this *is* the work
+        queue entry. A Pool Manager (or equivalent dispatcher) later fetches
+        queued operations ordered by creation time and assigns them to a
+        registered worker; nothing is held in an in-memory queue.
 
         Args:
             batch_type: Category / tool type for this operation (see ``BatchType``).
@@ -75,7 +80,7 @@ class OperationService:
         operation_id = f"{batch_type}:{self._id_suffix()}"
         self._dao.create_operation(
             op_id=operation_id,
-            status=OperationStatus.PENDING,
+            status=OperationStatus.QUEUED,
             metadata=metadata or {},
             batch_type=batch_type,
             log_path=log_path,

@@ -121,3 +121,50 @@ class BaseOperationDAO(ABC):
         Raises:
             Exception: Any driver-level error from the underlying backend.
         """
+
+    # ── Queue (the Operations table *is* the queue — no in-memory queue) ──────
+
+    def get_queued_operations(self) -> list[OperationRecord]:
+        """
+        Return every ``QUEUED`` operation, oldest first (FIFO by ``created_at``).
+
+        This is what the Pool Manager polls instead of maintaining an
+        in-memory waiting queue — queued operations, and therefore pending
+        requests, survive a server restart because they live here.
+
+        The default implementation is a correct but not necessarily
+        efficient fallback built on :meth:`get_by_status`; backends should
+        override it with a native ordered query (e.g. ``ORDER BY created_at
+        ASC`` in PostgreSQL) when that's cheaper than sorting in Python.
+
+        Raises:
+            Exception: Any driver-level error from the underlying backend.
+        """
+        from app.schemas.tools.owasp_zap.common import OperationStatus  # noqa: PLC0415
+
+        records = self.get_by_status(OperationStatus.QUEUED)
+        return sorted(records, key=lambda r: r.created_at)
+
+    # ── Startup schema readiness ────────────────────────────────────────────
+
+    def initialize_schema(self) -> None:
+        """
+        Verify (and, where applicable, apply) the schema this backend needs
+        before the server accepts requests.
+
+        Part of the startup sequence: Database Ready -> Run Migrations ->
+        Verify required tables -> Initialize services -> Start HTTP Server ->
+        Accept Requests. Must raise on any failure so startup aborts with a
+        non-zero exit code rather than serving requests against a missing or
+        stale schema.
+
+        The default implementation is a no-op (e.g. an in-memory test fake
+        has no schema to verify). Real backends
+        (:class:`~app.dao.postgres.operation_dao.PostgresOperationDAO`,
+        :class:`~app.dao.dynamodb.operation_dao.DynamoDBOperationDAO`)
+        override this.
+
+        Raises:
+            Exception: If the schema cannot be verified or brought up to date.
+        """
+        return None

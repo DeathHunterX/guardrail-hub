@@ -16,6 +16,7 @@ from app.constants.paths import ReportPaths
 from app.core.config import settings
 from app.routers.endpoints import MCP_OPERATIONS, tools_router
 from app.routers.public.health_router import health_router
+from app.routers.public.zap_worker_router import zap_worker_router
 
 # ---------------------------------------------------------------------------
 # Platform lifecycle notifications (operational visibility).
@@ -41,6 +42,17 @@ def _install_fatal_error_hook(reporter) -> None:
 
 @asynccontextmanager
 async def lifespan(_app):
+    # Steps 1-4 of the startup sequence (Database Ready -> Run Migrations ->
+    # Verify required tables -> Initialize services) run FIRST and
+    # deliberately OUTSIDE the defensive try/except below: a schema failure
+    # here must propagate out of this function so uvicorn aborts startup with
+    # a non-zero exit code rather than serving requests against a bad schema.
+    # Only after this succeeds do steps 5-6 (start server, accept requests)
+    # happen — which, for uvicorn, is exactly "this lifespan startup returns".
+    from app.core.startup import run_startup_sequence
+
+    zap_dispatcher = run_startup_sequence(settings)
+
     reporter = None
     try:
         from app.bootstrap import build_platform_reporter
@@ -83,6 +95,12 @@ async def lifespan(_app):
 
     yield
 
+    if zap_dispatcher is not None:
+        try:
+            zap_dispatcher.stop()
+        except Exception:  # noqa: BLE001 - shutdown must never crash teardown
+            pass
+
     try:
         if reporter is not None:
             from app.services.platform.lifecycle import report_shutdown
@@ -111,6 +129,7 @@ if settings.cors_enabled:
 
 # Routers
 app.include_router(health_router)
+app.include_router(zap_worker_router)
 app.include_router(tools_router)
 
 # Static files — generic public asset server (reports, future tools UI, etc.)
@@ -136,15 +155,19 @@ mcp.setup_server()
 
 @app.get("/")
 async def root():
+    from app.integrations.owasp_zap.runtime import registry as zap_worker_registry
+
+    workers = zap_worker_registry.list_all()
     return {
         "name": "guardrail-mcp-server",
         "mode": settings.mcp_mode,
         "token_authority": settings.token_authority,
         "database_provider": settings.database_provider,
-        "zap_container_prefix": settings.zap_container_name_prefix,
-        "zap_containers": settings.zap_amount_of_containers,
+        "zap_workers_registered": len(workers),
+        "zap_workers_idle": sum(1 for w in workers if w.is_schedulable),
         "status": "running",
         "health": "/health",
+        "workers": "/workers",
         "mcp": "/mcp",
         "tools": MCP_OPERATIONS,
     }

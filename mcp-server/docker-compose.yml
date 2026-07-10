@@ -70,9 +70,23 @@ services:
     build:
       context: .
       dockerfile: docker/owasp_zap/Dockerfile
-    container_name: guardrail-zap
+    # No container_name: fixing a name blocks `docker compose up --scale
+    # zap=N` (every replica would collide on it). Each replica gets Docker's
+    # own generated name/hostname and self-registers via that — see
+    # docker/owasp_zap/register-worker.sh.
     profiles:
       - zap
+    depends_on:
+      mcp-server:
+        condition: service_started
+    environment:
+      # Consumed by register-worker.sh (the entrypoint's sidecar), not by ZAP
+      # itself. There is no worker name/prefix/index here — see that script.
+      MCP_SERVER_INTERNAL_URL: "http://mcp-server:${MCP_SERVER_PORT:-8787}"
+      ZAP_API_PORT: "8080"
+      ZAP_API_KEY: "${OWASP_ZAP_API_KEY:-change-this-zap-key}"
+      ZAP_WORKER_HEARTBEAT_INTERVAL_SECONDS: "${ZAP_WORKER_HEARTBEAT_INTERVAL_SECONDS:-20}"
+      ZAP_READY_STABLE_SUCCESS_COUNT: "${ZAP_READY_STABLE_SUCCESS_COUNT:-3}"
     command:
       - zap.sh
       - -addonuninstall
@@ -100,8 +114,11 @@ services:
       - "8080"
       - "8090"
     volumes:
-      - ./data/zap:/zap/wrk
-      - ./reports/zap:/zap/reports
+      # Anonymous (not host-path) volumes: with `--scale zap=N`, every
+      # replica needs its own working/report directory. A shared host-path
+      # bind mount here would have every replica writing to the same files.
+      - /zap/wrk
+      - /zap/reports
     restart: unless-stopped
     networks:
       - app-network

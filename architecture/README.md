@@ -13,5 +13,6 @@ No placeholder folders are created ahead of need — per the repo's existing ant
 | Subfolder | Status | Entry point |
 |---|---|---|
 | [`chatops/`](chatops/README.md) | Design (not yet built) | [`chatops/README.md`](chatops/README.md) — related: [ADR 0004](../.ai/decisions/0004-chatops-platform-architecture.md) |
+| [`zap-worker-pool/`](zap-worker-pool/README.md) | Implemented | [`zap-worker-pool/README.md`](zap-worker-pool/README.md) |
 
 Planned future entries (not yet created): `mcp/`, `platform/`, `security/`, `integrations/` — add a subfolder here as each subsystem's architecture is actually designed.
