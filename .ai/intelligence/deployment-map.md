@@ -30,22 +30,24 @@ graph TD
 |---|---|---|---|---|---|
 | `mcp-server` | `docker-compose.yml`, build `docker/fastapi/Dockerfile` | `${MCP_SERVER_PORT:-8787}:8787` | `./app`, `./config`, `./data`, `./logs`, `./public` | default | Yes |
 | `postgres` | `postgres:16-alpine` | `${POSTGRES_PORT:-5432}:5432` | `postgres-data:/var/lib/postgresql/data` | `postgres`, `local-db` | Only with profile |
-| `zap` | build `docker/owasp_zap/Dockerfile` | 8080/8090 (container-internal only, not host-mapped) | `./data/zap:/zap/wrk`, `./reports/zap:/zap/reports` | `zap` | Only with profile |
+| `zap` | build `docker/owasp_zap/Dockerfile` | 8080/8090 (container-internal only, not host-mapped) | anonymous `/zap/wrk`, `/zap/reports` (not host-path — see below) | `zap` | Only with profile |
 
 Network: single bridge network `app-network`. Named volume: `postgres-data`.
+
+**`zap` supports `docker compose --profile zap up --scale zap=N`** with no application configuration change. It has no `container_name` (a fixed name would collide across replicas under `--scale`), and its `/zap/wrk`/`/zap/reports` volumes are anonymous rather than host-path bind mounts — every replica needs its own working directory, not one shared across all of them. Each replica self-registers with `mcp-server` on startup (see Dockerfiles below); there is no `ZAP_CONTAINER_NAME_PREFIX`/`ZAP_AMOUNT_OF_CONTAINERS` config anywhere — the Worker Registry (`app/integrations/owasp_zap/registry.py`) is the single source of truth for how many workers exist and where they are. See `architecture/zap-worker-pool/README.md` at the repo root for the full design.
 
 ### Dockerfiles
 
 | File | Base | Builds |
 |---|---|---|
 | `mcp-server/docker/fastapi/Dockerfile` | `python:3.12-slim` | Installs `uv`, runs `uv sync --frozen --no-dev` against `pyproject.toml`/`uv.lock`, copies `app/` + `config/`, creates `data/logs/reports` dirs, exposes 8787, runs `uvicorn app.main:app --reload` |
-| `mcp-server/docker/owasp_zap/Dockerfile` | `zaproxy/zap-stable` | Creates `/zap/sessions` owned by uid/gid 1000 |
+| `mcp-server/docker/owasp_zap/Dockerfile` | `zaproxy/zap-stable` | Creates `/zap/sessions` owned by uid/gid 1000; installs `curl`; sets `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]`, which runs ZAP (the container's `command:`) alongside `register-worker.sh` — the self-registration/heartbeat sidecar (`POST /workers/register`, periodic `POST /workers/heartbeat`, `DELETE /workers/{id}` on graceful shutdown) |
 
 **No Dockerfile exists for `web/`** — it is not containerized; it runs via `next dev`/`next start` directly. No Dockerfile exists at the repository root either.
 
 ### Kubernetes / Helm
 
-None. No manifests, no Helm charts anywhere in the repository. The root README mentions Kubernetes only as a future scaling consideration for ZAP workloads (self-hosted runners, queue-based jobs) — this is aspirational, not implemented.
+None. No manifests, no Helm charts anywhere in the repository — this is still aspirational, not implemented. The ZAP worker pool's design (self-registration + heartbeat, no server-side hostname generation, Registry as source of truth) is deliberately orchestrator-agnostic so a future Kubernetes Deployment/StatefulSet of ZAP pods could reuse the same `/workers/register` and `/workers/heartbeat` protocol without server-side changes — but no manifests exist yet.
 
 ### CI/CD
 
@@ -72,4 +74,4 @@ Only a local/dev environment is evidenced (Docker Compose with `${VAR:-default}`
 [technology-stack.md](technology-stack.md) · [security-map.md](security-map.md) · [system-overview.md](system-overview.md)
 
 ## Last Updated
-2026-07-03 — verified against commit `10bd79b`.
+2026-07-10 — updated for the ZAP Worker Pool refactor (scalable `zap` service, self-registration sidecar).

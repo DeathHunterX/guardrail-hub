@@ -15,7 +15,7 @@ This is the authoritative endpoint list — do not assume an endpoint exists bec
 
 | Group | Prefix | Router file | MCP-exposed? |
 |---|---|---|---|
-| Public | — / `/health*` / `/tools/history/*` | `app/routers/public/` | No |
+| Public | — / `/health*` / `/tools/history/*` / `/workers*` | `app/routers/public/` | No |
 | MCP Tools | `/tools/zap/*` | `app/routers/mcp/owasp_zap_router.py` | Yes (partially — one operation) |
 | Internal | `/internal/*` (planned) | `app/routers/internal/token_router.py` | No — file is empty, not wired up |
 
@@ -23,15 +23,22 @@ This is the authoritative endpoint list — do not assume an endpoint exists bec
 
 | Method & Path | Router | Purpose | MCP operation ID | Auth required |
 |---|---|---|---|---|
-| `GET /` | `main.py` | Root/liveness | — | None |
+| `GET /` | `main.py` | Root/liveness + live worker-registry counts | — | None |
 | `GET /health` | `public/health_router.py` | Basic health | — | None |
 | `GET /health/live` | `public/health_router.py` | Liveness probe (used by Docker Compose healthcheck) | — | None |
 | `GET /health/ready` | `public/health_router.py` | Readiness probe | — | None |
-| `POST /tools/zap/scan_api` | `mcp/owasp_zap_router.py` | Run a ZAP API scan | `zap_scan_api` | None enforced |
+| `POST /tools/zap/scan_api` | `mcp/owasp_zap_router.py` | Queue a ZAP API scan (`status=QUEUED`; does not wait for a worker) | `zap_scan_api` | None enforced |
 | `GET /tools/history/get-result` | `public/history_router.py` | Fetch a specific scan result | `get_result` | None enforced |
 | `GET /tools/history/ids/{batch_type}` | `public/history_router.py` | List operation IDs by batch type | `list_ids_by_type` | None enforced |
 | `GET /tools/history/list` | `public/history_router.py` | List operations | `list_operations` | None enforced |
+| `POST /workers/register` | `public/zap_worker_router.py` | ZAP worker self-registration (called by the worker container at startup) | — (not MCP-exposed) | None enforced |
+| `POST /workers/heartbeat` | `public/zap_worker_router.py` | ZAP worker heartbeat; 404 if unknown (worker should re-register) | — (not MCP-exposed) | None enforced |
+| `GET /workers` | `public/zap_worker_router.py` | List every registered worker (observability) | — (not MCP-exposed) | None enforced |
+| `POST /workers/{worker_id}/drain` | `public/zap_worker_router.py` | Begin graceful maintenance (Active → Draining) | — (not MCP-exposed) | None enforced |
+| `DELETE /workers/{worker_id}` | `public/zap_worker_router.py` | Hard-remove a worker (manual/scale-down cleanup); fails its in-flight operation, if any | — (not MCP-exposed) | None enforced |
 | `/mcp` (mount) | `main.py` (`FastApiMCP`) | MCP protocol entry point | exposes `MCP_OPERATIONS` whitelist | None enforced |
+
+`/workers/*` is deliberately excluded from `MCP_OPERATIONS` (`app/routers/endpoints.py`) — it's infrastructure plumbing called by ZAP worker containers, not a tool an LLM client should invoke.
 
 Schemas exist for website scan and interactive scan (`app/schemas/tools/owasp_zap/website_scan.py`, `interactive_website_scan.py`) but **no router currently exposes them** — only the API-batch-scan path (`zap_scan_api`) is wired into `endpoints.py`.
 
@@ -63,8 +70,9 @@ Both entry paths (MCP and direct HTTP) converge on the same router handler funct
 
 | Endpoint group | Owning service |
 |---|---|
-| `/tools/zap/*` | `ZapApiScanService` (`app/services/tools/owasp_zap/api_scanner.py`) |
+| `/tools/zap/*` | `ZapApiScanService` (`app/services/tools/owasp_zap/api_scanner.py`) — queues only; `OwaspZapDispatcher` (`app/services/tools/owasp_zap/dispatcher.py`) later assigns and runs it |
 | `/tools/history/*` | `HistoryService` (`app/services/public/history_service.py`) |
+| `/workers/*` | `OwaspZapWorkerRegistry` (`app/integrations/owasp_zap/registry.py`), via the process-wide singleton in `app/integrations/owasp_zap/runtime.py` |
 | `/health*` | None — handled directly in the router, no service layer |
 
 ### Authentication Requirements
@@ -81,4 +89,4 @@ Treat every endpoint in this document as **open** until `security-map.md`'s auth
 [codegraph.md](codegraph.md) · [security-map.md](security-map.md) · [database-map.md](database-map.md)
 
 ## Last Updated
-2026-07-03 — verified against commit `10bd79b`.
+2026-07-10 — updated for the ZAP Worker Pool refactor (added `/workers/*`).

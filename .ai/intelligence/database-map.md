@@ -7,7 +7,9 @@ Document the persisted data model, its ownership, and how data flows into and ou
 `mcp-server/`'s persistence layer only. There is no database in `web/` (no Prisma, no ORM, no data layer — see [dependency-graph.md](dependency-graph.md)).
 
 ## AI Usage Guidance
-There is no ORM in this codebase — do not introduce SQLAlchemy models or a migration framework without checking with the team first; the existing pattern is a hand-written DAO layer over raw `psycopg2`/`boto3`. Extend that pattern rather than introducing a second persistence style.
+There is no ORM in this codebase — do not introduce SQLAlchemy models or a migration framework (Alembic, etc.) without checking with the team first; the existing pattern is a hand-written DAO layer over raw `psycopg2`/`boto3`, now with a minimal hand-written SQL migration runner (`app/dao/postgres/migration_runner.py`) for the Postgres backend only. Extend that pattern rather than introducing a second persistence style.
+
+`OperationRecord.status = QUEUED` **is** the ZAP worker pool's work queue — there is no separate in-memory queue table or structure. See `architecture/zap-worker-pool/README.md` at the repo root.
 
 ## Main Content
 
@@ -68,14 +70,23 @@ flowchart LR
     Read --> HistoryRouter[history_router responses]
 ```
 
-Writes happen once, at the end of a scan (`ZapApiScanService`). Reads happen through `HistoryService`, backing the `/tools/history/*` endpoints (see [api-map.md](api-map.md)). There is no update or delete path currently implemented — records are write-once, read-many.
+A write also happens at operation *creation* now (`status=QUEUED`, with the full scan request under `metadata["request"]`), and again at every status transition (`QUEUED → RUNNING → COMPLETED/FAILED`) as the ZAP Pool Manager's dispatcher picks it up and runs it — not just once at the end. Reads happen through `HistoryService` (`/tools/history/*`, see [api-map.md](api-map.md)) and through the dispatcher's own `get_queued_operations()` poll. There is still no update path for arbitrary fields, and no delete path — only status/result/error transitions.
 
 ### Schema Migrations
 
-No migration tooling (Alembic, Prisma Migrate, etc.) was found. Postgres schema setup, if any, is not present in the repository as SQL files — treat the Postgres schema as undocumented/implicit until DDL is located or written.
+A minimal, dependency-free SQL migration runner exists for the Postgres backend: `app/dao/postgres/migration_runner.py` applies the versioned `.sql` files under `app/dao/postgres/migrations/` (tracked in a hand-written `schema_migrations` table — not Alembic/Prisma Migrate, consistent with the no-ORM rule above) and is invoked by `PostgresOperationDAO.initialize_schema()` during the app's startup sequence (`app/core/startup.py`), before the server accepts requests. A migration failure aborts startup with a non-zero exit code.
+
+Current migrations:
+
+| File | Adds |
+|---|---|
+| `0001_create_operations_table.sql` | The `operations` table (unchanged shape from the original hand-documented DDL) |
+| `0002_add_operations_queue_index.sql` | `idx_operations_status_created_at` — supports `get_queued_operations()`'s `WHERE status = 'queued' ORDER BY created_at ASC` |
+
+DynamoDB has no migration concept; `DynamoDBOperationDAO.initialize_schema()` verifies the table exists (`.table.load()`) and, only when `DYNAMODB_ENDPOINT_URL` is set (local/emulator mode), auto-creates it — against real AWS a missing table raises rather than being created by the app.
 
 ## Related Documents
 [api-map.md](api-map.md) · [codegraph.md](codegraph.md) · [deployment-map.md](deployment-map.md)
 
 ## Last Updated
-2026-07-03 — verified against commit `10bd79b`.
+2026-07-10 — updated for the ZAP Worker Pool refactor (persisted queue, Postgres migration runner).

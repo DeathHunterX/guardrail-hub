@@ -23,7 +23,7 @@ Python files and identifiers under `mcp-server/app/`.
 ## Rule Definitions
 - **R1** File names are `snake_case` (`owasp_zap_router.py`, `api_scanner.py`).
 - **R2** Class names are `PascalCase`.
-- **R3** Tool-specific classes use `<Tool><Role>` (`ZapApiScanService`, `ZapClient`, `OwaspZapPool`); generic infrastructure uses `<Role>` (`PostgresDAO`, `Settings`, `MCPLogger`).
+- **R3** Tool-specific classes use `<Tool><Role>` (`ZapApiScanService`, `ZapClient`, `OwaspZapPoolManager`, `OwaspZapWorkerRegistry`); generic infrastructure uses `<Role>` (`PostgresDAO`, `Settings`, `MCPLogger`).
 - **R4** Tool-specific Pydantic models are prefixed with the tool name (`ZapApiTarget`, `ZapScanResult`, `ZapInteractiveScanRequest`).
 
 ## Mandatory Rules
