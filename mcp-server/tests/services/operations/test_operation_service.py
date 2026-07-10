@@ -75,13 +75,13 @@ class OperationServiceTests(unittest.TestCase):
 
     # --- creation + event publication (the end-to-end goal of this slice) ---
 
-    def test_create_persists_pending_operation(self):
+    def test_create_persists_queued_operation(self):
         op_id = self.service.create("api_scan", metadata={"target_url": "https://x"})
 
         self.assertEqual(op_id, "api_scan:fixed123")
         record = self.dao.get_operation(op_id)
         self.assertIsNotNone(record)
-        self.assertEqual(record.status, OperationStatus.PENDING)
+        self.assertEqual(record.status, OperationStatus.QUEUED)
         self.assertEqual(record.batch_type, "api_scan")
         self.assertEqual(record.metadata, {"target_url": "https://x"})
 

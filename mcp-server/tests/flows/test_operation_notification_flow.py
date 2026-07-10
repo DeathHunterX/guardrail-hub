@@ -113,7 +113,7 @@ class OperationNotificationFlowTests(unittest.TestCase):
 
     def test_persistence_still_happens_alongside_notification(self):
         op_id = self.flow.operation_service.create("api_scan")
-        self.assertEqual(self.dao.get_operation(op_id).status, OperationStatus.PENDING)
+        self.assertEqual(self.dao.get_operation(op_id).status, OperationStatus.QUEUED)
 
 
 if __name__ == "__main__":
