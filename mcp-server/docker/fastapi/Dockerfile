@@ -23,4 +23,13 @@ RUN mkdir -p /app/data /app/logs /app/reports
 
 EXPOSE 8787
 
-CMD ["sh", "-c", "uvicorn app.main:app --host ${MCP_SERVER_HOST:-0.0.0.0} --port ${MCP_SERVER_PORT:-8787} --reload"]
+# `exec` so uvicorn becomes PID 1 and receives SIGTERM directly (docker stop /
+# Docker Desktop Stop) — without it the shell holds PID 1 and the signal never
+# reaches uvicorn, so the FastAPI lifespan shutdown (and the platform shutdown
+# notification) never runs.
+#
+# Hot-reload is opt-in via UVICORN_RELOAD, because `uvicorn --reload` kills its
+# worker without running lifespan shutdown, which suppresses the notification.
+# Default (unset) => reliable graceful shutdown. Set UVICORN_RELOAD=1 in dev if
+# you want hot-reload (accepting that shutdown notifications won't fire then).
+CMD ["sh", "-c", "exec uvicorn app.main:app --host ${MCP_SERVER_HOST:-0.0.0.0} --port ${MCP_SERVER_PORT:-8787} ${UVICORN_RELOAD:+--reload}"]

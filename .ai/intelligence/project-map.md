@@ -20,6 +20,7 @@ graph TD
     Root --> Mobile[mobile/]
     Root --> Api[api/]
     Root --> Docs[docs/]
+    Root --> Architecture[architecture/]
     Root --> AI[.ai/]
     Root --> ClaudeDir[.claude/]
 ```
@@ -30,7 +31,8 @@ graph TD
 | `web/` | **Scaffolded** | Next.js frontend; currently a marketing landing page, no product features |
 | `mobile/` | **Empty scaffold** | `android/` and `apple/` subfolders, both completely empty |
 | `api/` | **Empty, reserved** | No files |
-| `docs/` | **Empty, reserved** | No files |
+| `docs/` | **Empty, reserved** | Gitignored; reserved for a Docusaurus site (MCP server + API reference docs) |
+| `architecture/` | **Active** | Design/architecture docs, one subfolder per subsystem (currently `chatops/` only) — see [`architecture/README.md`](../../architecture/README.md) |
 | `.ai/` | **Active** | AIOS knowledge system for AI assistants — see [`.ai/README.md`](../README.md) |
 | `.claude/` | **Config only** | `settings.local.json`, Claude Code permission allowlist |
 
