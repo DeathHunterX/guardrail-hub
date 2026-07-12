@@ -6,10 +6,16 @@ is intentionally NOT here — it already has its abstraction in
 """
 
 from app.core.ports.event_publisher import DomainEvent, EventPublisher
-from app.core.ports.notification_channel import NotificationChannel
+from app.core.ports.notification_channel import (
+    ChannelCapabilities,
+    MessageRef,
+    NotificationChannel,
+)
 
 __all__ = [
+    "ChannelCapabilities",
     "DomainEvent",
     "EventPublisher",
+    "MessageRef",
     "NotificationChannel",
 ]

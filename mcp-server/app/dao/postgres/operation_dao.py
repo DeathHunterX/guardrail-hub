@@ -311,7 +311,9 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
             A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
             oldest first.
         """
-        self._logger.info("Fetching queued operations from PostgreSQL")
+        # High-frequency dispatcher poll: DEBUG so production logs stay clean.
+        # The dispatcher emits INFO only when the queue depth actually changes.
+        self._logger.debug("Polling queued operations from PostgreSQL")
 
         conn = self._connect()
         try:

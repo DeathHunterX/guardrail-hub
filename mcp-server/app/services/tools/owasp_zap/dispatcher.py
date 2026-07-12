@@ -23,22 +23,29 @@ the ASGI server uses one worker process or several.
 """
 
 import threading
+import time
 from typing import Optional
 
 from app.core.mcp_logger import MCPLogger
 from app.dao.base import BaseOperationDAO
 from app.integrations.owasp_zap.pool import OwaspZapPoolManager
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.schemas.tools.owasp_zap.worker import ZapWorkerLifecycleState
+from app.services.operations.operation_service import OperationService
 from app.services.tools.owasp_zap.api_scanner import ZapApiScanService
 
 
 class OwaspZapDispatcher:
     """Background dispatcher tying the Operations queue to the Pool Manager."""
 
+    # How often the periodic dispatcher health summary is emitted at INFO.
+    # A liveness heartbeat for operators without the per-tick polling noise.
+    _HEALTH_SUMMARY_INTERVAL_SECONDS: float = 300.0
+
     def __init__(
         self,
         *,
         operation_dao: BaseOperationDAO,
+        operation_service: OperationService,
         pool_manager: OwaspZapPoolManager,
         scan_service: ZapApiScanService,
         queue_poll_interval_seconds: float,
@@ -46,6 +53,10 @@ class OwaspZapDispatcher:
         heartbeat_timeout_seconds: float,
     ) -> None:
         self._operation_dao = operation_dao
+        # FAILED transitions go through OperationService (state + persistence +
+        # event). The DAO is retained only for queue *reads* (get_queued_operations),
+        # which OperationService does not own. Scheduling/sweep logic is unchanged.
+        self._operation_service = operation_service
         self._pool_manager = pool_manager
         self._scan_service = scan_service
         self._queue_poll_interval = queue_poll_interval_seconds
@@ -56,6 +67,12 @@ class OwaspZapDispatcher:
         self._stop_event = threading.Event()
         self._queue_thread: Optional[threading.Thread] = None
         self._sweep_thread: Optional[threading.Thread] = None
+
+        # Observability state (logging only — no effect on scheduling).
+        # Last observed queue depth, so INFO is emitted on change rather than
+        # on every poll; and the timestamp of the last health summary.
+        self._last_queue_length: Optional[int] = None
+        self._last_summary_monotonic: float = 0.0
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
@@ -103,6 +120,14 @@ class OwaspZapDispatcher:
 
     def _dispatch_queued_operations(self) -> None:
         queued = self._operation_dao.get_queued_operations()
+
+        # Every poll is DEBUG-only so it never floods production logs.
+        self._logger.debug("Polling queued operations (found %d)", len(queued))
+        # Meaningful signal (queue depth change) is promoted to INFO here.
+        self._log_queue_depth_change(len(queued))
+        # Periodic liveness summary, independent of whether work was found.
+        self._maybe_log_health_summary()
+
         if not queued:
             return
 
@@ -123,14 +148,54 @@ class OwaspZapDispatcher:
                     exc,
                 )
                 self._pool_manager.release_worker(worker.worker_id, operation.operation_id)
-                self._operation_dao.update_operation_status(
-                    operation_id=operation.operation_id,
-                    status=OperationStatus.FAILED,
-                    error=f"Could not reconstruct scan request from metadata: {exc}",
+                self._operation_service.fail(
+                    operation.operation_id,
+                    f"Could not reconstruct scan request from metadata: {exc}",
                 )
                 continue
 
             self._scan_service.run_assigned_scan(operation.operation_id, request, worker)
+
+    # ── Observability helpers (logging only) ─────────────────────────────
+
+    def _log_queue_depth_change(self, current_length: int) -> None:
+        """Emit INFO only when the queue depth actually changes.
+
+        The first observation announces an existing backlog (if any); after
+        that, transitions are logged as ``X -> Y``. Steady-state polling never
+        produces a line here.
+        """
+        previous = self._last_queue_length
+        if previous is None:
+            if current_length > 0:
+                self._logger.info("Found %d queued operation(s)", current_length)
+        elif current_length != previous:
+            self._logger.info(
+                "Queue length changed: %d -> %d", previous, current_length
+            )
+        self._last_queue_length = current_length
+
+    def _maybe_log_health_summary(self) -> None:
+        """Emit a concise dispatcher health summary at most once per interval."""
+        now = time.monotonic()
+        if now - self._last_summary_monotonic < self._HEALTH_SUMMARY_INTERVAL_SECONDS:
+            return
+        self._last_summary_monotonic = now
+        self._logger.info(self._build_health_summary())
+
+    def _build_health_summary(self) -> str:
+        """Build a one-line snapshot of worker pool and queue state."""
+        workers = self._pool_manager.registry.list_all()
+        active = [w for w in workers if w.state == ZapWorkerLifecycleState.ACTIVE]
+        busy = [w for w in active if w.op_id is not None]
+        idle = [w for w in active if w.op_id is None]
+        running = [w for w in workers if w.op_id is not None]
+        queue_length = self._last_queue_length or 0
+        return (
+            "Dispatcher health — "
+            f"active={len(active)}, idle={len(idle)}, busy={len(busy)}, "
+            f"queue={queue_length}, running={len(running)}"
+        )
 
     # ── Heartbeat sweep loop ─────────────────────────────────────────────
 
@@ -150,10 +215,9 @@ class OwaspZapDispatcher:
                 worker_id,
                 operation_id,
             )
-            self._operation_dao.update_operation_status(
-                operation_id=operation_id,
-                status=OperationStatus.FAILED,
-                error=(
+            self._operation_service.fail(
+                operation_id,
+                (
                     f"Worker '{worker_id}' stopped sending heartbeats and was marked Offline "
                     "while this operation was running. Resubmit if you want to retry."
                 ),

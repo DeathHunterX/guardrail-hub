@@ -29,6 +29,10 @@ EVENT_OPERATION_STARTED = "operation.started"
 EVENT_OPERATION_COMPLETED = "operation.completed"
 EVENT_OPERATION_FAILED = "operation.failed"
 EVENT_OPERATION_CANCELLED = "operation.cancelled"
+# Optional, intermediate progress between STARTED and a terminal event. Emitting
+# it is opt-in: a tool that can report progress calls report_progress(); one
+# that cannot simply never does, and only the guaranteed lifecycle events flow.
+EVENT_OPERATION_PROGRESS = "operation.progress"
 
 
 def _default_id_suffix() -> str:
@@ -61,6 +65,7 @@ class OperationService:
         batch_type: str,
         metadata: Optional[dict[str, Any]] = None,
         log_path: Optional[str] = None,
+        operation_id: Optional[str] = None,
     ) -> str:
         """Create a new QUEUED operation, persist it, and publish ``operation.created``.
 
@@ -73,11 +78,15 @@ class OperationService:
             batch_type: Category / tool type for this operation (see ``BatchType``).
             metadata: Arbitrary creation-time context (targets, config, ...).
             log_path: Optional path to the operation's log file.
+            operation_id: Optional caller-supplied id. When given it is used
+                verbatim (a tool that already owns an id scheme keeps it);
+                when ``None`` the ``"<batch_type>:<suffix>"`` form is generated.
 
         Returns:
-            The newly created operation id (``"<batch_type>:<suffix>"``).
+            The newly created operation id (caller-supplied, or
+            ``"<batch_type>:<suffix>"``).
         """
-        operation_id = f"{batch_type}:{self._id_suffix()}"
+        operation_id = operation_id or f"{batch_type}:{self._id_suffix()}"
         self._dao.create_operation(
             op_id=operation_id,
             status=OperationStatus.QUEUED,
@@ -95,14 +104,33 @@ class OperationService:
         )
         self._publish(EVENT_OPERATION_STARTED, operation_id)
 
-    def complete(self, operation_id: str, result: Any = None) -> None:
-        """Transition an operation to COMPLETED and publish ``operation.completed``."""
+    def complete(
+        self,
+        operation_id: str,
+        result: Any = None,
+        *,
+        findings: Optional[dict[str, Any]] = None,
+    ) -> None:
+        """Transition an operation to COMPLETED and publish ``operation.completed``.
+
+        Args:
+            operation_id: The operation to complete.
+            result: Full result payload persisted to storage (unchanged).
+            findings: Optional generic severity breakdown (e.g.
+                ``{"critical": 0, "high": 1, ...}``) forwarded in the published
+                event so the notification layer can render a summary without
+                loading or parsing the persisted result. Tool-agnostic: any tool
+                that has a severity summary passes one; those that don't omit it.
+        """
         self._dao.update_operation_status(
             operation_id=operation_id,
             status=OperationStatus.COMPLETED,
             result=result,
         )
-        self._publish(EVENT_OPERATION_COMPLETED, operation_id)
+        extra: dict[str, Any] = {}
+        if findings is not None:
+            extra["findings"] = findings
+        self._publish(EVENT_OPERATION_COMPLETED, operation_id, **extra)
 
     def fail(self, operation_id: str, error: str) -> None:
         """Transition an operation to FAILED and publish ``operation.failed``."""
@@ -119,6 +147,41 @@ class OperationService:
             operation_id=operation_id, status=OperationStatus.CANCELLED
         )
         self._publish(EVENT_OPERATION_CANCELLED, operation_id)
+
+    def report_progress(
+        self,
+        operation_id: str,
+        *,
+        stage: Optional[str] = None,
+        progress: Optional[int] = None,
+        message: Optional[str] = None,
+        worker_id: Optional[str] = None,
+    ) -> None:
+        """Publish ``operation.progress`` for an in-flight operation.
+
+        Purely additive to the lifecycle: it does not persist a status change and
+        does not alter any transition — it only emits an intermediate progress
+        event a tool can raise while RUNNING. A tool that cannot report progress
+        never calls this, so the notification layer simply sees no progress
+        events (and platforms without progress support ignore them). The payload
+        stays generic (no tool vocabulary); the notification layer maps it into
+        its own progress model.
+
+        Args:
+            operation_id: The operation this progress refers to.
+            stage: Optional human-readable stage label.
+            progress: Optional completion percentage in ``[0, 100]``.
+            message: Optional free-text detail.
+            worker_id: Optional id of the worker executing the operation.
+        """
+        self._publish(
+            EVENT_OPERATION_PROGRESS,
+            operation_id,
+            stage=stage,
+            progress=progress,
+            message=message,
+            worker_id=worker_id,
+        )
 
     def get(self, operation_id: str) -> "Optional[OperationRecord]":
         """Return an operation by id, delegating to the DAO (or ``None``)."""

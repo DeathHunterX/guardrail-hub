@@ -14,9 +14,15 @@ from fastapi_mcp import FastApiMCP
 
 from app.constants.paths import ReportPaths
 from app.core.config import settings
+from app.core.logging_config import configure_access_logging
 from app.routers.endpoints import MCP_OPERATIONS, tools_router
 from app.routers.public.health_router import health_router
 from app.routers.public.zap_worker_router import zap_worker_router
+
+# Suppress the high-frequency worker-heartbeat access log while keeping access
+# logging enabled for every other endpoint. Done at import time so the filter
+# is in place before uvicorn serves the first request.
+configure_access_logging()
 
 # ---------------------------------------------------------------------------
 # Platform lifecycle notifications (operational visibility).
@@ -51,7 +57,7 @@ async def lifespan(_app):
     # happen — which, for uvicorn, is exactly "this lifespan startup returns".
     from app.core.startup import run_startup_sequence
 
-    zap_dispatcher = run_startup_sequence(settings)
+    startup = run_startup_sequence(settings)
 
     reporter = None
     try:
@@ -95,9 +101,36 @@ async def lifespan(_app):
 
     yield
 
-    if zap_dispatcher is not None:
+    if startup is not None:
+        # 1) Stop assigning new work so no operation starts mid-teardown.
         try:
-            zap_dispatcher.stop()
+            startup.dispatcher.stop()
+        except Exception:  # noqa: BLE001 - shutdown must never crash teardown
+            pass
+
+        # 2) Fail any operation still RUNNING at shutdown so it never hangs in a
+        #    non-terminal state; the user is notified via the existing pipeline
+        #    (still live) before the ticker is stopped below.
+        try:
+            from app.core.startup import (
+                SHUTDOWN_FAILURE_REASON,
+                recover_interrupted_operations,
+            )
+            from app.integrations.owasp_zap.runtime import registry
+
+            recover_interrupted_operations(
+                startup.operation_service,
+                startup.dao,
+                SHUTDOWN_FAILURE_REASON,
+                registry=registry,
+            )
+        except Exception:  # noqa: BLE001 - shutdown recovery must never crash teardown
+            pass
+
+        # 3) Stop the elapsed-time refresh ticker.
+        try:
+            if startup.notifier is not None:
+                startup.notifier.stop()
         except Exception:  # noqa: BLE001 - shutdown must never crash teardown
             pass
 

@@ -120,6 +120,27 @@ class OperationServiceTests(unittest.TestCase):
         self.assertEqual(record.result, {"findings": 3})
         self.assertEqual(self.publisher.events[-1].name, EVENT_OPERATION_COMPLETED)
 
+    def test_complete_forwards_findings_into_the_event(self):
+        # The severity summary must ride the completed event so the notification
+        # can render it without loading/parsing the persisted result.
+        op_id = self.service.create("api_scan")
+        self.publisher.events.clear()
+
+        breakdown = {"critical": 0, "high": 1, "medium": 3, "low": 8, "informational": 12}
+        self.service.complete(op_id, result={"summary": breakdown}, findings=breakdown)
+
+        event = self.publisher.events[-1]
+        self.assertEqual(event.name, EVENT_OPERATION_COMPLETED)
+        self.assertEqual(event.payload["findings"], breakdown)
+
+    def test_complete_without_findings_omits_the_key(self):
+        op_id = self.service.create("api_scan")
+        self.publisher.events.clear()
+
+        self.service.complete(op_id, result="ok")
+
+        self.assertNotIn("findings", self.publisher.events[-1].payload)
+
     def test_fail_sets_failed_with_error_and_publishes(self):
         op_id = self.service.create("api_scan")
         self.publisher.events.clear()

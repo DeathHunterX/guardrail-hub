@@ -17,13 +17,23 @@ class MCPLogger:
         "%(asctime)s | %(name)s | %(levelname)s | %(filename)s:%(lineno)d | %(message)s"
     )
 
-    def __init__(self, log_name: str = "log", log_level: str = "INFO") -> None:
+    def __init__(self, log_name: str = "log", log_level: Optional[str] = None) -> None:
         """Initialize MCPLogger with file and stream handlers.
 
         Args:
             log_name (str): Base name for the log file and logger instance.
-            log_level (str): Logging level (e.g., 'INFO', 'DEBUG').
+            log_level (Optional[str]): Logging level (e.g., 'INFO', 'DEBUG').
+                When omitted, the configured ``LOG_LEVEL`` setting is used so
+                DEBUG-level output can be toggled centrally without touching
+                call sites. Falls back to 'INFO' if settings are unavailable.
         """
+        # Resolve the effective level from settings when the caller did not
+        # pin one explicitly. This keeps every logger consistent with the
+        # configured LOG_LEVEL, so high-frequency DEBUG logs stay silent in
+        # production yet appear the moment LOG_LEVEL=DEBUG is set.
+        if log_level is None:
+            log_level = self._resolve_configured_level()
+
         log_dir: str = "logs"
 
         # Get current date
@@ -69,6 +79,21 @@ class MCPLogger:
             stream_handler = _logging.StreamHandler(sys.stdout)
             stream_handler.setFormatter(formatter)
             self.logger.addHandler(stream_handler)
+
+    @staticmethod
+    def _resolve_configured_level() -> str:
+        """Return the configured ``LOG_LEVEL``, defaulting to 'INFO'.
+
+        Imported lazily and guarded so logging never becomes a hard dependency
+        on settings construction (and to avoid any import cycle during early
+        bootstrap). Any failure degrades gracefully to 'INFO'.
+        """
+        try:
+            from app.core.config import settings  # noqa: PLC0415
+
+            return settings.log_level
+        except Exception:  # pylint: disable=broad-except
+            return "INFO"
 
     def _log(
         self,

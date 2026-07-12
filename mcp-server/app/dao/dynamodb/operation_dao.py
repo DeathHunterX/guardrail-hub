@@ -265,7 +265,11 @@ class DynamoDBOperationDAO(DynamoDBDAO, BaseOperationDAO):
         if not statuses:
             return self.get_all()
 
-        self._logger.info(
+        # DEBUG: status scans are driven by the high-frequency dispatcher poll
+        # (get_queued_operations). Keeping this at DEBUG avoids flooding
+        # production logs; meaningful queue changes are reported by the
+        # dispatcher at INFO instead.
+        self._logger.debug(
             "Scanning operations by statuses=%s from DynamoDB", statuses
         )
 

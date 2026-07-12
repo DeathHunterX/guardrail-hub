@@ -16,12 +16,35 @@ class ZapMixin:
     # registration script — see docker/owasp_zap/register-worker.sh).
     zap_ready_stable_success_count: int = 3
 
-    # How long (seconds) to wait for each scan phase to complete.
-    zap_scan_timeout_seconds: int = 600
+    # Phase timeouts for the naturally-bounded phases (a spider crawl and the
+    # passive-scan queue both terminate on their own), kept as safety limits.
     zap_spider_timeout_seconds: int = 300
     zap_passive_scan_timeout_seconds: int = 120
 
-    # Timeout for a single proxied HTTP request sent through ZAP.
+    # DEPRECATED — the Active Scan no longer has a fixed overall duration limit.
+    # Enterprise Active Scans (and slow rules such as timing-based SQL-injection
+    # checks) can legitimately run for hours, so elapsed time alone is never
+    # treated as a failure. This field is retained only for backward
+    # compatibility with existing configs/env and is NOT used to terminate a
+    # scan; Active Scan liveness is governed by the health model below (see
+    # ``ZapClient.wait_for_active_scan``).
+    zap_scan_timeout_seconds: int = 600
+
+    # ── Active Scan health model (replaces the removed overall timeout) ──────
+    # Stall detection: abort the Active Scan only if it makes NO forward
+    # progress AND ZAP issues no new requests for this long. A slow-but-active
+    # scan keeps ZAP's request counter moving and so keeps resetting this
+    # window — it is NOT a stall. Completely rule-agnostic.
+    zap_scan_stall_timeout_seconds: int = 300
+
+    # ZAP responsiveness grace: how long ZAP's API may fail to respond
+    # (sustained — transient blips are tolerated) before the scan is aborted as
+    # unrecoverable. This is scan-health monitoring, not a duration limit.
+    zap_scan_unresponsive_timeout_seconds: int = 120
+
+    # Communication (transport) timeout for a single HTTP request to ZAP — a
+    # connection/socket-level protection, NOT a scan-duration limit. It bounds
+    # each health poll so a hung ZAP is caught by the responsiveness grace above.
     zap_request_timeout_seconds: float = 30.0
 
     # =====================================================

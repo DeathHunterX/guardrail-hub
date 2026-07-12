@@ -8,7 +8,11 @@ subscribing to domain events) is added when an event source requires it (YAGNI).
 
 from typing import Iterable
 
-from app.core.ports.notification_channel import NotificationChannel
+from app.core.ports.notification_channel import (
+    ChannelCapabilities,
+    MessageRef,
+    NotificationChannel,
+)
 from app.services.notification.notification import Notification
 
 
@@ -17,7 +21,13 @@ class UnknownChannelError(LookupError):
 
 
 class NotificationService:
-    """Routes a notification to a registered channel and delegates delivery."""
+    """Routes a notification to a registered channel and delegates delivery.
+
+    Owns routing and capability lookup, never delivery mechanics: it must contain
+    no Slack/Discord SDK call. Whether to send a new message or update an existing
+    one is a *strategy* decision made upstream (by the notifier) from the
+    capabilities this service exposes — the service just forwards to the adapter.
+    """
 
     def __init__(self, channels: Iterable[NotificationChannel]) -> None:
         """
@@ -32,11 +42,23 @@ class NotificationService:
         """Names of the registered channels."""
         return tuple(self._channels)
 
-    def notify(self, notification: Notification) -> None:
-        """Deliver *notification* through its target channel.
+    def capabilities(self, channel: str) -> ChannelCapabilities:
+        """Return the declared capabilities of a registered channel.
+
+        Raises:
+            UnknownChannelError: If no registered channel matches *channel*.
+        """
+        return self._require(channel).capabilities
+
+    def notify(self, notification: Notification) -> MessageRef:
+        """Deliver *notification* as a new message through its target channel.
 
         Args:
             notification: The message to deliver.
+
+        Returns:
+            A :data:`MessageRef` handle to the delivered message (for a later
+            :meth:`update`), or ``None`` if the channel provides none.
 
         Raises:
             UnknownChannelError: If no registered channel matches
@@ -44,7 +66,29 @@ class NotificationService:
             Exception: Any delivery error raised by the channel adapter
                 propagates to the caller.
         """
-        channel = self._channels.get(notification.channel)
-        if channel is None:
-            raise UnknownChannelError(notification.channel)
-        channel.send(notification.destination, notification.message)
+        channel = self._require(notification.channel)
+        return channel.send(notification.destination, notification.message)
+
+    def update(self, notification: Notification, ref: MessageRef) -> MessageRef:
+        """Edit the message identified by *ref* in place on its target channel.
+
+        Args:
+            notification: The channel/destination and the new message body.
+            ref: The handle a previous :meth:`notify` returned.
+
+        Returns:
+            A :data:`MessageRef` for the (still-updatable) message.
+
+        Raises:
+            UnknownChannelError: If no registered channel matches
+                ``notification.channel``.
+            NotImplementedError: If the channel does not support updates.
+        """
+        channel = self._require(notification.channel)
+        return channel.update(notification.destination, ref, notification.message)
+
+    def _require(self, channel: str) -> NotificationChannel:
+        found = self._channels.get(channel)
+        if found is None:
+            raise UnknownChannelError(channel)
+        return found

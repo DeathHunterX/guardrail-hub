@@ -38,6 +38,23 @@ class ZapNotAvailableError(Exception):
     """Raised when ZAP REST API is unreachable."""
 
 
+class ZapScanHealthError(Exception):
+    """Raised when an Active Scan is aborted because it is no longer healthy.
+
+    "Unhealthy" means ZAP became unresponsive, the scan disappeared from ZAP, or
+    the scan genuinely stalled (no progress and no new requests) — NOT that it
+    ran for a long time. Elapsed time is never a failure. Distinct from a generic
+    exception so the caller can attribute the FAILED state to scan health, and
+    completely rule-agnostic.
+    """
+
+
+# Backward-compatibility alias: earlier code raised/handled ``ZapScanTimeoutError``
+# when the (now removed) fixed overall timeout expired. The concept is gone, but
+# the name is preserved so any external importer keeps working.
+ZapScanTimeoutError = ZapScanHealthError
+
+
 class ZapClient:
     """
     Thread-safe wrapper around ZAPv2 for a single ZAP container.
@@ -70,6 +87,10 @@ class ZapClient:
 
         self._api_url: str = api_url
         self._api_key: str = api_key
+        # Transport-level (communication) timeout applied to every ZAP HTTP call.
+        # Not a scan-duration limit — it bounds each request so a hung ZAP is
+        # detected by the health model instead of blocking forever.
+        self._request_timeout: float = settings.zap_request_timeout_seconds
 
         self._zap: Optional[ZAPv2] = None
         self._zap_lock = threading.Lock()
@@ -89,14 +110,39 @@ class ZapClient:
         if self._zap is None:
             with self._zap_lock:
                 if self._zap is None:
-                    self._zap = ZAPv2(
+                    zap = ZAPv2(
                         apikey=self._api_key,
                         proxies={
                             "http": self._api_url,
                             "https": self._api_url,
                         },
                     )
+                    self._apply_request_timeout(zap)
+                    self._zap = zap
         return self._zap
+
+    def _apply_request_timeout(self, zap: ZAPv2) -> None:
+        """Enforce a transport-level request timeout on every ZAP API call.
+
+        The zaproxy SDK issues its HTTP requests without a default timeout, so a
+        hung ZAP could otherwise block the health-monitoring poll loop forever.
+        Injecting a default ``timeout`` on the shared ``requests`` session bounds
+        each call — a communication timeout, never a scan-duration limit. Purely
+        best-effort: if the SDK internals differ, ZAP calls simply keep their
+        previous behaviour.
+        """
+        try:
+            session = zap.session  # requests.Session used by the SDK
+            original_request = session.request
+            timeout = self._request_timeout
+
+            def request_with_timeout(method, url, **kwargs):
+                kwargs.setdefault("timeout", timeout)
+                return original_request(method, url, **kwargs)
+
+            session.request = request_with_timeout
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("Could not set ZAP request timeout: %s", exc)
 
     def is_healthy(self) -> bool:
         """Check if the ZAP is healthy."""
@@ -247,19 +293,151 @@ class ZapClient:
         )
         return str(scan_id)
 
-    def wait_for_active_scan(self, scan_id: str, timeout_seconds: int = 600) -> None:
-        start = time.time()
+    def stop_active_scan(self, scan_id: str) -> None:
+        """Ask ZAP to stop a running active scan using the official stop API.
+
+        Best-effort and never raises: it is called to free the ZAP worker when a
+        scan is aborted for an unhealthy condition, so a failure to stop must not
+        mask the health error the caller is already handling.
+        """
+        try:
+            self.zap_api.ascan.stop(scan_id)
+        except Exception as exc:
+            logger.warning("Could not stop active scan %s: %s", scan_id, exc)
+
+    def active_scan_progress(self, scan_id: str) -> Optional[int]:
+        """Return the Active Scan's completion percent (0-100).
+
+        Returns ``None`` when ZAP responds but no longer knows this scan (it
+        disappeared — e.g. cancelled or lost inside ZAP). Raises on a
+        communication error, so the caller can tell "ZAP unreachable" apart from
+        "scan gone".
+        """
+        raw = self.zap_api.ascan.status(scan_id)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            return None
+
+    def zap_message_count(self) -> Optional[int]:
+        """Total messages ZAP has recorded — rises while the scan sends requests.
+
+        Used as a liveness signal so a slow-but-active scan (whose overall
+        percentage can legitimately sit still for a long time while a rule works)
+        is not mistaken for a stall. Best-effort: returns ``None`` if unavailable.
+        """
+        try:
+            return int(self.zap_api.core.number_of_messages())
+        except Exception:
+            return None
+
+    def wait_for_active_scan(
+        self,
+        scan_id: str,
+        timeout_seconds: Optional[int] = None,  # deprecated, accepted but ignored
+        *,
+        stall_timeout_seconds: int,
+        unresponsive_timeout_seconds: int,
+        poll_interval_seconds: int = 5,
+    ) -> None:
+        """Wait for the Active Scan to finish, letting it run as long as it stays
+        HEALTHY.
+
+        There is deliberately **no overall duration limit**: enterprise Active
+        Scans — and slow rules such as timing-based SQL-injection checks — can
+        legitimately run for hours, so elapsed time alone is never a failure. The
+        scan is aborted (via the official ``ascan.stop`` API, then
+        :class:`ZapScanHealthError`) only when it is genuinely unhealthy, and the
+        logic is completely rule-agnostic:
+
+        * **ZAP unresponsive** — ZAP's API fails to respond for
+          ``unresponsive_timeout_seconds`` (sustained; transient blips are
+          tolerated). This is scan-health monitoring backed by the transport
+          request timeout, not a duration limit.
+        * **scan disappeared** — ZAP responds but no longer knows this scan.
+        * **stalled** — no progress AND no new ZAP requests for
+          ``stall_timeout_seconds``; a slow-but-active scan keeps ZAP's request
+          counter moving and so keeps resetting this window.
+
+        Worker liveness (crash / lost heartbeat) is a *different* responsibility,
+        handled by the heartbeat sweep in the Worker Registry — not here.
+
+        Args:
+            scan_id: The ZAP Active Scan id to monitor.
+            timeout_seconds: Deprecated and ignored — the fixed overall timeout
+                was removed. Kept only for backward compatibility.
+            stall_timeout_seconds: Abort if the scan shows no activity at all for
+                this long (stall detection).
+            unresponsive_timeout_seconds: Abort if ZAP stays unreachable for this
+                long (communication health).
+            poll_interval_seconds: How often to poll scan health.
+
+        Returns:
+            ``None`` when the scan reaches 100%.
+        """
+        last_progress = -1
+        last_messages = self.zap_message_count()
+        last_activity_at = time.monotonic()
+        last_response_at = time.monotonic()
+
         while True:
+            now = time.monotonic()
+
             try:
-                progress = int(self.zap_api.ascan.status(scan_id))
-                if progress >= 100:
-                    break
-            except Exception:
-                break
-            if time.time() - start > timeout_seconds:
-                logger.warning("Active scan timed out after %ds", timeout_seconds)
-                break
-            time.sleep(5)
+                progress = self.active_scan_progress(scan_id)
+                last_response_at = now
+            except Exception as exc:
+                # ZAP did not respond this tick. Tolerate transient failures and
+                # give up only once ZAP has been unresponsive for the whole grace
+                # window — a communication problem, never a duration limit.
+                logger.debug("ZAP status probe failed for scan %s: %s", scan_id, exc)
+                if now - last_response_at > unresponsive_timeout_seconds:
+                    self.stop_active_scan(scan_id)
+                    raise ZapScanHealthError(
+                        f"ZAP stopped responding for over {unresponsive_timeout_seconds}s; "
+                        "the active scan could not be monitored and was aborted."
+                    ) from exc
+                time.sleep(poll_interval_seconds)
+                continue
+
+            if progress is None:
+                # ZAP is up but the scan is gone (cancelled/crashed inside ZAP).
+                self.stop_active_scan(scan_id)
+                raise ZapScanHealthError(
+                    "The active scan no longer exists in ZAP (it disappeared); "
+                    "the operation is marked failed."
+                )
+
+            if progress >= 100:
+                return
+
+            # Liveness: either forward progress OR ZAP still issuing requests.
+            messages = self.zap_message_count()
+            made_progress = progress != last_progress
+            sent_requests = (
+                messages is not None
+                and last_messages is not None
+                and messages > last_messages
+            )
+            if made_progress or sent_requests:
+                last_activity_at = now
+            last_progress = progress
+            if messages is not None:
+                last_messages = messages
+
+            # Genuine stall: ZAP healthy and the scan exists, but no activity of
+            # any kind for the stall window. A legitimately long scan never
+            # reaches here because it keeps sending requests.
+            if now - last_activity_at > stall_timeout_seconds:
+                self.stop_active_scan(scan_id)
+                raise ZapScanHealthError(
+                    "Active scan stalled — no progress and no new requests for over "
+                    f"{stall_timeout_seconds}s (at {progress}%); the scan was aborted."
+                )
+
+            time.sleep(poll_interval_seconds)
+
+            time.sleep(poll_interval_seconds)
 
     # ------------------------------------------------------------------
     # Alerts

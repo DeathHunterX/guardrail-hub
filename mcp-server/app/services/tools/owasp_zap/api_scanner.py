@@ -39,6 +39,7 @@ from fastapi import HTTPException
 from app.constants.batch import BatchType
 from app.constants.paths import ReportPaths
 from app.core.config import settings
+from app.core.events.dispatcher import InProcessEventDispatcher
 from app.core.mcp_logger import MCPLogger
 from app.dao.operation_dao import get_operation_dao
 from app.helpers.tools.owasp_zap_helpers import ZapApiScanHelpers
@@ -48,6 +49,7 @@ from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
 from app.schemas.tools.owasp_zap.common import OperationStatus, ZapScanMode
 from app.schemas.tools.owasp_zap.scan_result import ZapScanReports, ZapScanResult
 from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
+from app.services.operations.operation_service import OperationService
 
 # Thread-pool sizing is decoupled from worker count on purpose: how many
 # scans can actually run concurrently is bounded by how many ZAP workers are
@@ -62,7 +64,10 @@ class ZapApiScanService:
     _instance: Optional["ZapApiScanService"] = None
     _instance_lock: Lock = Lock()
 
-    def __new__(cls) -> "ZapApiScanService":
+    def __new__(cls, *args, **kwargs) -> "ZapApiScanService":
+        # Accept (and ignore) constructor args: a custom __new__ receives whatever
+        # was passed to the class call, so it must tolerate __init__'s keyword
+        # arguments (e.g. operation_service=...). __init__ is what consumes them.
         # Double-checked locking: fast path (no lock) when instance already exists,
         # slow path (with lock) only on the very first call to avoid a race condition.
         if cls._instance is None:
@@ -71,20 +76,47 @@ class ZapApiScanService:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self) -> None:
+    def __init__(self, operation_service: Optional[OperationService] = None) -> None:
+        # Singleton: allow startup to inject the shared (event-publishing)
+        # OperationService even if a prior no-arg construction already ran.
         if getattr(self, "_initialized", False):
+            if operation_service is not None:
+                self.operation_service = operation_service
             return
 
         self.app_logger = MCPLogger("OwaspZapApiScanService")
         self.pool_manager = default_pool_manager
         self.zap_helpers = ZapApiScanHelpers()
         self.operation_dao = get_operation_dao()
+        # All lifecycle transitions + progress go through OperationService (the
+        # single owner of state transition, persistence, and event publication).
+        # The scanner stays transport-agnostic: it knows OperationService, never
+        # Slack/NotificationService/OperationNotifier. When not injected, an
+        # unsubscribed in-process bus makes this behave exactly like the previous
+        # direct-DAO path — persist, publish to no subscribers.
+        self.operation_service = operation_service or OperationService(
+            self.operation_dao, InProcessEventDispatcher()
+        )
 
         self._initialized = True
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _findings_from_summary(summary) -> dict:
+        """Map a :class:`ZapScanSummary` to the generic severity breakdown the
+        notification layer understands. ZAP's risk scale tops out at High, so
+        ``critical`` is always 0 here; the field is kept so the presentation
+        model stays tool-agnostic (a future tool can populate it)."""
+        return {
+            "critical": 0,
+            "high": summary.high,
+            "medium": summary.medium,
+            "low": summary.low,
+            "informational": summary.informational,
+        }
 
     def _save_reports(
         self, zap_client: ZapClient, operation_id: str
@@ -148,10 +180,9 @@ class ZapApiScanService:
 
         try:
             op_id = str(uuid.uuid4())
-            self.operation_dao.create_operation(
-                op_id=op_id,
-                status=OperationStatus.QUEUED,
+            self.operation_service.create(
                 batch_type=BatchType.API_SCAN,
+                operation_id=op_id,
                 metadata={
                     "name": "Owasp Zap check",
                     "target_url": request.url,
@@ -234,7 +265,10 @@ class ZapApiScanService:
             )
 
             zap_client.require_healthy()
-            self.operation_dao.update_operation_status(operation_id=operation_id, status=OperationStatus.RUNNING)
+            self.operation_service.start(operation_id)
+            self.operation_service.report_progress(
+                operation_id, stage="initializing", progress=5, worker_id=worker.worker_id
+            )
 
             zap_client.new_session(f"api-quick-{operation_id[:8]}")
 
@@ -253,12 +287,18 @@ class ZapApiScanService:
 
             # Spider scan
             self.app_logger.info(f"[{worker.worker_id}] Starting spider scan: {operation_id}")
+            self.operation_service.report_progress(
+                operation_id, stage="spider", progress=25, worker_id=worker.worker_id
+            )
             spider_id = zap_client.run_spider(url=request.url, context_name=context_name)
             zap_client.wait_for_spider(spider_id, timeout_seconds=settings.zap_spider_timeout_seconds)
             self.app_logger.info(f"[{worker.worker_id}] Spider scan done: {operation_id}")
 
             # Active scan — single URL, no recursion
             self.app_logger.info(f"[{worker.worker_id}] Starting active scan: {operation_id}")
+            self.operation_service.report_progress(
+                operation_id, stage="active scan", progress=55, worker_id=worker.worker_id
+            )
             body_bytes, _ = self.zap_helpers.serialize_body(request)
             postdata = body_bytes.decode() if body_bytes else None
             ascan_id = zap_client.run_active_scan(
@@ -273,18 +313,28 @@ class ZapApiScanService:
                 status=OperationStatus.RUNNING,
                 result={"ascan_scan_id": ascan_id, "ascan_progress": "0%"},
             )
-            zap_client.wait_for_active_scan(ascan_id, timeout_seconds=settings.zap_scan_timeout_seconds)
+            # No overall duration limit: an Active Scan runs as long as it stays
+            # healthy (ZAP responsive + scan present + still doing work). It only
+            # fails on a genuine stall or unrecoverable ZAP communication loss.
+            zap_client.wait_for_active_scan(
+                ascan_id,
+                stall_timeout_seconds=settings.zap_scan_stall_timeout_seconds,
+                unresponsive_timeout_seconds=settings.zap_scan_unresponsive_timeout_seconds,
+            )
             self.app_logger.info(f"[{worker.worker_id}] Active scan done: {operation_id}")
 
             raw_alerts = zap_client.get_alerts(base_url=request.url)
             alerts = [self.zap_helpers.convert_raw_alert(a) for a in raw_alerts]
             zap_client.remove_context(context_name)
 
+            self.operation_service.report_progress(
+                operation_id, stage="report generation", progress=90, worker_id=worker.worker_id
+            )
             view_report, export_data = self._save_reports(zap_client, operation_id)
 
-            self.operation_dao.update_operation_status(
-                operation_id=operation_id,
-                status=OperationStatus.COMPLETED,
+            summary = self.zap_helpers.build_summary(alerts)
+            self.operation_service.complete(
+                operation_id,
                 result=ZapScanResult(
                     operation_id=operation_id,
                     project_name=request.project_name,
@@ -292,19 +342,18 @@ class ZapApiScanService:
                     target_url=request.url,
                     duration_seconds=round(time.time() - start_time, 2),
                     alerts=alerts,
-                    summary=self.zap_helpers.build_summary(alerts),
+                    summary=summary,
                     tls_result=self.zap_helpers.check_tls(request.url),
                     reports=ZapScanReports(view_report=view_report, export_data=export_data),
                 ).model_dump(by_alias=True),
+                # Forward the severity breakdown into the completed event so the
+                # notification renders it — without loading/parsing the report.
+                findings=self._findings_from_summary(summary),
             )
 
         except Exception as e:  # pylint: disable=broad-except
             self.app_logger.error(f"Error in zap_scan_worker for operation_id {operation_id}: {e}")
-            self.operation_dao.update_operation_status(
-                operation_id=operation_id,
-                status=OperationStatus.FAILED,
-                error=str(e),
-            )
+            self.operation_service.fail(operation_id, str(e))
 
         finally:
             self.pool_manager.release_worker(worker.worker_id, operation_id)
@@ -331,7 +380,10 @@ class ZapApiScanService:
             self.app_logger.info(f"[{worker.worker_id}] Start FULL API scan {request.url}: {operation_id}")
 
             zap_client.require_healthy()
-            self.operation_dao.update_operation_status(operation_id=operation_id, status=OperationStatus.RUNNING)
+            self.operation_service.start(operation_id)
+            self.operation_service.report_progress(
+                operation_id, stage="initializing", progress=5, worker_id=worker.worker_id
+            )
 
             zap_client.new_session(f"api-full-{operation_id[:8]}")
 
@@ -352,24 +404,37 @@ class ZapApiScanService:
 
             # Active scan — full context, recursive, body fuzzing enabled
             self.app_logger.info(f"[{worker.worker_id}] Starting full active scan: {operation_id}")
+            self.operation_service.report_progress(
+                operation_id, stage="active scan", progress=55, worker_id=worker.worker_id
+            )
             ascan_id = zap_client.run_active_scan(url=request.url, context_id=context_id, recurse=True)
             self.operation_dao.update_operation_status(
                 operation_id=operation_id,
                 status=OperationStatus.RUNNING,
                 result={"ascan_scan_id": ascan_id, "ascan_progress": "0%"},
             )
-            zap_client.wait_for_active_scan(ascan_id, timeout_seconds=settings.zap_scan_timeout_seconds)
+            # No overall duration limit: an Active Scan runs as long as it stays
+            # healthy (ZAP responsive + scan present + still doing work). It only
+            # fails on a genuine stall or unrecoverable ZAP communication loss.
+            zap_client.wait_for_active_scan(
+                ascan_id,
+                stall_timeout_seconds=settings.zap_scan_stall_timeout_seconds,
+                unresponsive_timeout_seconds=settings.zap_scan_unresponsive_timeout_seconds,
+            )
             self.app_logger.info(f"[{worker.worker_id}] Full active scan done: {operation_id}")
 
             raw_alerts = zap_client.get_alerts(base_url=request.url)
             alerts = [self.zap_helpers.convert_raw_alert(a) for a in raw_alerts]
             zap_client.remove_context(context_name)
 
+            self.operation_service.report_progress(
+                operation_id, stage="report generation", progress=90, worker_id=worker.worker_id
+            )
             view_report, export_data = self._save_reports(zap_client, operation_id)
 
-            self.operation_dao.update_operation_status(
-                operation_id=operation_id,
-                status=OperationStatus.COMPLETED,
+            summary = self.zap_helpers.build_summary(alerts)
+            self.operation_service.complete(
+                operation_id,
                 result=ZapScanResult(
                     operation_id=operation_id,
                     project_name=request.project_name,
@@ -377,19 +442,18 @@ class ZapApiScanService:
                     target_url=request.url,
                     duration_seconds=round(time.time() - start_time, 2),
                     alerts=alerts,
-                    summary=self.zap_helpers.build_summary(alerts),
+                    summary=summary,
                     tls_result=self.zap_helpers.check_tls(request.url),
                     reports=ZapScanReports(view_report=view_report, export_data=export_data),
                 ).model_dump(by_alias=True),
+                # Forward the severity breakdown into the completed event so the
+                # notification renders it — without loading/parsing the report.
+                findings=self._findings_from_summary(summary),
             )
 
         except Exception as e:  # pylint: disable=broad-except
             self.app_logger.error(f"Error in zap_full_scan_worker for operation_id {operation_id}: {e}")
-            self.operation_dao.update_operation_status(
-                operation_id=operation_id,
-                status=OperationStatus.FAILED,
-                error=str(e),
-            )
+            self.operation_service.fail(operation_id, str(e))
 
         finally:
             self.pool_manager.release_worker(worker.worker_id, operation_id)
