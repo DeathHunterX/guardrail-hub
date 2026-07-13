@@ -32,7 +32,7 @@ Use this to understand how a request travels through the system before modifying
 | `RoundRobinScheduler` (`WorkerScheduler` protocol) | `app/integrations/owasp_zap/scheduler.py` | Picks which idle worker runs the next operation; isolated so the strategy can be swapped |
 | `OwaspZapPoolManager` | `app/integrations/owasp_zap/pool.py` | Ties Registry + Scheduler together for the dispatcher: `try_assign`, cached `get_client` per worker endpoint, `release_worker` |
 | `app/integrations/owasp_zap/runtime.py` | — | Process-wide singletons (`registry`, `scheduler`, `pool_manager`) shared by the worker router, the scan service, and the dispatcher — mirrors the `settings` module-singleton pattern |
-| `OwaspZapDispatcher` | `app/services/tools/owasp_zap/dispatcher.py` | Background loops: polls the Operations table for `QUEUED` rows and assigns them via the Pool Manager; sweeps the Registry for heartbeat timeouts and fails orphaned operations |
+| `OwaspZapDispatcher` | `app/services/tools/owasp_zap/worker/dispatcher.py` | Background loops: polls the Operations table for `QUEUED` rows and assigns them via the Pool Manager; sweeps the Registry for heartbeat timeouts and fails orphaned operations |
 | `ZapApiScanService` | `app/services/tools/owasp_zap/api_scanner.py` | `init_api_scan` persists a `QUEUED` operation only; `run_assigned_scan`/`zap_scan_worker`/`zap_full_scan_worker` execute once the dispatcher has assigned a worker |
 | `HistoryService` | `app/services/public/history_service.py` | Reads persisted `OperationRecord`s for the history endpoints |
 

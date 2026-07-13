@@ -2,7 +2,7 @@
 
 ## Status
 
-Implemented (`mcp-server/app/integrations/owasp_zap/`, `mcp-server/app/services/tools/owasp_zap/`). This document set describes the code as it exists, not a proposal.
+Implemented (`mcp-server/app/integrations/owasp_zap/`, `mcp-server/app/services/tools/owasp_zap/`, `mcp-server/app/services/tools/owasp_zap/worker/`). This document set describes the code as it exists, not a proposal.
 
 ## Why this exists
 
@@ -23,7 +23,8 @@ The replacement: **every ZAP worker announces itself.** The server never generat
 | Tying Registry + Scheduler together; cached `ZapClient` per worker | Pool Manager | `mcp-server/app/integrations/owasp_zap/pool.py` |
 | Process-wide shared instances of the three above | Runtime singletons | `mcp-server/app/integrations/owasp_zap/runtime.py` |
 | The work queue itself | Operations table (`status = QUEUED`) | `mcp-server/app/dao/` |
-| Polling the queue, assigning work, sweeping dead workers | Dispatcher | `mcp-server/app/services/tools/owasp_zap/dispatcher.py` |
+| Polling the queue, assigning work, sweeping dead workers | Dispatcher | `mcp-server/app/services/tools/owasp_zap/worker/dispatcher.py` |
+| Registration/heartbeat/removal orchestration (Registry + Operations DAO) | Worker Service | `mcp-server/app/services/tools/owasp_zap/worker/worker_service.py` |
 | Registration / heartbeat / maintenance HTTP surface | Worker router | `mcp-server/app/routers/public/zap_worker_router.py` |
 | Worker-side self-registration script | Docker image sidecar | `mcp-server/docker/owasp_zap/register-worker.sh` |
 

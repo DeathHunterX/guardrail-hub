@@ -52,7 +52,7 @@ graph TD
 | `app/schemas/internal/` | Implemented | `token_request.py`, `operation.py` — Pydantic models, some for the unimplemented token router |
 | `app/schemas/tools/owasp_zap/` | Implemented | 6 files: request/response models for website scan, API batch scan, interactive scan, common types, scan results |
 | `app/schemas/tools/playwright/`, `app/schemas/tools/selenium/` | Empty | Reserved, no schemas defined |
-| `app/services/tools/owasp_zap/` | Implemented | `api_scanner.py` (`ZapApiScanService` — `init_api_scan` only queues; `run_assigned_scan`/`zap_scan_worker`/`zap_full_scan_worker` execute once assigned), `dispatcher.py` (`OwaspZapDispatcher` — background queue-poll + heartbeat-sweep loops), `interactive_scanner.py`, `web_scanner.py` |
+| `app/services/tools/owasp_zap/` | Implemented | `api_scanner.py` (`ZapApiScanService` — `init_api_scan` only queues; `run_assigned_scan`/`zap_scan_worker`/`zap_full_scan_worker` execute once assigned), `worker/` (`dispatcher.py` — `OwaspZapDispatcher`, background queue-poll + heartbeat-sweep loops; `worker_service.py` — `ZapWorkerService`, worker registration/heartbeat/removal), `interactive_scanner.py`, `web_scanner.py` |
 | `app/services/tools/jmeter/`, `app/services/internal/` | Empty | Unimplemented |
 | `app/services/public/history_service.py` | Implemented | `HistoryService` — backs the history endpoints |
 | `app/helpers/tools/owasp_zap_helpers.py` | Implemented | ZAP-specific helper functions |

@@ -11,7 +11,7 @@ mounted directly on the app (like ``health_router``) rather than through
 
 This router is a thin HTTP adapter: all worker-lifecycle logic (including
 failing an operation orphaned by a removed worker) lives in
-:class:`app.services.tools.owasp_zap.worker_service.ZapWorkerService`, which
+:class:`app.services.tools.owasp_zap.worker.worker_service.ZapWorkerService`, which
 owns the Worker Registry and the Operations DAO. The router only maps
 requests/responses and translates domain errors to HTTP status codes — it
 never touches the registry or the DAO directly.
@@ -27,7 +27,7 @@ from app.schemas.tools.owasp_zap.worker import (
     ZapWorkerRegisterRequest,
     ZapWorkerRegisterResponse,
 )
-from app.services.tools.owasp_zap.worker_service import ZapWorkerService
+from app.services.tools.owasp_zap.worker.worker_service import ZapWorkerService
 
 zap_worker_router = APIRouter(prefix="/workers", tags=["OWASP ZAP Workers"])
 _service = ZapWorkerService()

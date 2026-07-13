@@ -325,7 +325,7 @@ def build_zap_dispatcher(*, dao: BaseOperationDAO, operation_service, config=Non
 
     from app.integrations.owasp_zap.runtime import pool_manager  # noqa: PLC0415
     from app.services.tools.owasp_zap.api_scanner import ZapApiScanService  # noqa: PLC0415
-    from app.services.tools.owasp_zap.dispatcher import OwaspZapDispatcher  # noqa: PLC0415
+    from app.services.tools.owasp_zap.worker.dispatcher import OwaspZapDispatcher  # noqa: PLC0415
 
     return OwaspZapDispatcher(
         operation_dao=dao,

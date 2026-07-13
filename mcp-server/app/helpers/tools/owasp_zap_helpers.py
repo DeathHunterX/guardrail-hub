@@ -1,22 +1,26 @@
 """
 Utility helpers for the OWASP ZAP API scanner service.
 
-Covers three concerns kept separate from business logic:
+Covers concerns kept separate from business logic:
   - Request preparation  : build headers, serialize body
   - Alert conversion     : raw ZAP dict → typed ZapAlert / ZapScanSummary
+  - Report persistence   : fetch + write HTML/JSON reports to disk
   - ZAP interaction      : send request through proxy, register auth replacer rules
 """
 
 import json
 import subprocess
 import uuid
+from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
 import httpx
 
+from app.constants.paths import ReportPaths
 from app.core.config import settings
 from app.core.mcp_logger import MCPLogger
+from app.integrations.owasp_zap.client import ZapClient
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
 from app.schemas.tools.owasp_zap.common import ZapApiTarget, ZapTokenType
 from app.schemas.tools.owasp_zap.scan_result import (
@@ -133,6 +137,63 @@ class ZapApiScanHelpers:
             else:
                 summary.informational += 1
         return summary
+
+    @staticmethod
+    def findings_from_summary(summary: ZapScanSummary) -> dict:
+        """Map a :class:`ZapScanSummary` to the generic severity breakdown the
+        notification layer understands. ZAP's risk scale tops out at High, so
+        ``critical`` is always 0 here; the field is kept so the presentation
+        model stays tool-agnostic (a future tool can populate it)."""
+        return {
+            "critical": 0,
+            "high": summary.high,
+            "medium": summary.medium,
+            "low": summary.low,
+            "informational": summary.informational,
+        }
+
+    # ------------------------------------------------------------------
+    # Report persistence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def save_reports(zap_client: ZapClient, operation_id: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Fetch both HTML and JSON reports from ZAP and persist them to disk.
+
+        Returns ``(html_report_url, json_report_url)``.  Either URL may be
+        ``None`` when ZAP returns empty content or an error occurs — report
+        failures never abort a completed scan.
+        """
+        base_url = settings.mcp_server_public_url.rstrip("/")
+        report_dir = Path(ReportPaths.ZAP_DETAIL_DIR)
+
+        html_url: Optional[str] = None
+        json_url: Optional[str] = None
+
+        try:
+            report_dir.mkdir(parents=True, exist_ok=True)
+
+            html_content = zap_client.html_report()
+            if html_content:
+                (report_dir / f"{operation_id}.html").write_text(html_content, encoding="utf-8")
+                html_url = f"{base_url}/public/report/owasp-zap/detail-report/{operation_id}.html"
+            else:
+                logger.warning(f"ZAP returned empty HTML report for {operation_id}")
+
+            json_content = zap_client.json_report()
+            if json_content and json_content.strip() not in ("", "{}"):
+                (report_dir / f"{operation_id}.json").write_text(json_content, encoding="utf-8")
+                json_url = f"{base_url}/public/report/owasp-zap/detail-report/{operation_id}.json"
+            else:
+                logger.warning(f"ZAP returned empty JSON report for {operation_id}")
+
+            logger.info(f"Reports saved for {operation_id} — html={html_url}  json={json_url}")
+
+        except Exception as exc:  # pylint: disable=broad-except
+            logger.warning(f"Failed to save reports for {operation_id}: {exc}")
+
+        return html_url, json_url
 
     # ------------------------------------------------------------------
     # ZAP interaction utilities

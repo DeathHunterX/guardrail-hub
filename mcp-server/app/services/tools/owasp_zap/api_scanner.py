@@ -19,7 +19,7 @@ Queueing model
 persists a ``QUEUED`` operation (the full request goes into ``metadata`` so
 the operation can be resumed even after a server restart) and returns
 immediately. The background dispatcher
-(``app/services/tools/owasp_zap/dispatcher.py``) polls the Operations table
+(``app/services/tools/owasp_zap/worker/dispatcher.py``) polls the Operations table
 for queued work, assigns it to an idle worker via the Pool Manager, and only
 then calls :meth:`ZapApiScanService.run_assigned_scan`, which is what
 actually submits ``zap_scan_worker`` / ``zap_full_scan_worker`` to the thread
@@ -30,25 +30,35 @@ import re
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from pathlib import Path
 from threading import Lock
 from typing import Dict, Optional
 
 from fastapi import HTTPException
 
+# Constants
 from app.constants.batch import BatchType
-from app.constants.paths import ReportPaths
+
+# Core
 from app.core.config import settings
 from app.core.events.dispatcher import InProcessEventDispatcher
 from app.core.mcp_logger import MCPLogger
+
+# DAO
 from app.dao.operation_dao import get_operation_dao
+
+# Helpers
 from app.helpers.tools.owasp_zap_helpers import ZapApiScanHelpers
-from app.integrations.owasp_zap.client import ZapClient
+
+# Integrations
 from app.integrations.owasp_zap.runtime import pool_manager as default_pool_manager
+
+# Schemas
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
 from app.schemas.tools.owasp_zap.common import OperationStatus, ZapScanMode
 from app.schemas.tools.owasp_zap.scan_result import ZapScanReports, ZapScanResult
 from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
+
+# Service
 from app.services.operations.operation_service import OperationService
 
 # Thread-pool sizing is decoupled from worker count on purpose: how many
@@ -99,66 +109,6 @@ class ZapApiScanService:
         )
 
         self._initialized = True
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _findings_from_summary(summary) -> dict:
-        """Map a :class:`ZapScanSummary` to the generic severity breakdown the
-        notification layer understands. ZAP's risk scale tops out at High, so
-        ``critical`` is always 0 here; the field is kept so the presentation
-        model stays tool-agnostic (a future tool can populate it)."""
-        return {
-            "critical": 0,
-            "high": summary.high,
-            "medium": summary.medium,
-            "low": summary.low,
-            "informational": summary.informational,
-        }
-
-    def _save_reports(
-        self, zap_client: ZapClient, operation_id: str
-    ) -> tuple[Optional[str], Optional[str]]:
-        """
-        Fetch both HTML and JSON reports from ZAP and persist them to disk.
-
-        Returns ``(html_report_url, json_report_url)``.  Either URL may be
-        ``None`` when ZAP returns empty content or an error occurs — report
-        failures never abort a completed scan.
-        """
-        base_url = settings.mcp_server_public_url.rstrip("/")
-        report_dir = Path(ReportPaths.ZAP_DETAIL_DIR)
-
-        html_url: Optional[str] = None
-        json_url: Optional[str] = None
-
-        try:
-            report_dir.mkdir(parents=True, exist_ok=True)
-
-            html_content = zap_client.html_report()
-            if html_content:
-                (report_dir / f"{operation_id}.html").write_text(html_content, encoding="utf-8")
-                html_url = f"{base_url}/public/report/owasp-zap/detail-report/{operation_id}.html"
-            else:
-                self.app_logger.warning(f"ZAP returned empty HTML report for {operation_id}")
-
-            json_content = zap_client.json_report()
-            if json_content and json_content.strip() not in ("", "{}"):
-                (report_dir / f"{operation_id}.json").write_text(json_content, encoding="utf-8")
-                json_url = f"{base_url}/public/report/owasp-zap/detail-report/{operation_id}.json"
-            else:
-                self.app_logger.warning(f"ZAP returned empty JSON report for {operation_id}")
-
-            self.app_logger.info(
-                f"Reports saved for {operation_id} — html={html_url}  json={json_url}"
-            )
-
-        except Exception as exc:  # pylint: disable=broad-except
-            self.app_logger.warning(f"Failed to save reports for {operation_id}: {exc}")
-
-        return html_url, json_url
 
     # ------------------------------------------------------------------
     # Public: init scan (persist as QUEUED, no assignment yet)
@@ -330,7 +280,7 @@ class ZapApiScanService:
             self.operation_service.report_progress(
                 operation_id, stage="report generation", progress=90, worker_id=worker.worker_id
             )
-            view_report, export_data = self._save_reports(zap_client, operation_id)
+            view_report, export_data = self.zap_helpers.save_reports(zap_client, operation_id)
 
             summary = self.zap_helpers.build_summary(alerts)
             self.operation_service.complete(
@@ -348,7 +298,7 @@ class ZapApiScanService:
                 ).model_dump(by_alias=True),
                 # Forward the severity breakdown into the completed event so the
                 # notification renders it — without loading/parsing the report.
-                findings=self._findings_from_summary(summary),
+                findings=self.zap_helpers.findings_from_summary(summary),
             )
 
         except Exception as e:  # pylint: disable=broad-except
@@ -430,7 +380,7 @@ class ZapApiScanService:
             self.operation_service.report_progress(
                 operation_id, stage="report generation", progress=90, worker_id=worker.worker_id
             )
-            view_report, export_data = self._save_reports(zap_client, operation_id)
+            view_report, export_data = self.zap_helpers.save_reports(zap_client, operation_id)
 
             summary = self.zap_helpers.build_summary(alerts)
             self.operation_service.complete(
@@ -448,7 +398,7 @@ class ZapApiScanService:
                 ).model_dump(by_alias=True),
                 # Forward the severity breakdown into the completed event so the
                 # notification renders it — without loading/parsing the report.
-                findings=self._findings_from_summary(summary),
+                findings=self.zap_helpers.findings_from_summary(summary),
             )
 
         except Exception as e:  # pylint: disable=broad-except

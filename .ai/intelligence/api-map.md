@@ -70,7 +70,7 @@ Both entry paths (MCP and direct HTTP) converge on the same router handler funct
 
 | Endpoint group | Owning service |
 |---|---|
-| `/tools/zap/*` | `ZapApiScanService` (`app/services/tools/owasp_zap/api_scanner.py`) — queues only; `OwaspZapDispatcher` (`app/services/tools/owasp_zap/dispatcher.py`) later assigns and runs it |
+| `/tools/zap/*` | `ZapApiScanService` (`app/services/tools/owasp_zap/api_scanner.py`) — queues only; `OwaspZapDispatcher` (`app/services/tools/owasp_zap/worker/dispatcher.py`) later assigns and runs it |
 | `/tools/history/*` | `HistoryService` (`app/services/public/history_service.py`) |
 | `/workers/*` | `OwaspZapWorkerRegistry` (`app/integrations/owasp_zap/registry.py`), via the process-wide singleton in `app/integrations/owasp_zap/runtime.py` |
 | `/health*` | None — handled directly in the router, no service layer |

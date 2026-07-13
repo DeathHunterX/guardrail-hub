@@ -57,7 +57,7 @@ The first version focuses on a small but strong set of security and QA tools:
 | IaC scan          | Checkov                         |
 | Mobile scan       | MobSF                           |
 | E2E security test | Playwright                      |
-| Report format     | SARIF + JSON + Markdown         |
+| Report format     | SARIF + JSON + Markdown + HTML         |
 
 This gives the project a clear message:
 
