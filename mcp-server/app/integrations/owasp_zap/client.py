@@ -24,8 +24,10 @@ against independent ZAP processes.
 import threading
 import time
 import uuid
+from urllib.parse import urlparse
 from typing import Optional
 
+import httpx
 from zapv2 import ZAPv2
 
 from app.core.config import settings
@@ -46,6 +48,28 @@ class ZapScanHealthError(Exception):
     ran for a long time. Elapsed time is never a failure. Distinct from a generic
     exception so the caller can attribute the FAILED state to scan health, and
     completely rule-agnostic.
+    """
+
+
+class ZapScanStartError(Exception):
+    """Raised when ZAP declines to *start* an active scan.
+
+    ZAP's ``ascan.scan`` returns an error token (e.g. ``url_not_found`` or
+    ``does_not_exist``) instead of a numeric scan id when it has no node for the
+    target — typically because the target was never recorded (never reached).
+    This is a distinct failure mode from :class:`ZapScanHealthError`, which means
+    a scan that *had already started* later became unhealthy or disappeared.
+    """
+
+
+class ZapTargetUnreachableError(Exception):
+    """Raised by the pre-flight check when the assigned worker cannot reach the target.
+
+    The probe runs *through the worker's own proxy*, so a failure means the
+    target is unreachable from the worker's network namespace — the exact vantage
+    point every replay and active scan uses — not merely from the API caller.
+    Distinct from :class:`ZapScanStartError` so callers can fail fast, with
+    actionable guidance, before any replay or scan is attempted.
     """
 
 
@@ -160,7 +184,107 @@ class ZapClient:
                 "Ensure the ZAP container is running (docker compose --profile zap up)."
             )
 
-    
+    def check_target_reachable(self, url: str) -> None:
+        """Fail fast if the assigned worker cannot reach ``url``.
+
+        Sends ONE lightweight ``HEAD`` request through the worker's proxy — the
+        same network path a replay or active scan takes — so the outcome reflects
+        the worker's view, not the API caller's. Read-only: ``HEAD`` does not
+        mutate the target. Any HTTP response (2xx-5xx) from the target counts as
+        reachable; only a genuine connection failure (DNS, refused, timeout,
+        unreachable network) raises :class:`ZapTargetUnreachableError`.
+
+        It never rewrites the URL, substitutes hosts, or guesses ports — it only
+        explains the likely cause so the user can correct their own input.
+        """
+        host = (urlparse(url).hostname or "").lower()
+        try:
+            with httpx.Client(
+                proxy=self._api_url,
+                verify=False,
+                timeout=self._request_timeout,
+            ) as http:
+                response = http.request("HEAD", url)
+        except httpx.ConnectError as exc:
+            # The worker's proxy listener itself could not be reached — a worker
+            # problem rather than a target problem.
+            raise ZapTargetUnreachableError(
+                self._unreachable_message(url, host, "proxy", str(exc))
+            ) from exc
+        except httpx.TimeoutException as exc:
+            raise ZapTargetUnreachableError(
+                self._unreachable_message(url, host, "timeout")
+            ) from exc
+        except httpx.TransportError as exc:
+            # Includes ProxyError (an HTTPS CONNECT to the upstream target failed).
+            raise ZapTargetUnreachableError(
+                self._unreachable_message(url, host, "unreachable", str(exc))
+            ) from exc
+
+        # ZAP, acting as a forward proxy, answers with a 502/504 error page when
+        # it cannot reach the upstream target; any other status (including 4xx/5xx
+        # produced by the target itself) means the worker DID reach it.
+        if response.status_code in (502, 504):
+            body = (response.text or "").lower()
+            if "zap error" in body or "java.net." in body:
+                if "unknownhost" in body or "name or service not known" in body:
+                    reason = "dns"
+                elif "refused" in body or "connectexception" in body:
+                    reason = "refused"
+                elif "timed out" in body or "sockettimeout" in body:
+                    reason = "timeout"
+                elif "unreachable" in body or "noroutetohost" in body:
+                    reason = "network"
+                else:
+                    reason = "unreachable"
+                raise ZapTargetUnreachableError(
+                    self._unreachable_message(url, host, reason)
+                )
+
+    def _unreachable_message(
+        self, url: str, host: str, reason: str, detail: Optional[str] = None
+    ) -> str:
+        """Build an actionable pre-flight error (kept private, used only here).
+
+        Mirrors ``_scan_not_started_message``: it names the concrete failure and,
+        for a target problem, adds Docker networking guidance — including the
+        common ``localhost`` trap — without ever rewriting the user's URL.
+        """
+        reasons = {
+            "dns": "its hostname could not be resolved",
+            "refused": "the connection was refused (nothing is listening on that host:port)",
+            "timeout": "the connection timed out",
+            "network": "the network is unreachable (no route to that host)",
+            "proxy": "the assigned ZAP worker's proxy could not be reached",
+            "unreachable": "it could not be reached",
+        }
+        why = reasons.get(reason, reasons["unreachable"])
+        message = (
+            f"Pre-flight reachability check failed for {url}: {why}. The target "
+            "must be reachable from the assigned ZAP worker — scans run from the "
+            "worker, not from the API caller."
+        )
+        if reason == "proxy":
+            message += " Ensure the ZAP worker is running and registered."
+            if detail:
+                message += f" ({detail})"
+            return message
+        if detail:
+            message += f" ({detail})"
+        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            message += (
+                f" Note: '{host}' inside a Docker worker refers to the worker "
+                "container itself, not your application — use the application's "
+                "service/container hostname instead of localhost."
+            )
+        else:
+            message += (
+                " If the worker runs in Docker: use the application's service/"
+                "container hostname and its internal container port (not the "
+                "published host port), and make sure the worker and the target "
+                "share a Docker network."
+            )
+        return message
 
     # ------------------------------------------------------------------
     # Session / Context
@@ -268,7 +392,7 @@ class ZapClient:
         method: Optional[str] = None,
         postdata: Optional[str] = None,
     ) -> str:
-        scan_id = self.zap_api.ascan.scan(
+        raw_scan_id = self.zap_api.ascan.scan(
             url=url,
             recurse=recurse,
             inscopeonly=True,
@@ -276,7 +400,38 @@ class ZapClient:
             method=method,
             postdata=postdata,
         )
-        return str(scan_id)
+        scan_id = str(raw_scan_id).strip()
+        # ZAP returns a numeric scan id on success, or an error token
+        # (e.g. ``url_not_found`` / ``does_not_exist``) when it has no node for
+        # the target. Reject the token up front so callers never poll a scan that
+        # never started — a failure mode distinct from a scan disappearing later.
+        if not scan_id.isdigit():
+            raise ZapScanStartError(self._scan_not_started_message(url, scan_id))
+        logger.info("Started active scan %s for %s", scan_id, url)
+        return scan_id
+
+    def _scan_not_started_message(self, url: str, token: str) -> str:
+        """Build an actionable error for a scan ZAP refused to start.
+
+        Kept as a private method (used only here) so ``run_active_scan`` stays
+        readable; it adds a targeted hint when the target host is loopback, which
+        inside a container refers to the ZAP worker itself rather than the app.
+        """
+        message = (
+            f"OWASP ZAP could not start the active scan for {url}: it returned "
+            f"'{token}' instead of a scan id. The target has no node in ZAP's "
+            "site tree, so there is nothing to scan — this usually means the "
+            "request never reached the target application."
+        )
+        host = (urlparse(url).hostname or "").lower()
+        if host in ("localhost", "127.0.0.1", "0.0.0.0", "::1"):
+            message += (
+                f" The target host '{host}' refers to the ZAP worker container "
+                "itself, not your application; the target must be reachable from "
+                "the worker's network namespace (use the application's reachable "
+                "hostname/IP or Docker service name, not localhost)."
+            )
+        return message
 
     def run_active_scan_as_user(
         self,

@@ -13,7 +13,7 @@ from app.services.evaluations.zap_scan_runner import ZapScanRunner
 class FakeRequest:
     url: str = "https://target.example.com/api"
     method: str = "POST"
-    project_name: str = "demo"
+    report_group: str = "demo"
 
 
 class FakeZapClient:

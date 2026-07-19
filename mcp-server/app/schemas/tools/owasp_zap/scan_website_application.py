@@ -6,9 +6,9 @@ from app.schemas.tools.owasp_zap.common import ZapScanMode
 
 
 class ZapWebsiteScanRequest(BaseModel):
-    project_name: str = Field(
+    report_group: str = Field(
         ...,
-        description="Project name used to organize the report folder on S3.",
+        description="Label used to organize the report folder on S3.",
         examples=["my-project"],
     )
 

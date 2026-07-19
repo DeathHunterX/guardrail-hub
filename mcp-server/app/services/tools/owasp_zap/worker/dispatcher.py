@@ -4,12 +4,17 @@ ZAP queue dispatcher.
 Two independent background loops, both started/stopped together:
 
 1. **Queue loop** — polls the Operations table for ``QUEUED`` rows (oldest
-   first), tries to assign each to an idle, Active worker via the Pool
-   Manager, and — only on a successful assignment — hands it to
-   :meth:`ZapApiScanService.run_assigned_scan`. An operation that can't be
-   assigned this tick simply stays ``QUEUED`` and is retried next tick; there
-   is no in-memory queue to lose on restart, because the row itself *is* the
-   queue entry.
+   first) and dispatches each **generically**: it resolves the row's
+   :class:`ZapOperation` from the :class:`ZapOperationRegistry` (by the
+   strongly-typed ``operation_type`` in metadata) and routes on the operation's
+   :class:`ExecutionStrategy`. Worker-bound operations are assigned to an idle,
+   Active worker via the Pool Manager and executed on it; orchestration
+   operations (fan-out/fan-in) run on a small orchestration executor and never
+   occupy a worker. The Dispatcher knows nothing about which concrete tool it is
+   running — that indirection is the whole point of the registry. An operation
+   that can't be assigned this tick simply stays ``QUEUED`` and is retried next
+   tick; there is no in-memory queue to lose on restart, because the row itself
+   *is* the queue entry.
 
 2. **Heartbeat sweep loop** — periodically asks the Worker Registry to mark
    any worker whose heartbeat has expired as Offline. If that worker was
@@ -24,14 +29,17 @@ the ASGI server uses one worker process or several.
 
 import threading
 import time
+from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Optional
 
 from app.core.mcp_logger import MCPLogger
 from app.dao.base import BaseOperationDAO
 from app.integrations.owasp_zap.pool import OwaspZapPoolManager
+from app.schemas.internal.operation import OperationRecord
 from app.schemas.tools.owasp_zap.worker import ZapWorkerLifecycleState
 from app.services.operations.operation_service import OperationService
-from app.services.tools.owasp_zap.api_scanner import ZapApiScanService
+from app.services.tools.owasp_zap.execution.handler import ZapOperation
+from app.services.tools.owasp_zap.execution.registry import ZapOperationRegistry
 
 
 class OwaspZapDispatcher:
@@ -47,10 +55,11 @@ class OwaspZapDispatcher:
         operation_dao: BaseOperationDAO,
         operation_service: OperationService,
         pool_manager: OwaspZapPoolManager,
-        scan_service: ZapApiScanService,
+        registry: ZapOperationRegistry,
         queue_poll_interval_seconds: float,
         heartbeat_sweep_interval_seconds: float,
         heartbeat_timeout_seconds: float,
+        orchestration_executor: Optional[Executor] = None,
     ) -> None:
         self._operation_dao = operation_dao
         # FAILED transitions go through OperationService (state + persistence +
@@ -58,7 +67,17 @@ class OwaspZapDispatcher:
         # which OperationService does not own. Scheduling/sweep logic is unchanged.
         self._operation_service = operation_service
         self._pool_manager = pool_manager
-        self._scan_service = scan_service
+        # The generic registry replaces the former direct ZapApiScanService
+        # dependency: the Dispatcher resolves each row's ZapOperation here and
+        # never names a concrete tool or request model.
+        self._registry = registry
+        # Orchestration strategies (fan-out/fan-in) run here, off the queue,
+        # WITHOUT claiming a ZAP worker. Small by design — orchestrators only do
+        # DB polling + report aggregation, never scanning. Bounded so a burst of
+        # orchestration operations cannot spawn unbounded threads.
+        self._orchestration_executor = orchestration_executor or ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="zap-orchestration"
+        )
         self._queue_poll_interval = queue_poll_interval_seconds
         self._sweep_interval = heartbeat_sweep_interval_seconds
         self._heartbeat_timeout = heartbeat_timeout_seconds
@@ -105,6 +124,9 @@ class OwaspZapDispatcher:
                 thread.join(timeout=timeout_seconds)
         self._queue_thread = None
         self._sweep_thread = None
+        # Stop accepting new orchestration work; in-flight orchestrators (if any)
+        # are left to finish their own cleanup. Never blocks shutdown.
+        self._orchestration_executor.shutdown(wait=False)
         self._logger.info("Dispatcher stopped")
 
     # ── Queue loop ───────────────────────────────────────────────────────
@@ -132,29 +154,93 @@ class OwaspZapDispatcher:
             return
 
         for operation in queued:
-            worker = self._pool_manager.try_assign(operation.operation_id)
-            if worker is None:
-                # No idle Active worker right now — stays QUEUED, retried next tick.
-                continue
+            self._dispatch_one(operation)
 
-            try:
-                request = ZapApiScanService.request_from_metadata(operation.metadata)
-            except Exception as exc:  # pylint: disable=broad-except
-                # Malformed/legacy metadata can never be resumed — fail loudly
-                # rather than silently holding a worker slot forever.
-                self._logger.error(
-                    "Operation '%s' has unusable metadata, marking FAILED: %s",
-                    operation.operation_id,
-                    exc,
-                )
-                self._pool_manager.release_worker(worker.worker_id, operation.operation_id)
-                self._operation_service.fail(
-                    operation.operation_id,
-                    f"Could not reconstruct scan request from metadata: {exc}",
-                )
-                continue
+    def _dispatch_one(self, operation: OperationRecord) -> None:
+        """Resolve *operation*'s handler and route it by execution strategy.
 
-            self._scan_service.run_assigned_scan(operation.operation_id, request, worker)
+        Fully generic: the Dispatcher resolves the :class:`ZapOperation` from the
+        registry (never a concrete tool) and branches only on the operation's
+        ``execution_strategy.requires_worker`` — a tool-agnostic capability.
+        """
+        try:
+            zap_operation = self._registry.resolve_from_metadata(operation.metadata)
+        except Exception as exc:  # pylint: disable=broad-except
+            # Unknown / invalid / unregistered operation type — it can never run.
+            # No worker has been claimed yet, so just fail it loudly.
+            self._logger.error(
+                "Operation '%s' has an unresolvable operation type, marking FAILED: %s",
+                operation.operation_id,
+                exc,
+            )
+            self._operation_service.fail(
+                operation.operation_id,
+                f"Could not resolve a handler for this operation: {exc}",
+            )
+            return
+
+        if zap_operation.execution_strategy.requires_worker:
+            self._dispatch_worker_bound(operation, zap_operation)
+        else:
+            self._dispatch_orchestration(operation, zap_operation)
+
+    def _dispatch_worker_bound(
+        self, operation: OperationRecord, zap_operation: ZapOperation
+    ) -> None:
+        """Assign a ZAP worker and execute a worker-bound operation on it."""
+        worker = self._pool_manager.try_assign(operation.operation_id)
+        if worker is None:
+            # No idle Active worker right now — stays QUEUED, retried next tick.
+            return
+
+        try:
+            request = zap_operation.deserialize_request(operation.metadata)
+        except Exception as exc:  # pylint: disable=broad-except
+            # Malformed/legacy metadata can never be resumed — fail loudly
+            # rather than silently holding a worker slot forever.
+            self._logger.error(
+                "Operation '%s' has unusable metadata, marking FAILED: %s",
+                operation.operation_id,
+                exc,
+            )
+            self._pool_manager.release_worker(worker.worker_id, operation.operation_id)
+            self._operation_service.fail(
+                operation.operation_id,
+                f"Could not reconstruct scan request from metadata: {exc}",
+            )
+            return
+
+        zap_operation.handler.execute(operation.operation_id, request, worker)
+
+    def _dispatch_orchestration(
+        self, operation: OperationRecord, zap_operation: ZapOperation
+    ) -> None:
+        """Run an orchestration operation off the queue, without a ZAP worker.
+
+        The operation is transitioned to RUNNING *synchronously before* it is
+        handed to the orchestration executor: that removes it from the QUEUED set
+        immediately, so the next poll tick cannot dispatch the same orchestrator
+        twice. The handler then only spawns/aggregates child operations (its
+        ``worker`` argument is ``None``) — no worker is ever claimed.
+        """
+        try:
+            request = zap_operation.deserialize_request(operation.metadata)
+        except Exception as exc:  # pylint: disable=broad-except
+            self._logger.error(
+                "Orchestration operation '%s' has unusable metadata, marking FAILED: %s",
+                operation.operation_id,
+                exc,
+            )
+            self._operation_service.fail(
+                operation.operation_id,
+                f"Could not reconstruct request from metadata: {exc}",
+            )
+            return
+
+        self._operation_service.start(operation.operation_id)
+        self._orchestration_executor.submit(
+            zap_operation.handler.execute, operation.operation_id, request, None
+        )
 
     # ── Observability helpers (logging only) ─────────────────────────────
 

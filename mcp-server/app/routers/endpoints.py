@@ -29,6 +29,8 @@ tools_router.include_router(history_router, prefix="")
 MCP_OPERATIONS: list[str] = [
     # OWASP ZAP
     "zap_scan_api",
+    "zap_scan_api_scenario",
+    "zap_scan_api_suite",
 
     # History
     "get_result",

@@ -120,6 +120,7 @@ OPERATION_TITLES = {
     BatchType.WEB_SCAN: "Website Security Scan",
     BatchType.INTERACTIVE_SCAN: "Interactive Website Scan",
     BatchType.BATCH_SCAN: "Scenario Security Scan",
+    BatchType.SUITE_SCAN: "Application Security Scan",
 }
 
 
@@ -295,15 +296,52 @@ def build_notification_flow_from_settings(
     )
 
 
+def build_zap_operation_registry(*, operation_service):
+    """Assemble the ZAP operation registry (the generic execution routing table).
+
+    This is the single place where ZAP tools are registered. **Adding a new tool
+    is one line here and zero lines in the Dispatcher or WorkerService** — the
+    whole point of the generic execution layer (see
+    ``architecture/zap-generic-execution/DESIGN.md``).
+
+    Args:
+        operation_service: The shared lifecycle service, threaded into each
+            tool's handler so lifecycle + progress events publish onto the one
+            event bus the notifier subscribes to.
+
+    Returns:
+        A populated ``ZapOperationRegistry``.
+    """
+    from app.services.tools.owasp_zap.execution.registry import (  # noqa: PLC0415
+        ZapOperationRegistry,
+    )
+    from app.services.tools.owasp_zap.handlers import (  # noqa: PLC0415
+        build_api_scan_operation,
+        build_api_scenario_operation,
+        build_api_suite_operation,
+    )
+
+    registry = ZapOperationRegistry()
+    registry.register(build_api_scan_operation(operation_service))
+    registry.register(build_api_scenario_operation(operation_service))
+    registry.register(build_api_suite_operation(operation_service))
+    # Future tools plug in the same way (browser-automation architecture still
+    # under evaluation — intentionally not implemented):
+    #   registry.register(build_web_application_operation(operation_service))
+    #   registry.register(build_interactive_session_operation(operation_service))
+    return registry
+
+
 def build_zap_dispatcher(*, dao: BaseOperationDAO, operation_service, config=None):
     """Assemble the ZAP queue dispatcher (background worker-pool dispatch).
 
     Wires the process-wide Pool Manager singletons
-    (``app.integrations.owasp_zap.runtime``) to *dao* and the
-    ``ZapApiScanService`` singleton. The returned dispatcher is not started —
-    the caller (``app/core/startup.py``) is responsible for
-    ``.start()``/``.stop()`` as part of the app lifespan, matching this
-    module's existing "assemble here, run there" split.
+    (``app.integrations.owasp_zap.runtime``) to *dao* and the generic
+    ``ZapOperationRegistry`` (via :func:`build_zap_operation_registry`). The
+    Dispatcher no longer depends on ``ZapApiScanService`` — it resolves handlers
+    through the registry. The returned dispatcher is not started — the caller
+    (``app/core/startup.py``) is responsible for ``.start()``/``.stop()`` as part
+    of the app lifespan, matching this module's "assemble here, run there" split.
 
     Args:
         dao: The persistence backend for operations — required, since a
@@ -312,9 +350,9 @@ def build_zap_dispatcher(*, dao: BaseOperationDAO, operation_service, config=Non
             ``DATABASE_PROVIDER`` is not ``NONE``.
         operation_service: The shared lifecycle service (from
             :func:`build_operation_notification_flow_from_settings`). Both the
-            dispatcher's FAILED transitions and the scanner's lifecycle +
-            progress events are published through it onto the one event bus the
-            notifier subscribes to — so no scan component knows any transport.
+            dispatcher's FAILED transitions and each tool's lifecycle + progress
+            events are published through it onto the one event bus the notifier
+            subscribes to — so no scan component knows any transport.
         config: Settings object; defaults to ``app.core.config.settings``.
 
     Returns:
@@ -324,14 +362,15 @@ def build_zap_dispatcher(*, dao: BaseOperationDAO, operation_service, config=Non
         from app.core.config import settings as config  # noqa: PLC0415
 
     from app.integrations.owasp_zap.runtime import pool_manager  # noqa: PLC0415
-    from app.services.tools.owasp_zap.api_scanner import ZapApiScanService  # noqa: PLC0415
     from app.services.tools.owasp_zap.worker.dispatcher import OwaspZapDispatcher  # noqa: PLC0415
+
+    registry = build_zap_operation_registry(operation_service=operation_service)
 
     return OwaspZapDispatcher(
         operation_dao=dao,
         operation_service=operation_service,
         pool_manager=pool_manager,
-        scan_service=ZapApiScanService(operation_service=operation_service),
+        registry=registry,
         queue_poll_interval_seconds=config.zap_queue_poll_interval_seconds,
         heartbeat_sweep_interval_seconds=config.zap_worker_heartbeat_sweep_interval_seconds,
         heartbeat_timeout_seconds=config.zap_worker_heartbeat_timeout_seconds,

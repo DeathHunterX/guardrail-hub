@@ -38,7 +38,7 @@ class FakeConfig:
 class FakeRequest:
     url: str = "https://api.example.com/login"
     method: str = "POST"
-    project_name: str = "demo"
+    report_group: str = "demo"
 
 
 class FakeOperationDAO(BaseOperationDAO):

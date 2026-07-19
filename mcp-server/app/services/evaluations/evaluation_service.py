@@ -65,7 +65,7 @@ class EvaluationService:
             metadata={
                 "target_url": request.url,
                 "method": getattr(request.method, "value", request.method),
-                "project_name": getattr(request, "project_name", None),
+                "report_group": getattr(request, "report_group", None),
             },
         )
         self._operations.start(operation_id)

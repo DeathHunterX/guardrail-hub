@@ -58,6 +58,9 @@ from app.schemas.tools.owasp_zap.common import OperationStatus, ZapScanMode
 from app.schemas.tools.owasp_zap.scan_result import ZapScanReports, ZapScanResult
 from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
 
+# Execution layer (strongly-typed operation identity persisted in metadata).
+from app.services.tools.owasp_zap.execution.operation_type import ZapOperationType
+
 # Service
 from app.services.operations.operation_service import OperationService
 
@@ -114,7 +117,11 @@ class ZapApiScanService:
     # Public: init scan (persist as QUEUED, no assignment yet)
     # ------------------------------------------------------------------
 
-    def init_api_scan(self, request: ZapApiScanRequest) -> Dict:
+    def init_api_scan(
+        self,
+        request: ZapApiScanRequest,
+        parent_operation_id: Optional[str] = None,
+    ) -> Dict:
         """
         Validate *request* and persist a ``QUEUED`` operation record.
 
@@ -122,23 +129,39 @@ class ZapApiScanService:
         dispatcher can reconstruct it and run the scan later — including
         after an mcp-server restart, since this row is the queue.
 
+        Args:
+            request: The API scan request to enqueue.
+            parent_operation_id: Optional id of an orchestrating operation (e.g. a
+                ``scan_api_suite`` run) that created this scan as a child. When
+                given it is recorded in metadata for traceability/aggregation;
+                when ``None`` the metadata shape is byte-identical to before, so
+                a plain ``scan_api`` submission is unchanged.
+
         Returns:
             Dict with ``operation_id``, ``status``, and a status-check message.
         """
-        if not (request.project_name or "").strip():
-            raise HTTPException(status_code=400, detail="Project name is required")
+        if not (request.report_group or "").strip():
+            raise HTTPException(status_code=400, detail="Report group is required")
 
         try:
             op_id = str(uuid.uuid4())
+            metadata = {
+                # Strongly-typed operation identity read back by the
+                # Dispatcher via the registry. Additive to the existing
+                # metadata shape, so previously-queued rows (which lack it)
+                # remain valid and default to API_SCAN on resolution.
+                "operation_type": ZapOperationType.API_SCAN.value,
+                "name": "Owasp Zap check",
+                "target_url": request.url,
+                "method": request.method,
+                "request": request.model_dump(mode="json", by_alias=True),
+            }
+            if parent_operation_id is not None:
+                metadata["parent_operation_id"] = parent_operation_id
             self.operation_service.create(
                 batch_type=BatchType.API_SCAN,
                 operation_id=op_id,
-                metadata={
-                    "name": "Owasp Zap check",
-                    "target_url": request.url,
-                    "method": request.method,
-                    "request": request.model_dump(mode="json", by_alias=True),
-                },
+                metadata=metadata,
             )
 
             self.app_logger.info(
@@ -220,6 +243,11 @@ class ZapApiScanService:
                 operation_id, stage="initializing", progress=5, worker_id=worker.worker_id
             )
 
+            # Pre-flight: fail fast (with actionable guidance) if the assigned
+            # worker cannot reach the target, instead of a late, cryptic
+            # url_not_found once the active scan has no site-tree node.
+            zap_client.check_target_reachable(request.url)
+
             zap_client.new_session(f"api-quick-{operation_id[:8]}")
 
             context_name = f"api-scan-{operation_id[:8]}"
@@ -287,7 +315,7 @@ class ZapApiScanService:
                 operation_id,
                 result=ZapScanResult(
                     operation_id=operation_id,
-                    project_name=request.project_name,
+                    report_group=request.report_group,
                     status="completed",
                     target_url=request.url,
                     duration_seconds=round(time.time() - start_time, 2),
@@ -334,6 +362,11 @@ class ZapApiScanService:
             self.operation_service.report_progress(
                 operation_id, stage="initializing", progress=5, worker_id=worker.worker_id
             )
+
+            # Pre-flight: fail fast (with actionable guidance) if the assigned
+            # worker cannot reach the target, instead of a late, cryptic
+            # url_not_found once the active scan has no site-tree node.
+            zap_client.check_target_reachable(request.url)
 
             zap_client.new_session(f"api-full-{operation_id[:8]}")
 
@@ -387,7 +420,7 @@ class ZapApiScanService:
                 operation_id,
                 result=ZapScanResult(
                     operation_id=operation_id,
-                    project_name=request.project_name,
+                    report_group=request.report_group,
                     status="completed",
                     target_url=request.url,
                     duration_seconds=round(time.time() - start_time, 2),

@@ -122,10 +122,16 @@ services:
     restart: unless-stopped
     networks:
       - app-network
+      - shared-network
+      
 
 networks:
   app-network:
     driver: bridge
+
+  shared-network:
+    external: true
+    name: guardrail-shared
 
 volumes:
   postgres-data:

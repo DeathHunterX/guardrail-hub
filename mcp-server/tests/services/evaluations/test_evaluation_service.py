@@ -21,7 +21,7 @@ from app.services.operations.operation_service import (
 class FakeRequest:
     url: str = "https://api.example.com/login"
     method: str = "POST"
-    project_name: str = "demo"
+    report_group: str = "demo"
 
 
 class FakeOperationDAO(BaseOperationDAO):
@@ -82,12 +82,12 @@ class EvaluationServiceTests(unittest.TestCase):
 
     def test_metadata_is_captured(self):
         service = EvaluationService(self.operations, lambda req: {})
-        op_id = service.run_api_scan(FakeRequest(url="https://x", method="GET", project_name="p"))
+        op_id = service.run_api_scan(FakeRequest(url="https://x", method="GET", report_group="p"))
 
         metadata = self.dao.get_operation(op_id).metadata
         self.assertEqual(metadata["target_url"], "https://x")
         self.assertEqual(metadata["method"], "GET")
-        self.assertEqual(metadata["project_name"], "p")
+        self.assertEqual(metadata["report_group"], "p")
 
     def test_scan_runner_receives_the_request(self):
         seen = []

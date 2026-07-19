@@ -59,7 +59,7 @@ class ZapScanReports(BaseModel):
 
 class ZapScanResult(BaseModel):
     operation_id: str = Field(..., description="Operation ID — matches the operation_id returned by the scan tool")
-    project_name: str = Field(..., description="Project name")
+    report_group: str = Field(..., description="Label used to organize the report folder")
     status: str = Field(..., description="Scan status: completed or failed")
     target_url: str = Field(..., description="Primary target URL that was scanned")
     duration_seconds: float = Field(..., description="Total scan duration in seconds")
