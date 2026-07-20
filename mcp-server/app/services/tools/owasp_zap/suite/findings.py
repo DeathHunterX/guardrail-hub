@@ -1,18 +1,44 @@
-"""Pure helpers to derive an executive view from aggregated child findings.
+"""Suite report shaping — the executive view over aggregated child findings.
 
-No ZAP / IO dependency — turns raw child alerts + severity counts into the
-report's higher-level sections (overall risk, deduplicated detailed findings,
-and actionable recommendations) so Markdown / JSON / SARIF all describe the same
-thing.
+Severity, ordering, and deduplication are **owned by the domain layer**
+(``app.domain.findings``, Decision 0008). This module is the suite's adapter
+onto that domain: it maps ZAP alert payloads into canonical
+:class:`~app.domain.findings.Finding` values, applies the domain rules, and
+shapes the result back into the report's wire format.
+
+Two things deliberately stay here rather than moving to the domain:
+
+* **Display labels** (``"High"``) — the persisted report format capitalises
+  severity; the domain value is lowercase. Label mapping is presentation.
+* **Severity advice prose** — generic AppSec guidance is presentation copy, not
+  domain knowledge (a package scanner's real advice is "upgrade X to Y", which
+  tools supply as data). See the growth stress-test, amendment 4.
 """
 
-from typing import Any
+from typing import Any, Optional
 
-# Highest → lowest. Index used both for ranking and for "overall risk".
-RISK_ORDER = ["High", "Medium", "Low", "Informational"]
-_RISK_RANK = {name.lower(): i for i, name in enumerate(RISK_ORDER)}
+from app.domain.findings import (
+    SEVERITY_ORDER,
+    Finding,
+    FindingSummary,
+    Severity,
+    deduplicate,
+)
+
+# Canonical severity -> the label used in the persisted report format.
+_SEVERITY_LABEL = {
+    Severity.CRITICAL: "Critical",
+    Severity.HIGH: "High",
+    Severity.MEDIUM: "Medium",
+    Severity.LOW: "Low",
+    Severity.INFORMATIONAL: "Informational",
+}
+
+# Display order for the report's risk vocabulary (most severe first).
+RISK_ORDER = [_SEVERITY_LABEL[s] for s in SEVERITY_ORDER if s is not Severity.CRITICAL]
 
 # Generic, human-readable guidance per severity present in the results.
+# Presentation copy, intentionally not domain knowledge.
 _SEVERITY_ADVICE = {
     "high": (
         "Address High-risk findings before release — these are exploitable "
@@ -30,53 +56,76 @@ _SEVERITY_ADVICE = {
 }
 
 
+def severity_label(severity: Severity) -> str:
+    """The report-format label for a canonical severity."""
+    return _SEVERITY_LABEL[severity]
+
+
 def risk_rank(risk: str) -> int:
-    """Return a sort rank for a risk label (0 = most severe)."""
-    return _RISK_RANK.get(str(risk).lower(), len(RISK_ORDER))
+    """Return a sort rank for a risk label (0 = most severe).
+
+    Delegates ordering to the domain; retained as the suite's label-facing entry
+    point.
+    """
+    return Severity.parse(risk).rank
 
 
 def overall_risk(severity_summary: dict) -> str:
-    """Return the highest severity present, or ``"None"`` when there are no findings."""
-    for name in RISK_ORDER:
-        if severity_summary.get(name.lower(), 0):
-            return name
-    return "None"
+    """Return the highest severity present, or ``"None"`` when there are none.
+
+    Informational findings never constitute risk (domain invariant I13), so a
+    result containing only informational items reports ``"None"``.
+    """
+    risk = FindingSummary.from_mapping(severity_summary).overall_risk
+    return _SEVERITY_LABEL[risk] if risk is not None else "None"
+
+
+def _to_finding(alert: dict, fallback_location: Optional[str] = None) -> Finding:
+    """Map one persisted ZAP alert payload onto the canonical Finding.
+
+    This is the tool boundary: ZAP's native risk scale is translated into the
+    canonical severity here, never inside the domain.
+    """
+    rule_id = str(alert.get("alert_ref") or alert.get("name") or "zap")
+    return Finding(
+        rule_id=rule_id,
+        name=alert.get("name", rule_id),
+        severity=Severity.parse(alert.get("risk")),
+        location=alert.get("url") or fallback_location,
+        remediation=alert.get("solution") or "",
+    )
 
 
 def collect_findings(outcomes: list) -> list[dict]:
     """Deduplicate child alerts into ranked detailed findings.
 
-    Alerts are grouped by ``(rule_id, name, risk)``; instances are counted and
-    the affected categories/URLs recorded. Sorted by severity, then by count.
+    Findings sharing an identity are collapsed and counted by the domain; the
+    affected suite categories are re-attached here because "category" is a suite
+    concept, not a domain one.
     """
-    grouped: dict[tuple, dict] = {}
+    findings: list[Finding] = []
+    categories_by_identity: dict[Any, set] = {}
+
     for outcome in outcomes:
         for alert in outcome.alerts:
-            rule_id = str(alert.get("alert_ref") or alert.get("name") or "zap")
-            name = alert.get("name", rule_id)
-            risk = alert.get("risk", "Informational")
-            key = (rule_id, name, risk)
-            entry = grouped.setdefault(
-                key,
-                {
-                    "rule_id": rule_id,
-                    "name": name,
-                    "risk": risk,
-                    "count": 0,
-                    "categories": set(),
-                    "example_url": alert.get("url") or outcome.url,
-                    "solution": alert.get("solution") or "",
-                },
+            finding = _to_finding(alert, fallback_location=outcome.url)
+            findings.append(finding)
+            categories_by_identity.setdefault(finding.identity, set()).add(
+                outcome.category
             )
-            entry["count"] += 1
-            entry["categories"].add(outcome.category)
 
-    findings = []
-    for entry in grouped.values():
-        entry["categories"] = sorted(entry["categories"])
-        findings.append(entry)
-    findings.sort(key=lambda f: (risk_rank(f["risk"]), -f["count"]))
-    return findings
+    return [
+        {
+            "rule_id": aggregated.rule_id,
+            "name": aggregated.name,
+            "risk": _SEVERITY_LABEL[aggregated.severity],
+            "count": aggregated.count,
+            "categories": sorted(categories_by_identity.get(aggregated.identity, ())),
+            "example_url": aggregated.example_location,
+            "solution": aggregated.remediation or "",
+        }
+        for aggregated in deduplicate(findings)
+    ]
 
 
 def derive_recommendations(findings: list[dict], severity_summary: dict) -> list[str]:

@@ -34,8 +34,8 @@ from app.core.config import settings
 from app.core.mcp_logger import MCPLogger
 from app.dao.base import BaseOperationDAO
 from app.dao.dynamodb.dynamodb_dao import DynamoDBDAO
-from app.schemas.internal.operation import OperationRecord
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.dao.operation_record import OperationRecord
+from app.domain.lifecycle import OperationPhase
 
 # Projected attributes used by list-style queries (omit heavy ``result`` field)
 _LIST_PROJECTION = "operation_id, batch_type, #meta, #stat, created_at, updated_at, #err, log_path"
@@ -303,7 +303,7 @@ class DynamoDBOperationDAO(DynamoDBDAO, BaseOperationDAO):
             A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
             oldest first.
         """
-        records = self.get_by_status(OperationStatus.QUEUED)
+        records = self.get_by_status(OperationPhase.QUEUED)
         return sorted(records, key=lambda r: r.created_at)
 
     def initialize_schema(self) -> None:
@@ -372,7 +372,7 @@ class DynamoDBOperationDAO(DynamoDBDAO, BaseOperationDAO):
         """Deserialise a DynamoDB item dict back to an :class:`OperationRecord`."""
         return OperationRecord(
             operation_id=item["operation_id"],
-            status=OperationStatus(item["status"]),
+            status=OperationPhase(item["status"]),
             batch_type=item["batch_type"],
             metadata=item.get("metadata", {}),
             result=json.loads(item["result"]) if item.get("result") else None,

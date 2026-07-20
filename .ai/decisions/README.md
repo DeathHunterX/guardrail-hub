@@ -38,3 +38,7 @@ Append-only. A later decision that changes course adds a new record marking the 
 | [0003 — Bootstrap Complete; Steady-State Operating Model](0003-bootstrap-complete-steady-state.md) | Accepted | 2026-07-06 |
 | [0004 — ChatOps Platform Architecture](0004-chatops-platform-architecture.md) | Proposed | 2026-07-07 |
 | [0005 — Architecture Hardening Refactor & Corruption Recovery](0005-architecture-hardening-refactor.md) | Accepted | 2026-07-10 |
+| [0006 — Service Package Design Standard](0006-service-package-design-standard.md) | Accepted | 2026-07-20 |
+| [0007 — Domain Layer Justification](0007-domain-layer-justification.md) | Accepted | 2026-07-20 |
+| [0008 — The Canonical Domain Language](0008-domain-ubiquitous-language.md) | Accepted | 2026-07-20 |
+| [0009 — Execution Capability](0009-execution-capability.md) | Proposed | 2026-07-20 |

@@ -16,15 +16,14 @@ import uuid
 from threading import Lock
 from typing import Optional
 
-from fastapi import HTTPException
-
 from app.constants.batch import BatchType
 from app.core.config import settings
 from app.core.events.dispatcher import InProcessEventDispatcher
+from app.core.exception import InvalidScanRequestError, ScanSubmissionError
 from app.core.mcp_logger import MCPLogger
 from app.dao.operation_dao import get_operation_dao
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.domain.lifecycle import OperationPhase
 from app.schemas.tools.owasp_zap.scan_api_suite import ZapApiSuiteScanRequest
 from app.services.operations.operation_service import OperationService
 from app.services.tools.owasp_zap.execution.operation_type import ZapOperationType
@@ -64,9 +63,9 @@ class ZapApiSuiteService:
     def init_suite_scan(self, request: ZapApiSuiteScanRequest) -> dict:
         """Validate *request* and persist it as a ``QUEUED`` suite operation."""
         if not (request.report_group or "").strip():
-            raise HTTPException(status_code=400, detail="Report group is required")
+            raise InvalidScanRequestError("Report group is required")
         if not request.categories:
-            raise HTTPException(status_code=400, detail="At least one category is required")
+            raise InvalidScanRequestError("At least one category is required")
 
         try:
             op_id = str(uuid.uuid4())
@@ -86,18 +85,18 @@ class ZapApiSuiteService:
             )
             return {
                 "operation_id": op_id,
-                "status": OperationStatus.QUEUED,
+                "status": OperationPhase.QUEUED,
                 "message": (
                     f"Zap API suite scan queued with operation_id: {op_id}. Child "
                     f"scans will run in parallel as workers become available. Check "
                     f"status at api/history/get-result with param operation_id: {op_id}"
                 ),
             }
-        except HTTPException:
+        except InvalidScanRequestError:
             raise
         except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Error initializing suite scan:\n{str(e)}"
+            raise ScanSubmissionError(
+                f"Error initializing suite scan:\n{str(e)}"
             ) from e
 
     # ------------------------------------------------------------------

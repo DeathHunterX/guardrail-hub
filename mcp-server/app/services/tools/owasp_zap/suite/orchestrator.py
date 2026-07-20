@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 
 from app.core.mcp_logger import MCPLogger
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.domain.lifecycle import OperationPhase
 from app.schemas.tools.owasp_zap.scan_api_suite import (
     ApiCategory,
     ZapApiSuiteScanRequest,
@@ -29,10 +29,10 @@ from app.services.tools.owasp_zap.suite.aggregator import (
     EndpointOutcome,
     aggregate_application_report,
 )
-from app.services.tools.owasp_zap.suite.openapi import extract_endpoints
+from app.schemas.tools.owasp_zap.openapi_spec import extract_endpoints
 from app.services.tools.owasp_zap.suite.reporter import SuiteReporter
 
-_TERMINAL = {OperationStatus.COMPLETED, OperationStatus.FAILED, OperationStatus.CANCELLED}
+_TERMINAL = {OperationPhase.COMPLETED, OperationPhase.FAILED, OperationPhase.CANCELLED}
 
 # Callable signatures (documentation): a child submitter and a status reader.
 ScanSubmitter = Callable[[ZapApiScanRequest, str], str]
@@ -191,7 +191,7 @@ class SuiteOrchestrator:
                 if record is not None and isinstance(record.result, dict)
                 else {}
             )
-            is_completed = status_value == OperationStatus.COMPLETED.value
+            is_completed = status_value == OperationPhase.COMPLETED.value
             outcomes.append(
                 EndpointOutcome(
                     category=child["category"],

@@ -1,7 +1,7 @@
 ---
 id: standards/architecture/persistence-dao
 title: Persistence via Hand-Written DAO
-version: 1.0.0
+version: 1.0.1
 status: Active
 owner: backend-owner
 category: architecture
@@ -10,7 +10,7 @@ severity_default: blocking
 applies_to: [mcp-server/app/dao/**, mcp-server/app/services/**]
 enforced_by: []
 depends_on: [standards/architecture/backend-layering]
-validated_against: [standards/architecture/backend-layering@1.0.0]
+validated_against: [standards/architecture/backend-layering@1.1.0]
 ---
 
 # Persistence via Hand-Written DAO
@@ -38,6 +38,9 @@ A read-only diagnostic script may query directly, but nothing in the request pat
 ## Anti-patterns
 - Importing `sqlalchemy` and defining ORM models.
 - A service importing `PostgresDAO` directly instead of the `base` interface, breaking backend-swappability.
+
+## Revalidation — 2026-07-20 (1.0.1)
+Re-pinned to `backend-layering@1.1.0` after that standard gained the `domain/` role and extended R4's chain to `→ domain` ([Decision 0007](../../decisions/0007-domain-layer-justification.md)). Checked against R1–R4 here: the change is additive and does not touch persistence. A DAO **may** depend on Domain (the extended R4 direction permits it, and `dao/base.py` now imports `OperationPhase`), which is consistent with R4 above — services still depend on the DAO *interface*, and the DAO still owns no business vocabulary of its own. No rule required amendment; patch bump only.
 - Hard-coding the provider (`if True: use postgres`) instead of honoring `DATABASE_PROVIDER`.
 
 ## Examples

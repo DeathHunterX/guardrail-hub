@@ -25,10 +25,11 @@ python .ai/tools/aios.py <command>
 | `index [--dry-run]` | (Re)generates `<module>/<category>/INDEX.md` from unit frontmatter. Never hand-edit an INDEX. | 0 |
 | `impact <id> [--change major\|minor\|patch]` | Reverse-dependency walk + Impact Report per [governance rules](../governance/README.md#impact-analysis). | 0 |
 | `lint` | Line-count ceiling (150) on routing files (MANIFEST/ROUTER/INDEX). | nonzero if any over |
-| `check` | `validate` + `links` + `lint` as one CI gate. | nonzero on any failure |
+| `arch` | Domain-layer boundary enforcement: scans `mcp-server/app/domain/**` for imports violating [domain-layer](../standards/architecture/domain-layer.md) **D2** (framework/transport/infrastructure) and **D3** (any dependency outside Domain). | nonzero if any violation |
+| `check` | `validate` + `links` + `lint` + `arch` as one CI gate. | nonzero on any failure |
 | `selftest` | Proves the impact + validation engines on synthetic fixtures. | nonzero on any failure |
 
-`--root <path>` overrides the `.ai/` root (default: this script's own `.ai/`); `selftest` uses it to exercise the engine against temp fixtures.
+`--root <path>` overrides the `.ai/` root (default: this script's own `.ai/`); `selftest` uses it to exercise the engine against temp fixtures. `arch` is the one subcommand that reads the **product** tree rather than `.ai/` — it resolves the repository root as the `.ai/` parent, because the rule it enforces is about application code. Its scanned paths are `DOMAIN_ROOTS` in the CLI; a second Domain root (a future subsystem) is added there.
 
 ## Why Standard-Library Only (no `pyyaml`, no `jsonschema`)
 

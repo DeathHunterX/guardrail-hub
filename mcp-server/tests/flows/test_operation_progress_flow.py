@@ -12,8 +12,8 @@ from app.bootstrap import build_operation_notification_flow
 from app.core.ports.notification_channel import ChannelCapabilities, NotificationChannel
 from app.dao.base import BaseOperationDAO
 from app.integrations.chat.slack.channel_adapter import HttpResponse
-from app.schemas.internal.operation import OperationRecord
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.dao.operation_record import OperationRecord
+from app.domain.lifecycle import OperationPhase
 
 
 class FakeOperationDAO(BaseOperationDAO):
@@ -69,7 +69,7 @@ class FallbackChannel(NotificationChannel):
     def capabilities(self):
         return ChannelCapabilities()
 
-    def send(self, destination, message):
+    def send(self, destination, message, content=None):
         self.sends.append((destination, message))
         return None
 
@@ -99,7 +99,7 @@ class SlackUpdateFlowTests(unittest.TestCase):
 
     def test_persistence_unchanged_alongside_notification(self):
         op_id = self.flow.operation_service.create("api_scan")
-        self.assertEqual(self.dao.get_operation(op_id).status, OperationStatus.QUEUED)
+        self.assertEqual(self.dao.get_operation(op_id).status, OperationPhase.QUEUED)
 
 
 class FallbackFlowTests(unittest.TestCase):

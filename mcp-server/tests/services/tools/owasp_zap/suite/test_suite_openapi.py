@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from app.services.tools.owasp_zap.suite.openapi import extract_endpoints
+from app.schemas.tools.owasp_zap.openapi_spec import extract_endpoints
 
 
 _SPEC = {

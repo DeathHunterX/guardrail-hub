@@ -8,7 +8,7 @@ maps routes to that service and translates a not-ready state into HTTP 503.
 
 from fastapi import APIRouter, HTTPException
 
-from app.services.public.health_service import HealthService
+from app.services.public import HealthService
 
 health_router = APIRouter(prefix="/health", tags=["health"])
 _service = HealthService()

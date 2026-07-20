@@ -7,12 +7,12 @@ the Debug-Mode isolation of Level-4 infrastructure detail.
 
 import unittest
 
-from app.services.notification.operation_progress import (
-    LifecyclePhase,
+from app.domain.findings import FindingSummary, Severity
+from app.domain.lifecycle import OperationPhase
+from app.services.notification.rendering.operation_progress import (
     OperationProgress,
-    ScanFindings,
 )
-from app.services.notification.renderer import (
+from app.services.notification.rendering.renderer import (
     OperationNotificationRenderer,
     humanize_stage,
 )
@@ -26,7 +26,7 @@ class RendererDefaultTests(unittest.TestCase):
         text = self.renderer.render(
             OperationProgress(
                 "api_scan:1d015005",
-                LifecyclePhase.QUEUED,
+                OperationPhase.QUEUED,
                 title="API Security Scan",
                 reference="1D015005",
             )
@@ -41,7 +41,7 @@ class RendererDefaultTests(unittest.TestCase):
         text = self.renderer.render(
             OperationProgress(
                 "api_scan:1d015005",
-                LifecyclePhase.RUNNING,
+                OperationPhase.RUNNING,
                 stage="active scan",
                 progress=40,
                 title="API Security Scan",
@@ -62,11 +62,13 @@ class RendererDefaultTests(unittest.TestCase):
         text = self.renderer.render(
             OperationProgress(
                 "op1",
-                LifecyclePhase.COMPLETED,
+                OperationPhase.COMPLETED,
                 title="API Security Scan",
                 target="POST /api/auth/login",
                 duration_seconds=42,
-                findings=ScanFindings(critical=0, high=1, medium=3, low=8),
+                findings=FindingSummary.from_counts(
+                    {Severity.HIGH: 1, Severity.MEDIUM: 3, Severity.LOW: 8}
+                ),
                 reference="1D015005",
             )
         )
@@ -82,10 +84,10 @@ class RendererDefaultTests(unittest.TestCase):
         text = self.renderer.render(
             OperationProgress(
                 "op1",
-                LifecyclePhase.COMPLETED,
+                OperationPhase.COMPLETED,
                 title="API Security Scan",
                 duration_seconds=42,
-                findings=ScanFindings(high=1),
+                findings=FindingSummary.from_counts({Severity.HIGH: 1}),
                 report_link="https://example/report/op1",
             )
         )
@@ -96,9 +98,9 @@ class RendererDefaultTests(unittest.TestCase):
         text = self.renderer.render(
             OperationProgress(
                 "op1",
-                LifecyclePhase.COMPLETED,
+                OperationPhase.COMPLETED,
                 title="API Security Scan",
-                findings=ScanFindings(),
+                findings=FindingSummary.empty(),
             )
         )
         self.assertIn("No vulnerabilities found", text)
@@ -107,7 +109,7 @@ class RendererDefaultTests(unittest.TestCase):
         text = self.renderer.render(
             OperationProgress(
                 "api_scan:1d015005",
-                LifecyclePhase.FAILED,
+                OperationPhase.FAILED,
                 title="API Security Scan",
                 reason="Worker stopped responding\nTraceback (most recent call last):\n  File ...",
                 failed_phase="active scan",
@@ -124,7 +126,7 @@ class RendererDefaultTests(unittest.TestCase):
         text = self.renderer.render(
             OperationProgress(
                 "api_scan:1d015005",
-                LifecyclePhase.RUNNING,
+                OperationPhase.RUNNING,
                 stage="spider",
                 worker_id="worker-2",
                 reference="1D015005",
@@ -144,7 +146,7 @@ class RendererDebugModeTests(unittest.TestCase):
         text = renderer.render(
             OperationProgress(
                 "api_scan:1d015005",
-                LifecyclePhase.RUNNING,
+                OperationPhase.RUNNING,
                 stage="active scan",
                 worker_id="worker-2",
                 debug={"Container": "zap-worker-3"},

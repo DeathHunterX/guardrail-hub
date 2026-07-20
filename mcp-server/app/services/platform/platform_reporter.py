@@ -19,13 +19,12 @@ logging continues and the platform keeps running.
 
 from typing import Any, Iterable, Optional
 
-from app.services.notification.notification import Notification
-from app.services.notification.notification_service import NotificationService
+from app.core.ports.notification_channel import NotificationContent
+from app.services.notification import Notification, NotificationService
+from app.services.platform import rendering
 
 SLACK_CHANNEL_NAME = "slack"
 
-_HEADER = "🛡️ Guardrail Hub"
-_DIVIDER = "━" * 12
 _SERVER = "mcp-server"
 
 
@@ -52,9 +51,9 @@ class PlatformReporter:
         self._emit(
             "Platform starting",
             {"event": "starting", "environment": environment, "version": version},
-            self._render(
+            rendering.build_card(
                 "🚀 Guardrail Hub Starting",
-                [("Environment", self._env(environment)), ("Version", self._ver(version))],
+                [("Environment", rendering.environment_label(environment)), ("Version", rendering.version_label(version))],
                 footer=[("Status", "Starting")],
             ),
         )
@@ -77,11 +76,11 @@ class PlatformReporter:
                 "server": server,
                 "status": status,
             },
-            self._render(
+            rendering.build_card(
                 "✅ Platform Ready",
                 [
-                    ("Environment", self._env(environment)),
-                    ("Version", self._ver(version)),
+                    ("Environment", rendering.environment_label(environment)),
+                    ("Version", rendering.version_label(version)),
                     ("Server", server),
                 ],
                 integrations=integrations,
@@ -99,12 +98,12 @@ class PlatformReporter:
         self._emit(
             "Slack connected",
             {"event": "slack_connected", "workspace": workspace, "channel": channel, "environment": environment},
-            self._render(
+            rendering.build_card(
                 "🤖 Slack Connected",
                 [
                     ("Workspace", workspace or "Unknown"),
                     ("Channel", channel or "Unknown"),
-                    ("Environment", self._env(environment)),
+                    ("Environment", rendering.environment_label(environment)),
                 ],
                 footer=[("Notifications", notifications)],
             ),
@@ -114,7 +113,7 @@ class PlatformReporter:
         self._emit(
             "Slack disconnected",
             {"event": "slack_disconnected", "reason": reason},
-            self._render(
+            rendering.build_card(
                 "🔌 Slack Disconnected",
                 [("Reason", reason or "Unknown")],
                 footer=[("Notifications", "Unavailable")],
@@ -126,7 +125,7 @@ class PlatformReporter:
         self._emit(
             "Platform shutting down",
             {"event": "shutting_down", "reason": reason},
-            self._render(
+            rendering.build_card(
                 "🛑 Platform Stopping",
                 [("Reason", reason)],
                 footer=[("Status", "Stopping")],
@@ -138,7 +137,7 @@ class PlatformReporter:
         self._emit(
             "Platform stopped",
             {"event": "stopped", "reason": reason},
-            self._render(
+            rendering.build_card(
                 "❌ Guardrail Hub Stopped",
                 [("Reason", reason)],
                 footer=[("Status", "Unavailable")],
@@ -151,7 +150,7 @@ class PlatformReporter:
         self._emit(
             "Configuration error",
             {"event": "configuration_error", "missing": items},
-            self._render(
+            rendering.build_card(
                 "❌ Configuration Error",
                 [("Missing", ", ".join(items) if items else "Unknown")],
                 footer=[("Status", "Unavailable")],
@@ -192,41 +191,14 @@ class PlatformReporter:
         self._log_only("Platform summary", {"event": "platform_summary", **summary})
 
     # ------------------------------------------------------------------
-    # Rendering
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _env(value: Any) -> str:
-        return str(value).capitalize() if value else "Unknown"
-
-    @staticmethod
-    def _ver(value: Any) -> str:
-        text = str(value)
-        return text if text.startswith("v") else f"v{text}"
-
-    def _render(self, title: str, fields, integrations=None, footer=None) -> str:
-        lines = [_HEADER, _DIVIDER, title]
-        if fields:
-            width = max(len(label) for label, _ in fields)
-            for label, value in fields:
-                lines.append(f"{label.ljust(width)} : {value}")
-        if integrations:
-            lines.append("Integrations:")
-            for label, value in integrations:
-                lines.append(f"{label} : {value}")
-        lines.append(_DIVIDER)
-        if footer:
-            for label, value in footer:
-                lines.append(f"{label} : {value}")
-        return "\n".join(lines)
-
-    # ------------------------------------------------------------------
     # Internals (unchanged: log always, notify best-effort)
     # ------------------------------------------------------------------
 
-    def _emit(self, message: str, extra: dict, bot_message: str, level: str = "info") -> None:
+    def _emit(self, message: str, extra: dict, card, level: str = "info") -> None:
+        """Log always; notify best-effort. *card* is a ``(text, content)`` pair."""
         self._write_log(level, message, extra)
-        self._notify(bot_message)
+        text, content = card
+        self._notify(text, content)
 
     def _log_only(self, message: str, extra: dict, level: str = "info") -> None:
         self._write_log(level, message, extra)
@@ -238,12 +210,17 @@ class PlatformReporter:
         except TypeError:
             log_fn(message)
 
-    def _notify(self, message: str) -> None:
+    def _notify(self, message: str, content: Optional[NotificationContent] = None) -> None:
         if self._notifications is None or self._destination is None:
             return
         try:
             self._notifications.notify(
-                Notification(channel=self._channel, destination=self._destination, message=message)
+                Notification(
+                    channel=self._channel,
+                    destination=self._destination,
+                    message=message,
+                    content=content,
+                )
             )
         except Exception as exc:  # noqa: BLE001 - notifications must never crash the platform
             try:

@@ -34,8 +34,10 @@ class InProcessEventDispatcher(EventPublisher):
         """Register *handler* to receive events published under *event_name*.
 
         Args:
-            event_name: The :attr:`DomainEvent.name` to listen for.
-            handler: A callable invoked with the published event.
+            event_name: The event contract's :attr:`DomainEvent.name` — read
+                off the event class (e.g. ``OperationCreated.name``) rather than
+                written as a literal.
+            handler: A callable invoked with the published typed event.
         """
         self._handlers[event_name].append(handler)
 
@@ -43,11 +45,13 @@ class InProcessEventDispatcher(EventPublisher):
         """Deliver *event* to every handler subscribed to its name (best-effort).
 
         Args:
-            event: The domain event to dispatch. Handlers for
-                :attr:`DomainEvent.name` are invoked in registration order;
-                any handler exception is logged and does not propagate.
+            event: The typed domain event to dispatch. Its routing key is the
+                class-level :attr:`DomainEvent.name`, so the event itself
+                decides where it goes — no caller repeats a string literal.
+                Handlers are invoked in registration order; any handler
+                exception is logged and does not propagate.
         """
-        for handler in list(self._handlers.get(event.name, ())):
+        for handler in list(self._handlers.get(type(event).name, ())):
             try:
                 handler(event)
             except Exception as exc:  # noqa: BLE001 - isolate subscriber failures

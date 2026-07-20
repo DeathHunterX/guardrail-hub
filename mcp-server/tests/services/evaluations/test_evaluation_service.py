@@ -5,8 +5,8 @@ from dataclasses import dataclass
 
 from app.core.ports.event_publisher import DomainEvent, EventPublisher
 from app.dao.base import BaseOperationDAO
-from app.schemas.internal.operation import OperationRecord
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.dao.operation_record import OperationRecord
+from app.domain.lifecycle import OperationPhase
 from app.services.evaluations.evaluation_service import EvaluationService
 from app.services.operations.operation_service import (
     EVENT_OPERATION_COMPLETED,
@@ -73,7 +73,7 @@ class EvaluationServiceTests(unittest.TestCase):
 
         self.assertEqual(op_id, "api_scan:fixed")
         record = self.dao.get_operation(op_id)
-        self.assertEqual(record.status, OperationStatus.COMPLETED)
+        self.assertEqual(record.status, OperationPhase.COMPLETED)
         self.assertEqual(record.result, {"alert_count": 2})
         self.assertEqual(
             [e.name for e in self.publisher.events],
@@ -108,7 +108,7 @@ class EvaluationServiceTests(unittest.TestCase):
             service.run_api_scan(FakeRequest())
 
         record = self.dao.get_all()[0]
-        self.assertEqual(record.status, OperationStatus.FAILED)
+        self.assertEqual(record.status, OperationPhase.FAILED)
         self.assertEqual(record.error, "zap down")
         self.assertEqual(
             [e.name for e in self.publisher.events],

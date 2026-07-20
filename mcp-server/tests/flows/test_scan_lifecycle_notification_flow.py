@@ -18,8 +18,8 @@ from typing import Optional
 from app.bootstrap import build_operation_notification_flow_from_settings
 from app.dao.base import BaseOperationDAO
 from app.integrations.chat.slack.channel_adapter import HttpResponse
-from app.schemas.internal.operation import OperationRecord
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.dao.operation_record import OperationRecord
+from app.domain.lifecycle import OperationPhase
 
 POST_MESSAGE = "https://slack.com/api/chat.postMessage"
 CHAT_UPDATE = "https://slack.com/api/chat.update"
@@ -130,7 +130,7 @@ class ScanLifecycleEnabledTests(unittest.TestCase):
 
     def test_operation_persisted_as_completed(self):
         _simulate_quick_scan(self.flow.operation_service, "uuid-1")
-        self.assertEqual(self.dao.get_operation("uuid-1").status, OperationStatus.COMPLETED)
+        self.assertEqual(self.dao.get_operation("uuid-1").status, OperationPhase.COMPLETED)
 
     def test_failure_transition_notifies(self):
         op = "uuid-2"
@@ -155,7 +155,7 @@ class ScanLifecycleDisabledTests(unittest.TestCase):
         _simulate_quick_scan(flow.operation_service, "uuid-3")
 
         self.assertEqual(transport.calls, [])  # nothing delivered
-        self.assertEqual(dao.get_operation("uuid-3").status, OperationStatus.COMPLETED)
+        self.assertEqual(dao.get_operation("uuid-3").status, OperationPhase.COMPLETED)
 
 
 if __name__ == "__main__":

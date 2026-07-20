@@ -3,7 +3,7 @@
 import unittest
 
 from app.core.ports.notification_channel import NotificationChannel
-from app.services.notification.notification import Notification
+from app.services.notification.message.notification import Notification
 from app.services.notification.notification_service import (
     NotificationService,
     UnknownChannelError,
@@ -22,7 +22,7 @@ class FakeChannel(NotificationChannel):
     def name(self) -> str:
         return self._name
 
-    def send(self, destination: str, message: str) -> None:
+    def send(self, destination: str, message: str, content=None) -> None:
         if self._fail:
             raise RuntimeError("delivery boom")
         self.sent.append((destination, message))

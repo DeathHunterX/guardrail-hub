@@ -10,12 +10,12 @@ Usage
 
     from app.constants.batch import BatchType
     from app.dao.operation_dao import get_operation_dao
-    from app.schemas.tools.owasp_zap.common import OperationStatus
+    from app.domain.lifecycle import OperationPhase
 
     dao = get_operation_dao()
     dao.create_operation(
         op_id="zap_api_scan:abc123",
-        status=OperationStatus.QUEUED,
+        status=OperationPhase.QUEUED,
         batch_type=BatchType.API_SCAN,
         metadata={"target_url": "https://api.example.com"},
         log_path="logs/ZapApiScanService_20260615.log",

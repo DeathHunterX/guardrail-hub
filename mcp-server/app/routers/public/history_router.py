@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from app.constants.batch import BatchType
-from app.services.public.history_service import HistoryService
+from app.services.public import HistoryService
 
 history_router = APIRouter(prefix="/history", tags=["History"])
 _service = HistoryService()

@@ -1,12 +1,12 @@
 ---
 id: evaluation/benchmarks/fix-bug
 title: Benchmark — Fix Bug
-version: 1.0.0
+version: 1.0.2
 status: Active
 owner: evaluation-owner
 category: benchmark
 depends_on: [agents/backend/backend-agent]
-validated_against: [agents/backend/backend-agent@1.0.0]
+validated_against: [agents/backend/backend-agent@1.2.0]
 ---
 
 # Benchmark — Fix Bug
@@ -34,3 +34,13 @@ validated_against: [agents/backend/backend-agent@1.0.0]
 - **Reasoning Quality:** declared/inferred distinction and escalation rules honored (Guardrail G5).
 
 This run is the baseline; future RFCs compare their Evaluation step against it (see [evaluation/README.md](../README.md#regression-testing)).
+
+## Revalidation — 2026-07-20 (v1.0.1)
+
+Backend Agent bumped 1.0.0 → 1.1.0 (additive: `standards/architecture/service-package-design` added to `standards_enforced`, per [Decision 0006](../../decisions/0006-service-package-design-standard.md)). Checked against this benchmark's contract: the routing path, Expected Context answer key, and success criteria are unchanged — a localized bug fix creates no new service files or packages, so the added Standard is not part of the minimal context and does not alter the baseline. Re-pinned `validated_against` to 1.1.0; no re-run required.
+
+## Revalidation — 2026-07-20 (v1.0.2)
+
+Backend Agent bumped 1.1.0 → 1.2.0 (additive: `standards/architecture/domain-layer` added to `standards_enforced`, per [Decision 0007](../../decisions/0007-domain-layer-justification.md) / [0008](../../decisions/0008-domain-ubiquitous-language.md)). Checked against the contract: the routing path and success criteria are unchanged, and the Expected Context answer key still resolves to "the one relevant Standard" — fixing a localized bug in `ZapApiScanService` neither defines a business concept nor touches `domain/`, so `domain-layer` stays out of the minimal context. The benchmark's *purpose* (proving minimal-context routing) is unaffected by a Domain task-subtype existing in the Router, because this scenario does not match that row. Re-pinned to 1.2.0; no re-run required.
+
+> Coverage gap noted (not a regression): no benchmark exercises the Domain task subtype — a task that *should* load `domain-layer`. Worth adding a `add-business-concept` benchmark when the Evaluation module next gains units; recorded here so the gap is declared rather than silent.

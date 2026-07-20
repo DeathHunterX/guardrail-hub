@@ -6,36 +6,59 @@ only implementation is the in-process dispatcher
 (``app.core.events.dispatcher.InProcessEventDispatcher``); a durable/broker
 transport can implement the same port later with no change to publishers.
 
-The event message (:class:`DomainEvent`) is intentionally vocabulary-neutral —
-it does not reference any specific domain concept (Operation, scan, ...), so any
-part of the application can publish or subscribe without coupling to another
-domain's model.
+:class:`DomainEvent` is the abstract envelope; concrete, **typed** event
+contracts live in :mod:`app.core.events.contracts`. The base carries no
+domain vocabulary, so any part of the application can publish or subscribe
+without coupling to another context's service — it depends on the event
+contract, which belongs to neither side.
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime, timezone
-from typing import Any, Mapping
+from typing import Any, ClassVar, Dict
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class DomainEvent:
-    """An immutable record that something happened inside the application.
+    """Base class for an immutable record that something happened.
+
+    Concrete events are frozen dataclasses that declare their own **typed**
+    fields — there is no free-form payload dictionary. A subscriber reads
+    ``event.stage``, not ``event.payload["stage"]``, so a producer/consumer
+    mismatch is a name error at import time rather than a silent ``None`` at
+    runtime.
+
+    Subclasses set two class-level attributes:
+
+    * ``name`` — the stable routing key subscribers register against
+      (e.g. ``"operation.created"``). Declared once on the class so no caller
+      ever repeats the string literal.
+    * ``version`` — the contract version. Bump it when a field's meaning
+      changes incompatibly; adding an optional field is a compatible change and
+      does not.
 
     Attributes:
-        name: Stable event name used to route to subscribers
-            (e.g. ``"operation.created"``). Vocabulary-neutral by design.
-        payload: Arbitrary, read-only context for the event.
         occurred_at: UTC timestamp of when the event occurred.
     """
 
-    name: str
-    payload: Mapping[str, Any] = field(default_factory=dict)
+    name: ClassVar[str] = "domain.event"
+    version: ClassVar[int] = 1
+
     occurred_at: datetime = field(default_factory=_utcnow)
+
+    def as_mapping(self) -> Dict[str, Any]:
+        """Return the event's typed fields as a plain mapping.
+
+        Provided **only** for string templating and logging, where a mapping is
+        the required input format. It is never how a subscriber reads an event —
+        the bus itself carries typed objects end to end.
+        """
+        return {f.name: getattr(self, f.name) for f in fields(self)}
 
 
 class EventPublisher(ABC):
@@ -46,7 +69,8 @@ class EventPublisher(ABC):
         """Publish a domain event.
 
         Args:
-            event: The event to deliver to every subscriber registered for its
-                name. Delivery is best-effort: an individual subscriber failure
-                must not raise back to the caller.
+            event: A concrete :class:`DomainEvent` instance. It is delivered to
+                every subscriber registered for its class-level ``name``.
+                Delivery is best-effort: an individual subscriber failure must
+                not raise back to the caller.
         """

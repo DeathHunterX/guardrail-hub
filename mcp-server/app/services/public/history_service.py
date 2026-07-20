@@ -4,7 +4,7 @@ History service — business logic for querying past and in-flight scan operatio
 from typing import Optional
 
 from app.dao.operation_dao import get_operation_dao
-from app.schemas.internal.operation import OperationRecord
+from app.dao.operation_record import OperationRecord
 
 
 class HistoryService:

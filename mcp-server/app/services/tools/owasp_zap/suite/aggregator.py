@@ -10,13 +10,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.domain.findings import SEVERITY_ORDER
 from app.services.tools.owasp_zap.suite.findings import (
     collect_findings,
     derive_recommendations,
     executive_summary,
 )
 
-_SEVERITIES = ("high", "medium", "low", "informational")
+# Severity keys used in the report payload, from the canonical domain vocabulary.
+# Previously a hardcoded 4-tuple that could not represent a CRITICAL finding —
+# any such finding was silently dropped from suite aggregation (Decision 0007).
+_SEVERITIES = tuple(severity.value for severity in SEVERITY_ORDER)
 
 
 @dataclass

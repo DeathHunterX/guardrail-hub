@@ -20,6 +20,7 @@ import httpx
 from app.constants.paths import ReportPaths
 from app.core.config import settings
 from app.core.mcp_logger import MCPLogger
+from app.domain.findings import FindingSummary, Severity
 from app.integrations.owasp_zap.client import ZapClient
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
 from app.schemas.tools.owasp_zap.common import ZapApiTarget, ZapTokenType
@@ -140,17 +141,22 @@ class ZapApiScanHelpers:
 
     @staticmethod
     def findings_from_summary(summary: ZapScanSummary) -> dict:
-        """Map a :class:`ZapScanSummary` to the generic severity breakdown the
-        notification layer understands. ZAP's risk scale tops out at High, so
-        ``critical`` is always 0 here; the field is kept so the presentation
-        model stays tool-agnostic (a future tool can populate it)."""
-        return {
-            "critical": 0,
-            "high": summary.high,
-            "medium": summary.medium,
-            "low": summary.low,
-            "informational": summary.informational,
-        }
+        """Map ZAP's wire-format summary onto the canonical severity breakdown.
+
+        This is the ZAP tool boundary: the native summary shape is translated
+        into the domain's :class:`FindingSummary` here, so no tool-specific
+        severity vocabulary reaches the notification layer. ZAP's risk scale
+        tops out at High, so CRITICAL is absent from its output — the canonical
+        breakdown still carries the bucket, at zero.
+        """
+        return FindingSummary.from_counts(
+            {
+                Severity.HIGH: summary.high,
+                Severity.MEDIUM: summary.medium,
+                Severity.LOW: summary.low,
+                Severity.INFORMATIONAL: summary.informational,
+            }
+        ).as_mapping()
 
     # ------------------------------------------------------------------
     # Report persistence

@@ -24,10 +24,10 @@ from app.integrations.chat.slack.channel_adapter import (
     SlackNotificationChannel,
     Transport,
 )
-from app.services.notification.event_subscriber import EventNotificationSubscriber
+from app.services.notification.subscribers.event_subscriber import EventNotificationSubscriber
 from app.services.notification.notification_service import NotificationService
-from app.services.notification.operation_notifier import OperationNotifier
-from app.services.notification.operation_progress import LifecyclePhase
+from app.services.notification.dispatch.operation_notifier import OperationNotifier
+from app.domain.lifecycle import OperationPhase
 from app.services.operations.operation_service import (
     EVENT_OPERATION_CANCELLED,
     EVENT_OPERATION_COMPLETED,
@@ -102,11 +102,11 @@ OPERATION_NOTIFICATION_TEMPLATES = {
 # vocabulary-neutral phases. Defined here (the composition root) so the notifier
 # stays decoupled from the operations domain.
 OPERATION_LIFECYCLE_PHASES = {
-    EVENT_OPERATION_CREATED: LifecyclePhase.QUEUED,
-    EVENT_OPERATION_STARTED: LifecyclePhase.RUNNING,
-    EVENT_OPERATION_COMPLETED: LifecyclePhase.COMPLETED,
-    EVENT_OPERATION_FAILED: LifecyclePhase.FAILED,
-    EVENT_OPERATION_CANCELLED: LifecyclePhase.CANCELLED,
+    EVENT_OPERATION_CREATED: OperationPhase.QUEUED,
+    EVENT_OPERATION_STARTED: OperationPhase.RUNNING,
+    EVENT_OPERATION_COMPLETED: OperationPhase.COMPLETED,
+    EVENT_OPERATION_FAILED: OperationPhase.FAILED,
+    EVENT_OPERATION_CANCELLED: OperationPhase.CANCELLED,
 }
 
 # Events treated as throttled, intermediate progress rather than transitions.
@@ -237,7 +237,7 @@ def build_zap_evaluation_service(operation_service, *, scan_runner=None):
     from app.services.evaluations.evaluation_service import EvaluationService
 
     if scan_runner is None:
-        from app.services.evaluations.zap_scan_runner import ZapScanRunner
+        from app.services.tools.owasp_zap.sync_runner import ZapScanRunner
 
         scan_runner = ZapScanRunner()
     return EvaluationService(operation_service, scan_runner)
@@ -315,7 +315,7 @@ def build_zap_operation_registry(*, operation_service):
     from app.services.tools.owasp_zap.execution.registry import (  # noqa: PLC0415
         ZapOperationRegistry,
     )
-    from app.services.tools.owasp_zap.handlers import (  # noqa: PLC0415
+    from app.services.tools.owasp_zap.execution.handlers import (  # noqa: PLC0415
         build_api_scan_operation,
         build_api_scenario_operation,
         build_api_suite_operation,
@@ -362,7 +362,7 @@ def build_zap_dispatcher(*, dao: BaseOperationDAO, operation_service, config=Non
         from app.core.config import settings as config  # noqa: PLC0415
 
     from app.integrations.owasp_zap.runtime import pool_manager  # noqa: PLC0415
-    from app.services.tools.owasp_zap.worker.dispatcher import OwaspZapDispatcher  # noqa: PLC0415
+    from app.services.tools.owasp_zap.execution.dispatcher import OwaspZapDispatcher  # noqa: PLC0415
 
     registry = build_zap_operation_registry(operation_service=operation_service)
 

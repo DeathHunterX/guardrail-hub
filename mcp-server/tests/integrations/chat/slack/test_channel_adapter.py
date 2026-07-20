@@ -5,6 +5,12 @@ The HTTP transport is faked, so these tests never touch the network.
 
 import unittest
 
+from app.core.ports.notification_channel import (
+    NotificationContent,
+    NotificationField,
+)
+from app.domain.findings import FindingSummary, Severity
+from app.domain.lifecycle import OperationPhase
 from app.integrations.chat.slack.channel_adapter import (
     HttpResponse,
     SlackDeliveryError,
@@ -46,23 +52,32 @@ class SlackNotificationChannelTests(unittest.TestCase):
         self.assertIn(b'"channel": "C123"', body)
         self.assertIn(b'"text": "hello world"', body)
 
-    def test_send_wraps_card_in_block_kit_with_text_fallback(self):
+    def test_send_renders_structured_content_with_text_fallback(self):
         import json
 
         transport = RecordingTransport(HttpResponse(200, '{"ok": true, "ts": "1"}'))
         channel = SlackNotificationChannel(token="t", transport=transport)
 
-        card = (
+        text = (
             "🔎 API Security Scan\n\n"
             "Target: POST /api/auth/login\n"
             "Status: Security Testing\n\n"
-            "Operation ID: 3d65f41b-9c2a-4e77-8b31-0a1c2d3e4f56"
+            "Operation #3D65F41B"
         )
-        channel.send("C1", card)
+        content = NotificationContent(
+            title="🔎 API Security Scan",
+            phase=OperationPhase.RUNNING,
+            fields=(
+                NotificationField("Target", "POST /api/auth/login"),
+                NotificationField("Status", "Security Testing"),
+            ),
+            reference="3D65F41B",
+        )
+        channel.send("C1", text, content)
 
         body = json.loads(transport.calls[0][2].decode())
         # Plain-text fallback preserved for notifications / accessibility.
-        self.assertEqual(body["text"], card)
+        self.assertEqual(body["text"], text)
         blocks = body["blocks"]
         # Bold title section, a divider, then the body section.
         self.assertEqual(blocks[0]["type"], "section")
@@ -70,8 +85,20 @@ class SlackNotificationChannelTests(unittest.TestCase):
         self.assertTrue(any(b["type"] == "divider" for b in blocks))
         body_text = blocks[-1]["text"]["text"]
         self.assertIn("Target: POST /api/auth/login", body_text)
-        # Operation ID rendered in monospace so it is easy to copy for get-result.
-        self.assertIn("Operation ID: `3d65f41b-9c2a-4e77-8b31-0a1c2d3e4f56`", body_text)
+        self.assertIn("Operation #3D65F41B", body_text)
+
+    def test_send_without_content_delivers_text_verbatim(self):
+        """No structured content: the text is delivered as-is, never parsed."""
+        import json
+
+        transport = RecordingTransport(HttpResponse(200, '{"ok": true, "ts": "1"}'))
+        channel = SlackNotificationChannel(token="t", transport=transport)
+
+        channel.send("C1", "Operation abc created.")
+
+        body = json.loads(transport.calls[0][2].decode())
+        self.assertEqual(body["text"], "Operation abc created.")
+        self.assertEqual(body["blocks"][0]["text"]["text"], "Operation abc created.")
 
     def test_completed_scan_renders_product_card_blocks(self):
         import json
@@ -79,16 +106,21 @@ class SlackNotificationChannelTests(unittest.TestCase):
         transport = RecordingTransport(HttpResponse(200, '{"ok": true, "ts": "1"}'))
         channel = SlackNotificationChannel(token="t", transport=transport)
 
-        # The neutral completed card the renderer produces.
-        card = (
-            "✅ API Security Scan\n\n"
-            "Target: GET /api/breeds/image/random\n"
-            "Duration: 1m 14s\n"
-            "Results: Critical 0 · High 0 · Medium 1 · Low 2 · Info 13\n\n"
-            "Operation ID: e0c5b706-ccda-4c89-9e24-1d37afae6136\n"
-            "Use this Operation ID with get-result to retrieve the complete scan report."
+        content = NotificationContent(
+            title="✅ API Security Scan",
+            phase=OperationPhase.COMPLETED,
+            target="GET /api/breeds/image/random",
+            duration_text="1m 14s",
+            findings=FindingSummary.from_counts(
+                {Severity.MEDIUM: 1, Severity.LOW: 2, Severity.INFORMATIONAL: 13}
+            ),
+            identifier="e0c5b706-ccda-4c89-9e24-1d37afae6136",
+            identifier_help=(
+                "Use this Operation ID with get-result to retrieve the "
+                "complete scan report."
+            ),
         )
-        channel.send("C1", card)
+        channel.send("C1", "text fallback", content)
 
         blocks = json.loads(transport.calls[0][2].decode())["blocks"]
         types = [b["type"] for b in blocks]
@@ -127,16 +159,19 @@ class SlackNotificationChannelTests(unittest.TestCase):
 
         transport = RecordingTransport(HttpResponse(200, '{"ok": true, "ts": "1"}'))
         channel = SlackNotificationChannel(token="t", transport=transport)
-        card = (
-            "✅ API Security Scan\n\n"
-            "Target: GET /api/x\n"
-            "Duration: 42s\n"
-            "Results: Critical 0 · High 1 · Medium 3 · Low 8 · Info 13\n"
-            "Report: https://example/report/op1\n\n"
-            "Operation ID: e0c5b706-ccda-4c89-9e24-1d37afae6136\n"
-            "Use this Operation ID with get-result to retrieve the complete scan report."
+        content = NotificationContent(
+            title="✅ API Security Scan",
+            phase=OperationPhase.COMPLETED,
+            target="GET /api/x",
+            duration_text="42s",
+            findings=FindingSummary.from_counts(
+                {Severity.HIGH: 1, Severity.MEDIUM: 3, Severity.LOW: 8,
+                 Severity.INFORMATIONAL: 13}
+            ),
+            report_link="https://example/report/op1",
+            identifier="e0c5b706-ccda-4c89-9e24-1d37afae6136",
         )
-        channel.send("C1", card)
+        channel.send("C1", "text fallback", content)
 
         blocks = json.loads(transport.calls[0][2].decode())["blocks"]
         sections = "\n".join(

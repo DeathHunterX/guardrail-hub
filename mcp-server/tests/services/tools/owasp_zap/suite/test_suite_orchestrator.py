@@ -2,7 +2,7 @@
 
 import unittest
 
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.domain.lifecycle import OperationPhase
 from pydantic import ValidationError
 
 from app.schemas.tools.owasp_zap.scan_api_suite import ZapApiSuiteScanRequest
@@ -85,7 +85,7 @@ class SuiteOrchestratorTests(unittest.TestCase):
     def test_fans_out_one_child_per_endpoint_and_aggregates(self):
         # 3 endpoints total: Auth POST /login, Orders GET+POST /orders
         completed = _FakeRecord(
-            OperationStatus.COMPLETED,
+            OperationPhase.COMPLETED,
             result={"summary": {"total": 2, "high": 1, "medium": 1, "low": 0, "informational": 0},
                     "alerts": [{"alert_ref": "40012", "name": "XSS", "risk": "High",
                                "description": "d", "url": "https://api/x"}]},
@@ -110,8 +110,8 @@ class SuiteOrchestratorTests(unittest.TestCase):
         self.assertEqual(auth_children[0].token, "T")
 
     def test_child_failure_is_counted(self):
-        ok = _FakeRecord(OperationStatus.COMPLETED, result={"summary": {"total": 0}, "alerts": []})
-        bad = _FakeRecord(OperationStatus.FAILED, result=None, error="boom")
+        ok = _FakeRecord(OperationPhase.COMPLETED, result={"summary": {"total": 0}, "alerts": []})
+        bad = _FakeRecord(OperationPhase.FAILED, result=None, error="boom")
         results = {"child-0": ok, "child-1": bad, "child-2": ok}
         op, submitted, _ = self._run(results)
         summary = op.completed["result"]["application_summary"]

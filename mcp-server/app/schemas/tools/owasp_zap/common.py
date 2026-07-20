@@ -12,26 +12,11 @@ from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+
 # Placeholder marker used by scenarios (e.g. ``https://api/users/${user_id}``).
 # A templated URL is only fully known after step replay, so URL structure checks
 # are skipped for it at request-validation time.
 _TEMPLATE_MARKER = "${"
-
-
-class OperationStatus(str, Enum):
-    """Operation lifecycle.
-
-    ``QUEUED`` operations are the persisted work queue itself (see the
-    Operations table / DAO) — there is no separate in-memory waiting queue.
-    A worker never has its own status; it only ever knows which
-    ``operation_id`` (if any) it is currently executing.
-    """
-
-    QUEUED = "queued"
-    RUNNING = "running"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 class ZapScanMode(str, Enum):

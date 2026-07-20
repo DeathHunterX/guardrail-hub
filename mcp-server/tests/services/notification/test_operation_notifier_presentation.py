@@ -8,17 +8,25 @@ without changing delivery/throttle behaviour.
 
 import unittest
 
-from app.core.ports.event_publisher import DomainEvent
+from app.core.events.contracts import (
+    OperationCancelled,
+    OperationCompleted,
+    OperationCreated,
+    OperationFailed,
+    OperationProgressed,
+    OperationStarted,
+)
+from app.domain.findings import FindingSummary
 from app.core.ports.notification_channel import ChannelCapabilities, NotificationChannel
 from app.services.notification.notification_service import NotificationService
-from app.services.notification.operation_notifier import OperationNotifier
-from app.services.notification.operation_progress import LifecyclePhase
+from app.services.notification.dispatch.operation_notifier import OperationNotifier
+from app.domain.lifecycle import OperationPhase
 
 LIFECYCLE = {
-    "operation.created": LifecyclePhase.QUEUED,
-    "operation.started": LifecyclePhase.RUNNING,
-    "operation.completed": LifecyclePhase.COMPLETED,
-    "operation.failed": LifecyclePhase.FAILED,
+    "operation.created": OperationPhase.QUEUED,
+    "operation.started": OperationPhase.RUNNING,
+    "operation.completed": OperationPhase.COMPLETED,
+    "operation.failed": OperationPhase.FAILED,
 }
 PROGRESS = frozenset({"operation.progress"})
 TITLES = {"api_scan": "API Security Scan", "web_scan": "Website Security Scan"}
@@ -37,11 +45,11 @@ class CapturingChannel(NotificationChannel):
     def capabilities(self):
         return self._caps
 
-    def send(self, destination, message):
+    def send(self, destination, message, content=None):
         self.messages.append(message)
         return f"ts-{len(self.messages)}"
 
-    def update(self, destination, ref, message):
+    def update(self, destination, ref, message, content=None):
         self.messages.append(message)
         return ref
 
@@ -65,7 +73,18 @@ def _notifier(channel, debug=False, context_resolver=None):
 
 
 def _event(name, operation_id="api_scan:1d015005-4f", **payload):
-    return DomainEvent(name=name, payload={"operation_id": operation_id, **payload})
+    """Build the typed contract matching *name*, from the same loose kwargs."""
+    contract = {
+        OperationCreated.name: OperationCreated,
+        OperationStarted.name: OperationStarted,
+        OperationProgressed.name: OperationProgressed,
+        OperationCompleted.name: OperationCompleted,
+        OperationFailed.name: OperationFailed,
+        OperationCancelled.name: OperationCancelled,
+    }[name]
+    if "findings" in payload and isinstance(payload["findings"], dict):
+        payload["findings"] = FindingSummary.from_mapping(payload["findings"])
+    return contract(operation_id=operation_id, **payload)
 
 
 class PresentationEnrichmentTests(unittest.TestCase):

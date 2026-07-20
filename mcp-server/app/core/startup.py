@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from app.core.mcp_logger import MCPLogger
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.domain.lifecycle import OperationPhase
 
 # Reasons attached to operations force-failed by lifecycle recovery. Kept as
 # plain strings (no new status/category) to preserve the simple lifecycle model.
@@ -72,7 +72,7 @@ def recover_interrupted_operations(
     """
     logger = logger or MCPLogger("startup")
     try:
-        running = dao.get_by_status(OperationStatus.RUNNING)
+        running = dao.get_by_status(OperationPhase.RUNNING)
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Recovery: could not query RUNNING operations: %s", exc)
         return 0

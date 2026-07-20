@@ -20,8 +20,8 @@ pytest.importorskip("zapv2")
 
 from pydantic import BaseModel  # noqa: E402
 
-from app.schemas.internal.operation import OperationRecord  # noqa: E402
-from app.schemas.tools.owasp_zap.common import OperationStatus  # noqa: E402
+from app.dao.operation_record import OperationRecord  # noqa: E402
+from app.domain.lifecycle import OperationPhase  # noqa: E402
 from app.services.tools.owasp_zap.execution.execution_strategy import (  # noqa: E402
     ExecutionStrategy,
 )
@@ -32,7 +32,7 @@ from app.services.tools.owasp_zap.execution.operation_type import (  # noqa: E40
 from app.services.tools.owasp_zap.execution.registry import (  # noqa: E402
     ZapOperationRegistry,
 )
-from app.services.tools.owasp_zap.worker.dispatcher import (  # noqa: E402
+from app.services.tools.owasp_zap.execution.dispatcher import (  # noqa: E402
     OwaspZapDispatcher,
 )
 
@@ -96,7 +96,7 @@ class _InlineExecutor:
 def _record(op_type, metadata):
     return OperationRecord(
         operation_id="op-1",
-        status=OperationStatus.QUEUED,
+        status=OperationPhase.QUEUED,
         batch_type="api_scan",
         metadata=metadata,
     )

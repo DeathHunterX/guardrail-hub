@@ -13,7 +13,7 @@ from app.core.ports.notification_channel import (
     MessageRef,
     NotificationChannel,
 )
-from app.services.notification.notification import Notification
+from app.services.notification.message.notification import Notification
 
 
 class UnknownChannelError(LookupError):
@@ -67,7 +67,9 @@ class NotificationService:
                 propagates to the caller.
         """
         channel = self._require(notification.channel)
-        return channel.send(notification.destination, notification.message)
+        return channel.send(
+            notification.destination, notification.message, notification.content
+        )
 
     def update(self, notification: Notification, ref: MessageRef) -> MessageRef:
         """Edit the message identified by *ref* in place on its target channel.
@@ -85,7 +87,9 @@ class NotificationService:
             NotImplementedError: If the channel does not support updates.
         """
         channel = self._require(notification.channel)
-        return channel.update(notification.destination, ref, notification.message)
+        return channel.update(
+            notification.destination, ref, notification.message, notification.content
+        )
 
     def _require(self, channel: str) -> NotificationChannel:
         found = self._channels.get(channel)

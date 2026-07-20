@@ -14,7 +14,7 @@ from typing import Optional
 from app.bootstrap import build_notification_flow_from_settings
 from app.dao.base import BaseOperationDAO
 from app.integrations.chat.slack.channel_adapter import HttpResponse
-from app.schemas.internal.operation import OperationRecord
+from app.dao.operation_record import OperationRecord
 
 
 @dataclass

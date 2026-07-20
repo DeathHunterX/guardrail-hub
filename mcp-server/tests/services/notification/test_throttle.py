@@ -2,7 +2,7 @@
 
 import unittest
 
-from app.services.notification.throttle import ProgressThrottle
+from app.services.notification.policy.throttle import ProgressThrottle
 
 
 class FakeClock:

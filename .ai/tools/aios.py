@@ -478,11 +478,86 @@ def cmd_lint(root, verbose=True):
     return 1 if over else 0
 
 
+# ---------------------------------------------------------------------------
+# Architecture boundary enforcement (standards/architecture/domain-layer D2/D3)
+# ---------------------------------------------------------------------------
+
+# Where the Domain layer lives, relative to the repository root.
+DOMAIN_ROOTS = ['mcp-server/app/domain']
+
+# D3 — Domain depends on nothing outside Domain. Any intra-application import
+# whose module path is not itself Domain is a violation.
+_APP_IMPORT = re.compile(r'^\s*(?:from|import)\s+(app(?:\.[A-Za-z0-9_.]+)?)', re.M)
+
+# D2 — forbidden framework / transport / infrastructure imports inside Domain.
+# Matched against the imported module root only, so prose in docstrings and
+# comments can name them freely (the rules must be describable in their own file).
+FORBIDDEN_DOMAIN_MODULES = {
+    'fastapi': 'HTTP framework', 'starlette': 'HTTP framework',
+    'pydantic': 'validation framework (serves the HTTP boundary)',
+    'pydantic_settings': 'configuration framework',
+    'sqlalchemy': 'ORM', 'psycopg2': 'Postgres driver', 'boto3': 'AWS SDK',
+    'redis': 'Redis client', 'httpx': 'HTTP client', 'requests': 'HTTP client',
+    'urllib': 'HTTP transport', 'slack_sdk': 'Slack transport',
+    'zapv2': 'tool SDK', 'zaproxy': 'tool SDK',
+    'logging': 'infrastructure logging (domain does not log; callers do)',
+}
+_IMPORT_MODULE = re.compile(r'^\s*(?:from\s+([A-Za-z0-9_.]+)\s+import|import\s+([A-Za-z0-9_.]+))', re.M)
+
+
+def check_domain_boundaries(repo_root):
+    """Return a list of (file, rule, message) violations of D2/D3.
+
+    Mechanical enforcement of the Domain rules: prose in a Standard an AI can
+    ignore becomes a gate it cannot. Scans only the Domain tree — the one place
+    where the dependency direction is absolute.
+    """
+    violations = []
+    for domain_rel in DOMAIN_ROOTS:
+        domain_dir = repo_root / domain_rel
+        if not domain_dir.is_dir():
+            continue
+        pkg_prefix = domain_rel.split('/', 1)[1].replace('/', '.') if '/' in domain_rel else domain_rel
+        for py in sorted(domain_dir.rglob('*.py')):
+            if '__pycache__' in py.parts:
+                continue
+            rel = py.relative_to(repo_root).as_posix()
+            text = py.read_text(encoding='utf-8')
+
+            # D3 — no intra-application imports outside Domain itself.
+            for m in _APP_IMPORT.finditer(text):
+                module = m.group(1)
+                if not module.startswith(pkg_prefix):
+                    violations.append((rel, 'D3', "imports '%s' (Domain may depend on nothing outside Domain)" % module))
+
+            # D2 — no framework / transport / infrastructure imports.
+            for m in _IMPORT_MODULE.finditer(text):
+                module = (m.group(1) or m.group(2) or '').split('.')[0]
+                if module in FORBIDDEN_DOMAIN_MODULES:
+                    violations.append((rel, 'D2', "imports '%s' — %s" % (module, FORBIDDEN_DOMAIN_MODULES[module])))
+    return violations
+
+
+def cmd_arch(root, verbose=True):
+    """Enforce the Domain layer's purity and dependency rules (D2/D3)."""
+    repo_root = root.parent
+    violations = check_domain_boundaries(repo_root)
+    scanned = sum(
+        len([p for p in (repo_root / d).rglob('*.py') if '__pycache__' not in p.parts])
+        for d in DOMAIN_ROOTS if (repo_root / d).is_dir()
+    )
+    for rel, rule, msg in violations:
+        print("  %s VIOLATION %s: %s" % (rule, rel, msg))
+    print("arch: %d domain file(s) scanned, %d boundary violation(s)" % (scanned, len(violations)))
+    return 1 if violations else 0
+
+
 def cmd_check(root):
     print("== validate =="); rc1 = cmd_validate(root, verbose=False)
     print("== links ==");    rc2 = cmd_links(root, verbose=False)
     print("== lint ==");     rc3 = cmd_lint(root, verbose=False)
-    rc = rc1 | rc2 | rc3
+    print("== arch ==");     rc4 = cmd_arch(root, verbose=False)
+    rc = rc1 | rc2 | rc3 | rc4
     print("\ncheck: %s" % ("PASS" if rc == 0 else "FAIL"))
     return rc
 
@@ -617,6 +692,7 @@ def main(argv=None):
     ip = sub.add_parser('index'); ip.add_argument('--dry-run', action='store_true')
     mp = sub.add_parser('impact'); mp.add_argument('unit'); mp.add_argument('--change', choices=['major', 'minor', 'patch'], default='major')
     sub.add_parser('lint')
+    sub.add_parser('arch')
     sub.add_parser('check')
     sub.add_parser('selftest')
     args = p.parse_args(argv)
@@ -632,6 +708,8 @@ def main(argv=None):
         return cmd_impact(root, args.unit, args.change)
     if args.cmd == 'lint':
         return cmd_lint(root)
+    if args.cmd == 'arch':
+        return cmd_arch(root)
     if args.cmd == 'check':
         return cmd_check(root)
     if args.cmd == 'selftest':

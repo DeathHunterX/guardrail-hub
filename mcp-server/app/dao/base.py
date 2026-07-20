@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional
 
-from app.schemas.internal.operation import OperationRecord
+from app.dao.operation_record import OperationRecord
 
 
 class BaseOperationDAO(ABC):
@@ -68,7 +68,7 @@ class BaseOperationDAO(ABC):
 
         Args:
             operation_id: The unique operation identifier.
-            status:       New status value (use :class:`~app.schemas.tools.owasp_zap.common.OperationStatus` members).
+            status:       New status value (use :class:`~app.schemas.tools.owasp_zap.common.OperationPhase` members).
             result:       Optional result payload to store.
             error:        Optional error message to store (pass ``None`` to clear).
             clear_error:  When ``True``, removes the error field entirely from the record
@@ -140,9 +140,9 @@ class BaseOperationDAO(ABC):
         Raises:
             Exception: Any driver-level error from the underlying backend.
         """
-        from app.schemas.tools.owasp_zap.common import OperationStatus  # noqa: PLC0415
+        from app.domain.lifecycle import OperationPhase  # noqa: PLC0415
 
-        records = self.get_by_status(OperationStatus.QUEUED)
+        records = self.get_by_status(OperationPhase.QUEUED)
         return sorted(records, key=lambda r: r.created_at)
 
     # ── Startup schema readiness ────────────────────────────────────────────

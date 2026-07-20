@@ -7,19 +7,27 @@ lifecycle-transition (progress skipped) for append-only fallback channels.
 
 import unittest
 
-from app.core.ports.event_publisher import DomainEvent
+from app.core.events.contracts import (
+    OperationCancelled,
+    OperationCompleted,
+    OperationCreated,
+    OperationFailed,
+    OperationProgressed,
+    OperationStarted,
+)
+from app.domain.findings import FindingSummary
 from app.core.ports.notification_channel import ChannelCapabilities, NotificationChannel
 from app.services.notification.notification_service import NotificationService
-from app.services.notification.operation_notifier import OperationNotifier
-from app.services.notification.operation_progress import LifecyclePhase
+from app.services.notification.dispatch.operation_notifier import OperationNotifier
+from app.domain.lifecycle import OperationPhase
 
 # Event-name -> phase map (mirrors the composition root, kept local to the test).
 LIFECYCLE = {
-    "operation.created": LifecyclePhase.QUEUED,
-    "operation.started": LifecyclePhase.RUNNING,
-    "operation.completed": LifecyclePhase.COMPLETED,
-    "operation.failed": LifecyclePhase.FAILED,
-    "operation.cancelled": LifecyclePhase.CANCELLED,
+    "operation.created": OperationPhase.QUEUED,
+    "operation.started": OperationPhase.RUNNING,
+    "operation.completed": OperationPhase.COMPLETED,
+    "operation.failed": OperationPhase.FAILED,
+    "operation.cancelled": OperationPhase.CANCELLED,
 }
 PROGRESS = frozenset({"operation.progress"})
 
@@ -40,19 +48,30 @@ class FakeChannel(NotificationChannel):
     def capabilities(self):
         return self._caps
 
-    def send(self, destination, message):
+    def send(self, destination, message, content=None):
         self._counter += 1
         ref = f"ts-{self._counter}"
         self.sends.append((destination, message, ref))
         return ref
 
-    def update(self, destination, ref, message):
+    def update(self, destination, ref, message, content=None):
         self.updates.append((destination, ref, message))
         return ref
 
 
 def _event(name, operation_id="api_scan:1", **payload):
-    return DomainEvent(name=name, payload={"operation_id": operation_id, **payload})
+    """Build the typed contract matching *name*, from the same loose kwargs."""
+    contract = {
+        OperationCreated.name: OperationCreated,
+        OperationStarted.name: OperationStarted,
+        OperationProgressed.name: OperationProgressed,
+        OperationCompleted.name: OperationCompleted,
+        OperationFailed.name: OperationFailed,
+        OperationCancelled.name: OperationCancelled,
+    }[name]
+    if "findings" in payload and isinstance(payload["findings"], dict):
+        payload["findings"] = FindingSummary.from_mapping(payload["findings"])
+    return contract(operation_id=operation_id, **payload)
 
 
 class FakeClock:
@@ -154,7 +173,7 @@ class FallbackChannelStrategyTests(unittest.TestCase):
 class BestEffortDeliveryTests(unittest.TestCase):
     def test_delivery_failure_does_not_propagate(self):
         class BrokenChannel(FakeChannel):
-            def send(self, destination, message):
+            def send(self, destination, message, content=None):
                 raise RuntimeError("channel down")
 
         channel = BrokenChannel("chat", ChannelCapabilities())

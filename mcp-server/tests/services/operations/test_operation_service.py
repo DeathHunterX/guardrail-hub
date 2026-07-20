@@ -5,12 +5,13 @@ Uses in-memory fakes for persistence (BaseOperationDAO) and event publishing
 """
 
 import unittest
-from typing import Any, Optional
+
+from app.domain.findings import FindingSummary
 
 from app.core.ports.event_publisher import DomainEvent, EventPublisher
 from app.dao.base import BaseOperationDAO
-from app.schemas.internal.operation import OperationRecord
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.dao.operation_record import OperationRecord
+from app.domain.lifecycle import OperationPhase
 from app.services.operations.operation_service import (
     EVENT_OPERATION_CANCELLED,
     EVENT_OPERATION_COMPLETED,
@@ -81,7 +82,7 @@ class OperationServiceTests(unittest.TestCase):
         self.assertEqual(op_id, "api_scan:fixed123")
         record = self.dao.get_operation(op_id)
         self.assertIsNotNone(record)
-        self.assertEqual(record.status, OperationStatus.QUEUED)
+        self.assertEqual(record.status, OperationPhase.QUEUED)
         self.assertEqual(record.batch_type, "api_scan")
         self.assertEqual(record.metadata, {"target_url": "https://x"})
 
@@ -90,9 +91,9 @@ class OperationServiceTests(unittest.TestCase):
 
         self.assertEqual(len(self.publisher.events), 1)
         event = self.publisher.events[0]
-        self.assertEqual(event.name, EVENT_OPERATION_CREATED)
-        self.assertEqual(event.payload["operation_id"], op_id)
-        self.assertEqual(event.payload["batch_type"], "web_scan")
+        self.assertEqual(type(event).name, EVENT_OPERATION_CREATED)
+        self.assertEqual(event.operation_id, op_id)
+        self.assertEqual(event.batch_type, "web_scan")
 
     def test_create_defaults_metadata_to_empty_dict(self):
         op_id = self.service.create("batch_scan")
@@ -106,7 +107,7 @@ class OperationServiceTests(unittest.TestCase):
 
         self.service.start(op_id)
 
-        self.assertEqual(self.dao.get_operation(op_id).status, OperationStatus.RUNNING)
+        self.assertEqual(self.dao.get_operation(op_id).status, OperationPhase.RUNNING)
         self.assertEqual(self.publisher.events[-1].name, EVENT_OPERATION_STARTED)
 
     def test_complete_sets_completed_with_result_and_publishes(self):
@@ -116,7 +117,7 @@ class OperationServiceTests(unittest.TestCase):
         self.service.complete(op_id, result={"findings": 3})
 
         record = self.dao.get_operation(op_id)
-        self.assertEqual(record.status, OperationStatus.COMPLETED)
+        self.assertEqual(record.status, OperationPhase.COMPLETED)
         self.assertEqual(record.result, {"findings": 3})
         self.assertEqual(self.publisher.events[-1].name, EVENT_OPERATION_COMPLETED)
 
@@ -130,8 +131,8 @@ class OperationServiceTests(unittest.TestCase):
         self.service.complete(op_id, result={"summary": breakdown}, findings=breakdown)
 
         event = self.publisher.events[-1]
-        self.assertEqual(event.name, EVENT_OPERATION_COMPLETED)
-        self.assertEqual(event.payload["findings"], breakdown)
+        self.assertEqual(type(event).name, EVENT_OPERATION_COMPLETED)
+        self.assertEqual(event.findings, FindingSummary.from_mapping(breakdown))
 
     def test_complete_without_findings_omits_the_key(self):
         op_id = self.service.create("api_scan")
@@ -139,7 +140,7 @@ class OperationServiceTests(unittest.TestCase):
 
         self.service.complete(op_id, result="ok")
 
-        self.assertNotIn("findings", self.publisher.events[-1].payload)
+        self.assertIsNone(self.publisher.events[-1].findings)
 
     def test_fail_sets_failed_with_error_and_publishes(self):
         op_id = self.service.create("api_scan")
@@ -148,11 +149,11 @@ class OperationServiceTests(unittest.TestCase):
         self.service.fail(op_id, error="boom")
 
         record = self.dao.get_operation(op_id)
-        self.assertEqual(record.status, OperationStatus.FAILED)
+        self.assertEqual(record.status, OperationPhase.FAILED)
         self.assertEqual(record.error, "boom")
         event = self.publisher.events[-1]
-        self.assertEqual(event.name, EVENT_OPERATION_FAILED)
-        self.assertEqual(event.payload["error"], "boom")
+        self.assertEqual(type(event).name, EVENT_OPERATION_FAILED)
+        self.assertEqual(event.error, "boom")
 
     def test_cancel_sets_cancelled_and_publishes(self):
         op_id = self.service.create("api_scan")
@@ -160,7 +161,7 @@ class OperationServiceTests(unittest.TestCase):
 
         self.service.cancel(op_id)
 
-        self.assertEqual(self.dao.get_operation(op_id).status, OperationStatus.CANCELLED)
+        self.assertEqual(self.dao.get_operation(op_id).status, OperationPhase.CANCELLED)
         self.assertEqual(self.publisher.events[-1].name, EVENT_OPERATION_CANCELLED)
 
     def test_full_lifecycle_event_sequence(self):

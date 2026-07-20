@@ -10,29 +10,40 @@ Design notes:
   in-process dispatcher implements it.
 - This service is deliberately unaware of OWASP ZAP, notifications, and HTTP.
   Those integrations are wired in later slices. It keeps the existing domain
-  vocabulary (Operation, batch_type, OperationStatus).
+  vocabulary (Operation, batch_type, OperationPhase).
 """
 
 from typing import TYPE_CHECKING, Any, Callable, Optional
 from uuid import uuid4
 
-from app.core.ports.event_publisher import DomainEvent, EventPublisher
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.core.events.contracts import (
+    OperationCancelled,
+    OperationCompleted,
+    OperationCreated,
+    OperationFailed,
+    OperationProgressed,
+    OperationStarted,
+)
+from app.core.ports.event_publisher import EventPublisher
+from app.domain.findings import FindingSummary
+from app.domain.lifecycle import OperationPhase
 
 if TYPE_CHECKING:  # keep runtime imports light (no psycopg2/boto3 pulled in here)
     from app.dao.base import BaseOperationDAO
-    from app.schemas.internal.operation import OperationRecord
+    from app.dao.operation_record import OperationRecord
 
-# Domain event names emitted across the operation lifecycle.
-EVENT_OPERATION_CREATED = "operation.created"
-EVENT_OPERATION_STARTED = "operation.started"
-EVENT_OPERATION_COMPLETED = "operation.completed"
-EVENT_OPERATION_FAILED = "operation.failed"
-EVENT_OPERATION_CANCELLED = "operation.cancelled"
+# Event names remain re-exported for routing tables that key on the wire name.
+# They are read off the typed contracts, so the literals exist in exactly one
+# place (app.core.events.contracts) and can never drift from what is published.
+EVENT_OPERATION_CREATED = OperationCreated.name
+EVENT_OPERATION_STARTED = OperationStarted.name
+EVENT_OPERATION_COMPLETED = OperationCompleted.name
+EVENT_OPERATION_FAILED = OperationFailed.name
+EVENT_OPERATION_CANCELLED = OperationCancelled.name
 # Optional, intermediate progress between STARTED and a terminal event. Emitting
 # it is opt-in: a tool that can report progress calls report_progress(); one
 # that cannot simply never does, and only the guaranteed lifecycle events flow.
-EVENT_OPERATION_PROGRESS = "operation.progress"
+EVENT_OPERATION_PROGRESS = OperationProgressed.name
 
 
 def _default_id_suffix() -> str:
@@ -89,20 +100,22 @@ class OperationService:
         operation_id = operation_id or f"{batch_type}:{self._id_suffix()}"
         self._dao.create_operation(
             op_id=operation_id,
-            status=OperationStatus.QUEUED,
+            status=OperationPhase.QUEUED,
             metadata=metadata or {},
             batch_type=batch_type,
             log_path=log_path,
         )
-        self._publish(EVENT_OPERATION_CREATED, operation_id, batch_type=batch_type)
+        self._publisher.publish(
+            OperationCreated(operation_id=operation_id, batch_type=batch_type)
+        )
         return operation_id
 
     def start(self, operation_id: str) -> None:
         """Transition an operation to RUNNING and publish ``operation.started``."""
         self._dao.update_operation_status(
-            operation_id=operation_id, status=OperationStatus.RUNNING
+            operation_id=operation_id, status=OperationPhase.RUNNING
         )
-        self._publish(EVENT_OPERATION_STARTED, operation_id)
+        self._publisher.publish(OperationStarted(operation_id=operation_id))
 
     def complete(
         self,
@@ -124,29 +137,37 @@ class OperationService:
         """
         self._dao.update_operation_status(
             operation_id=operation_id,
-            status=OperationStatus.COMPLETED,
+            status=OperationPhase.COMPLETED,
             result=result,
         )
-        extra: dict[str, Any] = {}
-        if findings is not None:
-            extra["findings"] = findings
-        self._publish(EVENT_OPERATION_COMPLETED, operation_id, **extra)
+        self._publisher.publish(
+            OperationCompleted(
+                operation_id=operation_id,
+                findings=(
+                    FindingSummary.from_mapping(findings)
+                    if findings is not None
+                    else None
+                ),
+            )
+        )
 
     def fail(self, operation_id: str, error: str) -> None:
         """Transition an operation to FAILED and publish ``operation.failed``."""
         self._dao.update_operation_status(
             operation_id=operation_id,
-            status=OperationStatus.FAILED,
+            status=OperationPhase.FAILED,
             error=error,
         )
-        self._publish(EVENT_OPERATION_FAILED, operation_id, error=error)
+        self._publisher.publish(
+            OperationFailed(operation_id=operation_id, error=error)
+        )
 
     def cancel(self, operation_id: str) -> None:
         """Transition an operation to CANCELLED and publish ``operation.cancelled``."""
         self._dao.update_operation_status(
-            operation_id=operation_id, status=OperationStatus.CANCELLED
+            operation_id=operation_id, status=OperationPhase.CANCELLED
         )
-        self._publish(EVENT_OPERATION_CANCELLED, operation_id)
+        self._publisher.publish(OperationCancelled(operation_id=operation_id))
 
     def report_progress(
         self,
@@ -174,20 +195,16 @@ class OperationService:
             message: Optional free-text detail.
             worker_id: Optional id of the worker executing the operation.
         """
-        self._publish(
-            EVENT_OPERATION_PROGRESS,
-            operation_id,
-            stage=stage,
-            progress=progress,
-            message=message,
-            worker_id=worker_id,
+        self._publisher.publish(
+            OperationProgressed(
+                operation_id=operation_id,
+                stage=stage,
+                progress=progress,
+                message=message,
+                worker_id=worker_id,
+            )
         )
 
     def get(self, operation_id: str) -> "Optional[OperationRecord]":
         """Return an operation by id, delegating to the DAO (or ``None``)."""
         return self._dao.get_operation(operation_id)
-
-    def _publish(self, name: str, operation_id: str, **extra: Any) -> None:
-        payload: dict[str, Any] = {"operation_id": operation_id}
-        payload.update(extra)
-        self._publisher.publish(DomainEvent(name=name, payload=payload))

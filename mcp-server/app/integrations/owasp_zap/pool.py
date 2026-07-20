@@ -18,7 +18,7 @@ Split of responsibilities:
   release when done.
 
 This class does not poll or block waiting for a slot — that loop lives in the
-dispatcher (``app/services/tools/owasp_zap/worker/dispatcher.py``), which re-tries
+dispatcher (``app/services/tools/owasp_zap/execution/dispatcher.py``), which re-tries
 queued operations (persisted in the Operations table) on its own schedule.
 """
 

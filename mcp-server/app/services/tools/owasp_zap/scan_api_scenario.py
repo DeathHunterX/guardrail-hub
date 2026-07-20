@@ -21,19 +21,18 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
 
-from fastapi import HTTPException
-
 import httpx
 
 from app.constants.batch import BatchType
 from app.core.config import settings
 from app.core.events.dispatcher import InProcessEventDispatcher
+from app.core.exception import InvalidScanRequestError, ScanSubmissionError
 from app.core.mcp_logger import MCPLogger
 from app.dao.operation_dao import get_operation_dao
 from app.helpers.tools.owasp_zap_helpers import ZapApiScanHelpers
 from app.integrations.owasp_zap.runtime import pool_manager as default_pool_manager
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.domain.lifecycle import OperationPhase
 from app.schemas.tools.owasp_zap.scan_api_scenario import (
     ScenarioStep,
     ZapApiScenarioScanRequest,
@@ -90,9 +89,9 @@ class ZapApiScenarioService:
     def init_scenario_scan(self, request: ZapApiScenarioScanRequest) -> dict:
         """Validate *request* and persist it as a ``QUEUED`` scenario operation."""
         if not (request.report_group or "").strip():
-            raise HTTPException(status_code=400, detail="Report group is required")
+            raise InvalidScanRequestError("Report group is required")
         if not request.steps:
-            raise HTTPException(status_code=400, detail="At least one step is required")
+            raise InvalidScanRequestError("At least one step is required")
 
         try:
             op_id = str(uuid.uuid4())
@@ -113,18 +112,18 @@ class ZapApiScenarioService:
             )
             return {
                 "operation_id": op_id,
-                "status": OperationStatus.QUEUED,
+                "status": OperationPhase.QUEUED,
                 "message": (
                     f"Zap API scenario scan queued with operation_id: {op_id}. It will "
                     f"start as soon as a ZAP worker is available. Check status at "
                     f"api/history/get-result with param operation_id: {op_id}"
                 ),
             }
-        except HTTPException:
+        except InvalidScanRequestError:
             raise
         except Exception as e:
-            raise HTTPException(
-                status_code=500, detail=f"Error initializing scenario scan:\n{str(e)}"
+            raise ScanSubmissionError(
+                f"Error initializing scenario scan:\n{str(e)}"
             ) from e
 
     # ------------------------------------------------------------------

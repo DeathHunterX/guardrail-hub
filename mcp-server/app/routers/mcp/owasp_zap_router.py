@@ -11,6 +11,7 @@ executes it. No endpoint runs a scan inline — all three return an
 """
 from fastapi import APIRouter, HTTPException
 
+from app.core.exception import InvalidScanRequestError
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanLLMRequest
 from app.schemas.tools.owasp_zap.scan_api_scenario import ZapApiScenarioScanRequest
 from app.schemas.tools.owasp_zap.scan_api_suite import ZapApiSuiteScanRequest
@@ -41,6 +42,9 @@ def zap_scan_api(request: ZapApiScanLLMRequest):
     try:
         rs = ZapApiScanService().init_api_scan(request)
         return {"result": rs}
+    except InvalidScanRequestError as e:
+        # Domain validation error -> client error at the HTTP boundary.
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Error running Owasp Zap scan: \n{str(e)}"
@@ -71,6 +75,9 @@ def zap_scan_api_scenario(request: ZapApiScenarioScanRequest):
     try:
         rs = ZapApiScenarioService().init_scenario_scan(request)
         return {"result": rs}
+    except InvalidScanRequestError as e:
+        # Domain validation error -> client error at the HTTP boundary.
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -103,6 +110,9 @@ def zap_scan_api_suite(request: ZapApiSuiteScanRequest):
     try:
         rs = ZapApiSuiteService().init_suite_scan(request)
         return {"result": rs}
+    except InvalidScanRequestError as e:
+        # Domain validation error -> client error at the HTTP boundary.
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(
             status_code=500,

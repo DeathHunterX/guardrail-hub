@@ -10,7 +10,7 @@ from app.services.tools.owasp_zap.suite.aggregator import (
     EndpointOutcome,
     aggregate_application_report,
 )
-from app.services.tools.owasp_zap.suite.openapi import Endpoint, extract_endpoints
+from app.schemas.tools.owasp_zap.openapi_spec import Endpoint, extract_endpoints
 from app.services.tools.owasp_zap.suite.orchestrator import SuiteOrchestrator
 from app.services.tools.owasp_zap.suite.reporter import SuiteReporter
 

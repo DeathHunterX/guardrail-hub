@@ -29,8 +29,8 @@ from typing import Any, Optional
 from app.core.mcp_logger import MCPLogger
 from app.dao.base import BaseOperationDAO
 from app.dao.postgres.postgres_dao import PostgresDAO
-from app.schemas.internal.operation import OperationRecord
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.dao.operation_record import OperationRecord
+from app.domain.lifecycle import OperationPhase
 
 # Columns returned by list-style queries (omit heavy ``result`` column)
 _LIST_COLUMNS = "operation_id, status, batch_type, metadata, error, created_at, updated_at, log_path"
@@ -321,7 +321,7 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
                 cur.execute(
                     f"SELECT {_LIST_COLUMNS} FROM operations "
                     "WHERE status = %(status)s ORDER BY created_at ASC",
-                    {"status": OperationStatus.QUEUED},
+                    {"status": OperationPhase.QUEUED},
                 )
                 rows = cur.fetchall()
                 columns = [d[0] for d in cur.description]
@@ -343,7 +343,7 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
 
         return OperationRecord(
             operation_id=row["operation_id"],
-            status=OperationStatus(row["status"]),
+            status=OperationPhase(row["status"]),
             batch_type=row["batch_type"],
             metadata=row.get("metadata") or {},
             result=result,

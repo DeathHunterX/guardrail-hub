@@ -19,7 +19,7 @@ Queueing model
 persists a ``QUEUED`` operation (the full request goes into ``metadata`` so
 the operation can be resumed even after a server restart) and returns
 immediately. The background dispatcher
-(``app/services/tools/owasp_zap/worker/dispatcher.py``) polls the Operations table
+(``app/services/tools/owasp_zap/execution/dispatcher.py``) polls the Operations table
 for queued work, assigns it to an idle worker via the Pool Manager, and only
 then calls :meth:`ZapApiScanService.run_assigned_scan`, which is what
 actually submits ``zap_scan_worker`` / ``zap_full_scan_worker`` to the thread
@@ -33,14 +33,13 @@ from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from typing import Dict, Optional
 
-from fastapi import HTTPException
-
 # Constants
 from app.constants.batch import BatchType
 
 # Core
 from app.core.config import settings
 from app.core.events.dispatcher import InProcessEventDispatcher
+from app.core.exception import InvalidScanRequestError, ScanSubmissionError
 from app.core.mcp_logger import MCPLogger
 
 # DAO
@@ -54,7 +53,8 @@ from app.integrations.owasp_zap.runtime import pool_manager as default_pool_mana
 
 # Schemas
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
-from app.schemas.tools.owasp_zap.common import OperationStatus, ZapScanMode
+from app.domain.lifecycle import OperationPhase
+from app.schemas.tools.owasp_zap.common import ZapScanMode
 from app.schemas.tools.owasp_zap.scan_result import ZapScanReports, ZapScanResult
 from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
 
@@ -141,7 +141,7 @@ class ZapApiScanService:
             Dict with ``operation_id``, ``status``, and a status-check message.
         """
         if not (request.report_group or "").strip():
-            raise HTTPException(status_code=400, detail="Report group is required")
+            raise InvalidScanRequestError("Report group is required")
 
         try:
             op_id = str(uuid.uuid4())
@@ -170,7 +170,7 @@ class ZapApiScanService:
 
             return {
                 "operation_id": op_id,
-                "status": OperationStatus.QUEUED,
+                "status": OperationPhase.QUEUED,
                 "message": (
                     f"Zap API scan queued with operation_id: {op_id}. It will start as soon as "
                     f"a ZAP worker is available. Check status at API api/history/get-result "
@@ -179,10 +179,7 @@ class ZapApiScanService:
             }
 
         except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Error initializing API scan:\n{str(e)}",
-            ) from e
+            raise ScanSubmissionError(f"Error initializing API scan:\n{str(e)}") from e
 
     @staticmethod
     def request_from_metadata(metadata: dict) -> ZapApiScanRequest:
@@ -288,7 +285,7 @@ class ZapApiScanService:
             )
             self.operation_dao.update_operation_status(
                 operation_id=operation_id,
-                status=OperationStatus.RUNNING,
+                status=OperationPhase.RUNNING,
                 result={"ascan_scan_id": ascan_id, "ascan_progress": "0%"},
             )
             # No overall duration limit: an Active Scan runs as long as it stays
@@ -393,7 +390,7 @@ class ZapApiScanService:
             ascan_id = zap_client.run_active_scan(url=request.url, context_id=context_id, recurse=True)
             self.operation_dao.update_operation_status(
                 operation_id=operation_id,
-                status=OperationStatus.RUNNING,
+                status=OperationPhase.RUNNING,
                 result={"ascan_scan_id": ascan_id, "ascan_progress": "0%"},
             )
             # No overall duration limit: an Active Scan runs as long as it stays

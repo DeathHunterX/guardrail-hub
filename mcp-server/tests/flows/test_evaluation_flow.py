@@ -23,8 +23,8 @@ from app.bootstrap import (
 )
 from app.dao.base import BaseOperationDAO
 from app.integrations.chat.slack.channel_adapter import HttpResponse
-from app.schemas.internal.operation import OperationRecord
-from app.schemas.tools.owasp_zap.common import OperationStatus
+from app.dao.operation_record import OperationRecord
+from app.domain.lifecycle import OperationPhase
 
 
 @dataclass
@@ -96,7 +96,7 @@ class EvaluationNotificationChainTests(unittest.TestCase):
 
         op_id = evaluation.run_api_scan(FakeRequest())
 
-        self.assertEqual(self.dao.get_operation(op_id).status, OperationStatus.COMPLETED)
+        self.assertEqual(self.dao.get_operation(op_id).status, OperationPhase.COMPLETED)
         texts = self._texts()
         self.assertEqual(len(texts), 2)
         self.assertIn("created", texts[0])
@@ -118,7 +118,7 @@ class EvaluationNotificationChainTests(unittest.TestCase):
         self.assertIn("created", texts[0])
 
         record = self.dao.get_all()[0]
-        self.assertEqual(record.status, OperationStatus.FAILED)
+        self.assertEqual(record.status, OperationPhase.FAILED)
         self.assertEqual(record.error, "zap unreachable")
 
 

@@ -10,7 +10,8 @@ via the existing ``EventPublisher`` — so the existing notification pipeline re
 without any new wiring.
 
 The scan itself is a synchronous, injected callable (``scan_runner``): in
-production it runs over the existing ``ZapClient`` (see ``zap_scan_runner``);
+production it runs over the existing ``ZapClient`` (see
+``app.services.tools.owasp_zap.sync_runner``);
 tests inject a fake. There is no worker, queue, background thread, new
 repository, or new event system — persistence and events flow through the
 existing foundation only.

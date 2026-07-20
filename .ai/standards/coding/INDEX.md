@@ -6,5 +6,5 @@
 | id | title | version | status | owner | depends_on |
 |---|---|---|---|---|---|
 | standards/coding/backend-naming | Backend Naming Conventions | 1.0.0 | Active | backend-owner | — |
-| standards/coding/frontend-hooks-location | Frontend Hooks Location | 1.0.0 | Active | frontend-owner | — |
+| standards/coding/frontend-hooks-location | Frontend Hooks Location | 2.0.0 | Active | frontend-owner | — |
 | standards/coding/frontend-shadcn-usage | Frontend shadcn/ui Primitive Usage | 1.0.0 | Active | frontend-owner | standards/architecture/frontend-component-layering |
