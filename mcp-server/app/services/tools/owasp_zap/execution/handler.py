@@ -18,8 +18,6 @@ concrete request model, so adding a tool is purely a registration concern.
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from pydantic import BaseModel
-
 from app.services.tools.owasp_zap.execution.execution_context import ExecutionContext
 from app.services.tools.owasp_zap.execution.execution_strategy import ExecutionStrategy
 from app.services.tools.owasp_zap.execution.operation_type import ZapOperationType
@@ -59,10 +57,14 @@ class ZapOperation:
 
     operation_type: ZapOperationType
     execution_strategy: ExecutionStrategy
-    request_model: type[BaseModel]
+    # The tool's request model class. Typed neutrally (``type``) so the generic
+    # contract names no serialization framework (ADR-0009 H2). ZAP tools happen
+    # to use pydantic models, whose ``model_dump`` / ``model_validate`` the
+    # serde methods below call by duck typing — the contract does not require it.
+    request_model: type
     handler: ZapOperationHandler
 
-    def serialize_request(self, request: BaseModel) -> dict:
+    def serialize_request(self, request: Any) -> dict:
         """Shape a typed request into the ``metadata["request"]`` payload.
 
         Used by a tool's submit path so serialization lives with the operation
@@ -72,10 +74,10 @@ class ZapOperation:
         """
         return request.model_dump(mode="json", by_alias=True)
 
-    def deserialize_request(self, metadata: dict) -> BaseModel:
+    def deserialize_request(self, metadata: dict) -> Any:
         """Rebuild the typed request from a persisted queue row.
 
-        Raises (``KeyError`` / ``pydantic.ValidationError``) on malformed or
+        Raises (``KeyError`` / validation error) on malformed or
         legacy-incompatible metadata; the Dispatcher treats that as an
         unrecoverable operation — marks it FAILED and releases any worker —
         exactly as it does today for unusable metadata.
