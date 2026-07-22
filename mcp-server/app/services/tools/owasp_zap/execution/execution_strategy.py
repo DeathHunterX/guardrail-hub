@@ -10,10 +10,14 @@ That single generic flag is what lets the Dispatcher route every operation
 without ever learning a tool's identity:
 
 * worker-bound strategies claim a ZAP worker from the pool and run a scan on it;
-* orchestration strategies (``FAN_OUT`` / ``FAN_IN``) run WITHOUT ever occupying
-  a worker — they spawn and/or aggregate child operations. This is what keeps
-  an ``api_suite`` orchestrator from holding a worker slot while its child
-  scans run (workers only ever execute real scan operations).
+* orchestration strategies (``FAN_OUT``) run WITHOUT ever occupying a worker —
+  they spawn child operations. This is what keeps an ``api_suite`` orchestrator
+  from holding a worker slot while its child scans run (workers only ever
+  execute real scan operations).
+
+Only the two members actually used today are defined. ``PARALLEL``, ``BATCH``,
+and ``FAN_IN`` were speculative members removed by ADR-0009 H3 (verified unused);
+a genuinely new strategy is added back only when a tool needs it.
 """
 
 from enum import Enum
@@ -24,12 +28,9 @@ class ExecutionStrategy(str, Enum):
 
     # Worker-bound: one operation runs on one assigned ZAP worker.
     SEQUENTIAL = "sequential"  # ordered work on one worker (api_scan, api_scenario)
-    PARALLEL = "parallel"      # one worker, internally parallelised (reserved)
-    BATCH = "batch"            # reserved for future batching semantics
 
     # Orchestration: no worker is ever claimed.
     FAN_OUT = "fan_out"        # spawns child operations (api_suite)
-    FAN_IN = "fan_in"          # aggregates child results (api_suite)
 
     @property
     def requires_worker(self) -> bool:
@@ -39,4 +40,4 @@ class ExecutionStrategy(str, Enum):
         is worker-bound. This is the ONLY property the Dispatcher inspects, so
         routing stays fully generic.
         """
-        return self not in (ExecutionStrategy.FAN_OUT, ExecutionStrategy.FAN_IN)
+        return self is not ExecutionStrategy.FAN_OUT
