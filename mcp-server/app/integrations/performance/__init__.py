@@ -10,8 +10,16 @@ from app.integrations.performance.registry import (
     PerformanceWorkerRegistry,
     WorkerNotRegisteredError,
 )
+from app.integrations.performance.report_sender import (
+    HttpReportSender,
+    ReportSender,
+    ReportSendError,
+)
 
 __all__ = [
+    "HttpReportSender",
     "PerformanceWorkerRegistry",
+    "ReportSender",
+    "ReportSendError",
     "WorkerNotRegisteredError",
 ]
