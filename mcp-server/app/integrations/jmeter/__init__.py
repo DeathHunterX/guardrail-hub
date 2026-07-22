@@ -6,9 +6,11 @@ group) as it lands. The engine-neutral capability in ``app/services/performance`
 depends on the seam, never on this package.
 """
 
+from app.integrations.jmeter.jmeter_runner import JMeterRunner
 from app.integrations.jmeter.jmx_validator import JmxValidationError, validate_jmx
 
 __all__ = [
+    "JMeterRunner",
     "JmxValidationError",
     "validate_jmx",
 ]
