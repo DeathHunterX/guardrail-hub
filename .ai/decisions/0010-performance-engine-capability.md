@@ -5,6 +5,7 @@ Owner: Loi Phan
 Date: 2026-07-22
 Relates to: [Decision 0009](0009-execution-capability.md) (this ADR is the reopening its §6 revisit-trigger named), [Decision 0007](0007-domain-layer-justification.md) (the "earn your existence" evidentiary standard), [Decision 0008](0008-domain-ubiquitous-language.md) §2.3 (rejected *Execution* as domain vocabulary), [backend-layering](../standards/architecture/backend-layering.md), [service-package-design](../standards/architecture/service-package-design.md), [domain-layer](../standards/architecture/domain-layer.md). Supersedes nothing. The JMeter Docker infrastructure landed 2026-07-22 as scaffolding; this ADR governs the runtime it will host.
 Revision: **R1 (2026-07-22)** — resolves the ten decision gaps raised by the Architecture Readiness Evaluation ("READY WITH MAJOR CHANGES"). The revision **adds** contract-level detail (new §4.2–§4.11) and two closing sections (§11 Architecture Delta, §12 Implementation Readiness Assessment); it **changes no accepted decision** from the original draft. Every §1–§3, §5–§10 conclusion stands. See §11 for the precise delta.
+Revision: **R2 (2026-07-23)** — resolves a shared-queue coexistence conflict found while implementing the Performance dispatcher (Phase 2): the existing ZAP dispatcher marks any queued operation whose type it does not recognise as FAILED, so it would fail Performance operations sharing the queue. Adds **§4.12** (per-engine scoped queue reads) and reconciles D1 (shared queue — stands) with D4 (ZAP receives one bounded, behaviour-preserving scoping change — it no longer fails foreign operations). Recorded in the amendment log (§13). No other decision changes.
 
 ---
 
@@ -96,10 +97,10 @@ User
 
 **Load-bearing decisions, stated so ratification is unambiguous:**
 
-- **D1 — Reuse the queue; do not duplicate it.** The Operations table + `OperationService`/`OperationDAO` are already engine-agnostic. Performance operations are ordinary operations with a Performance `operation_type`. No parallel queue.
+- **D1 — Reuse the queue; do not duplicate it.** The Operations table + `OperationService`/`OperationDAO` are already engine-agnostic. Performance operations are ordinary operations with a Performance `operation_type`. No parallel queue. *(R2: "reuse" is refined to a per-engine **scoped** read so two dispatchers can share one queue safely — see §4.12; D1 stands, no parallel queue.)*
 - **D2 — Assignment is server-side; delivery is pull.** The dispatcher assigns a queued operation to an idle, *healthy* worker (sets `op_id`), exactly as ZAP does. But because the worker exposes **nothing inbound**, the worker *pulls* its assignment on its heartbeat/poll cycle, runs it locally, and *reports* the result back. No HTTP daemon and no JMeter REST wrapper are introduced (per the chosen worker model).
 - **D3 — Runtime and Runner run inside the worker process,** not inside mcp-server. mcp-server schedules; the worker executes. The Service layer never calls `subprocess()` — only the Runner does (satisfies the spec's "Service layer must never invoke subprocess directly").
-- **D4 — Parallel worker infrastructure, engine-neutral, not a shared extraction.** `PerformanceWorkerRegistry` / `PoolManager` / `Scheduler` / `Dispatcher` mirror the ZAP shapes but operate on the H1 neutral contract and carry the health-aware heartbeat (§2.3). ZAP is untouched. This accepts bounded duplication now (the option chosen over a premature shared extraction) and records the consolidation trigger in §8.
+- **D4 — Parallel worker infrastructure, engine-neutral, not a shared extraction.** `PerformanceWorkerRegistry` / `PoolManager` / `Scheduler` / `Dispatcher` mirror the ZAP shapes but operate on the H1 neutral contract and carry the health-aware heartbeat (§2.3). This accepts bounded duplication now (the option chosen over a premature shared extraction) and records the consolidation trigger in §8. *(R2: ZAP is untouched **except** for one bounded, behaviour-preserving scoping change to its dispatcher's queue read — the shared queue makes this unavoidable; see §4.12.)*
 - **D5 — Engine seam, one implementation.** `PerformanceRunner` protocol + neutral DTOs; JMeter is the only implementation. No engine registry, no k6/Gatling stubs.
 - **D6 — Stateless worker contract.** Create workspace → execute → export artifacts → cleanup → reset → idle. Cleanup is mandatory and runs on success *and* failure. Workspaces are never reused across jobs. The worker retains no business state between jobs.
 
@@ -253,6 +254,22 @@ These hold for every Performance operation and are the acceptance backbone for i
 - **INV9** **All** worker↔server communication is **worker-initiated**; the worker exposes no inbound channel.
 - **INV10** The server **never persists or logs unredacted secrets**.
 - **INV11** A worker below `min_compatible_version` is **never assigned** an operation.
+- **INV12** *(R2)* An operation is dispatched by **exactly one** engine's dispatcher — the one that owns its type. No dispatcher fails an operation it does not own.
+
+### 4.12 Shared-Queue Coexistence — Per-Engine Scoped Reads (R2 amendment)
+
+**The conflict this resolves.** D1 shares one Operations queue across engines; D4 keeps ZAP's dispatcher parallel and (as originally worded) untouched. But the shared queue is polled by two dispatchers, and — verified in code — `BaseOperationDAO.get_queued_operations()` returns *every* QUEUED operation, while `OwaspZapDispatcher` marks any operation whose type it does not recognise as **FAILED**. So a Performance operation in the shared queue would be failed by the ZAP dispatcher before the Performance dispatcher could assign it. D1 (share) and D4-as-worded (ZAP untouched) cannot both hold literally; this section is the reconciliation.
+
+**Decision — the queue read is scoped per engine.**
+
+- **Q1 — Scoped read on the shared DAO.** The Operations DAO gains a **type-scoped** queued read (e.g. `get_queued_operations(types=…)`, or an equivalent engine/domain filter), added on the shared, engine-agnostic persistence layer — not duplicated per engine. It is additive; the existing unscoped read remains for any current caller.
+- **Q2 — Each dispatcher polls only its own types.** The Performance dispatcher reads only Performance operation types; the ZAP dispatcher reads only ZAP types. Neither ever sees the other's operations, so neither can fail them.
+- **Q3 — Skip, never fail, a foreign operation.** As defense in depth, a dispatcher that nonetheless encounters an operation type it does not own **skips** it (leaves it QUEUED for its owner) rather than failing it. The ZAP dispatcher's current "unknown type → FAILED" branch is narrowed to "unknown-*and-unowned* → leave for the owner"; a genuinely unresolvable ZAP operation is still failed. This is the one, minimal, behaviour-preserving change to ZAP — bounded and gated exactly like Phase 0 (full ZAP suite + `aios check`, no behavioural change for any existing ZAP operation).
+- **Q4 — Invariant.** INV12: every operation is owned and dispatched by exactly one engine; ownership is its operation type. This preserves D1 (one shared queue, no parallel queue) while making D4's parallelism safe.
+
+**What D4 concedes.** "ZAP is untouched" becomes "ZAP's dispatcher receives one scoping change (Q2/Q3)." This is unavoidable the moment a second engine shares the queue, and is strictly smaller than any alternative (a parallel queue would contradict D1; leaving the ZAP dispatcher as-is would corrupt Performance operations). The change touches only the dispatcher's queue read and unknown-type branch — no ZAP scan behaviour, no ZAP schema.
+
+This §4.12 is a **prerequisite for the Performance dispatcher** (the last Phase 2 component): that component is not implemented until this amendment is ratified.
 
 ---
 
@@ -354,3 +371,9 @@ Scope discipline: no new capability, engine, layer, or abstraction was added; Δ
 The three MAJOR ambiguities the ARE required to be closed before coding are closed with concrete, engineer-facing contracts: the pull worker protocol and lifecycle (§4.2), cancellation propagation in a no-inbound worker (§4.3), the server/worker/runtime/runner boundary split (§4.4), and both plan and artifact transport with strict redaction/cleanup ordering (§4.5–§4.6). The remaining review items — execution-policy shape (§4.7), version compatibility (§4.8), worker auth (§4.9), runtime terminology (§4.10), and invariants (§4.11) — are resolved at the architectural level while correctly deferring implementation values (policy defaults, auth scheme, storage backend) that are not architecture.
 
 No accepted decision changed; this revision only removed ambiguity. Contingent on ratifying ADR-0009 (Accept H1–H4) as the Phase 0 precondition, engineering may begin immediately: Phase 1 primitives depend only on §4.4/§4.6/§4.11 (all now fixed), and Phases 2–3 depend only on §4.2/§4.3/§4.5/§4.8/§4.9 (all now fixed). There is no remaining architectural fork on the critical path.
+
+---
+
+## 13. Amendment Log
+
+**R2 (2026-07-23) — shared-queue coexistence.** Surfaced during Phase 2 while implementing the Performance dispatcher: the shared Operations queue (D1) cannot be polled by both the ZAP and Performance dispatchers as-is, because the ZAP dispatcher fails any operation type it does not recognise (verified in `OwaspZapDispatcher._dispatch_one` + `get_queued_operations`). Resolved by **§4.12** (per-engine scoped queue reads + skip-not-fail for foreign operations + INV12). Reconciles D1 (stands — one shared queue) with D4 (amended: ZAP's dispatcher gets one bounded, behaviour-preserving scoping change). Chosen over a separate Performance queue (which would have reversed D1) and over leaving ZAP as-is (which would corrupt Performance operations). Implementation of the Performance dispatcher is gated on ratification of this amendment; the ZAP dispatcher change is gated like Phase 0 (full ZAP suite + `aios check`, behaviour-preserving).
