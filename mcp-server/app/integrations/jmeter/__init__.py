@@ -8,9 +8,11 @@ depends on the seam, never on this package.
 
 from app.integrations.jmeter.jmeter_runner import JMeterRunner
 from app.integrations.jmeter.jmx_validator import JmxValidationError, validate_jmx
+from app.integrations.jmeter.plan_validator import JmxPlanValidator
 
 __all__ = [
     "JMeterRunner",
+    "JmxPlanValidator",
     "JmxValidationError",
     "validate_jmx",
 ]
