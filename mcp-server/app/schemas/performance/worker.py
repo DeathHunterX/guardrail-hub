@@ -98,6 +98,26 @@ class PerformanceWorkerHeartbeatResponse(BaseModel):
     )
 
 
+class PullAssignmentRequest(BaseModel):
+    """Body a worker POSTs to pull the plan for the operation it was assigned."""
+
+    worker_id: str
+    operation_id: str
+
+
+class PerformanceAssignmentResponse(BaseModel):
+    """The plan + minimal policy the worker pulls for its assigned operation.
+
+    The (already-validated) plan travels base64-encoded; ``timeout_seconds`` is
+    the resolved execution bound. Richer execution policy (ADR-0010 §4.7) is
+    additive to this response and does not change the contract shape.
+    """
+
+    operation_id: str
+    plan_b64: str
+    timeout_seconds: Optional[float] = None
+
+
 class PerformanceWorkerInfo(BaseModel):
     """Scheduling-facing view of one registered worker.
 
