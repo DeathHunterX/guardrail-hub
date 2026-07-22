@@ -25,9 +25,15 @@ from app.domain.lifecycle import OperationPhase  # noqa: E402
 from app.services.tools.owasp_zap.execution.execution_strategy import (  # noqa: E402
     ExecutionStrategy,
 )
+from app.services.tools.owasp_zap.execution.execution_context import (  # noqa: E402
+    ExecutionContext,
+)
 from app.services.tools.owasp_zap.execution.handler import ZapOperation  # noqa: E402
 from app.services.tools.owasp_zap.execution.operation_type import (  # noqa: E402
     ZapOperationType,
+)
+from app.services.tools.owasp_zap.execution.zap_worker_context import (  # noqa: E402
+    ZapWorkerContext,
 )
 from app.services.tools.owasp_zap.execution.registry import (  # noqa: E402
     ZapOperationRegistry,
@@ -45,8 +51,8 @@ class _RecordingHandler:
     def __init__(self):
         self.calls = []
 
-    def execute(self, operation_id, request, worker):
-        self.calls.append((operation_id, request, worker))
+    def execute(self, operation_id, request, context):
+        self.calls.append((operation_id, request, context))
 
 
 class _FakeWorker:
@@ -147,8 +153,11 @@ class DispatcherGenericRoutingTests(unittest.TestCase):
 
         self.assertEqual(pool.assign_calls, ["op-1"])
         self.assertEqual(len(handler.calls), 1)
-        _, request, passed_worker = handler.calls[0]
-        self.assertIs(passed_worker, worker)
+        _, request, context = handler.calls[0]
+        # Worker-bound: the handler receives a ZapWorkerContext carrying the
+        # assigned worker (replacing the former bare worker argument).
+        self.assertIsInstance(context, ZapWorkerContext)
+        self.assertIs(context.worker, worker)
         self.assertEqual(request.value, "y")
 
     def test_orchestration_operation_runs_without_claiming_a_worker(self):
@@ -173,11 +182,14 @@ class DispatcherGenericRoutingTests(unittest.TestCase):
 
         # The worker pool was never consulted for an orchestration operation.
         self.assertEqual(pool.assign_calls, [])
-        # It ran on the orchestration executor, with worker=None, marked RUNNING.
+        # It ran on the orchestration executor with the empty ExecutionContext
+        # (no worker), marked RUNNING.
         self.assertEqual(executor.submitted, 1)
         self.assertEqual(op_service.started, ["op-1"])
         self.assertEqual(len(handler.calls), 1)
-        self.assertIsNone(handler.calls[0][2])
+        context = handler.calls[0][2]
+        self.assertIsInstance(context, ExecutionContext)
+        self.assertNotIsInstance(context, ZapWorkerContext)
 
     def test_unresolvable_type_fails_without_claiming_a_worker(self):
         registry = ZapOperationRegistry()  # nothing registered

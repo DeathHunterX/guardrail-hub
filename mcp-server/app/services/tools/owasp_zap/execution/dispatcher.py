@@ -38,8 +38,10 @@ from app.integrations.owasp_zap.pool import OwaspZapPoolManager
 from app.dao.operation_record import OperationRecord
 from app.schemas.tools.owasp_zap.worker import ZapWorkerLifecycleState
 from app.services.operations.operation_service import OperationService
+from app.services.tools.owasp_zap.execution.execution_context import ExecutionContext
 from app.services.tools.owasp_zap.execution.handler import ZapOperation
 from app.services.tools.owasp_zap.execution.registry import ZapOperationRegistry
+from app.services.tools.owasp_zap.execution.zap_worker_context import ZapWorkerContext
 
 
 class OwaspZapDispatcher:
@@ -210,7 +212,9 @@ class OwaspZapDispatcher:
             )
             return
 
-        zap_operation.handler.execute(operation.operation_id, request, worker)
+        zap_operation.handler.execute(
+            operation.operation_id, request, ZapWorkerContext(worker=worker)
+        )
 
     def _dispatch_orchestration(
         self, operation: OperationRecord, zap_operation: ZapOperation
@@ -239,7 +243,10 @@ class OwaspZapDispatcher:
 
         self._operation_service.start(operation.operation_id)
         self._orchestration_executor.submit(
-            zap_operation.handler.execute, operation.operation_id, request, None
+            zap_operation.handler.execute,
+            operation.operation_id,
+            request,
+            ExecutionContext(),
         )
 
     # ── Observability helpers (logging only) ─────────────────────────────
