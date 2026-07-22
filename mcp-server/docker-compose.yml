@@ -123,7 +123,38 @@ services:
     networks:
       - app-network
       - shared-network
-      
+
+  jmeter:
+    build:
+      context: .
+      dockerfile: docker/jmeter/Dockerfile
+    # JMeter version and JVM heap are hard-pinned inside the image
+    # (docker/jmeter/Dockerfile) and intentionally NOT overridable here, so
+    # every run uses the exact same engine and heap.
+    profiles:
+      - jmeter
+    # No `restart`: unlike zap (a daemon), `jmeter -n` runs one test plan to
+    # completion and exits. This is a CLI tool run as
+    # `docker compose --profile jmeter run --rm jmeter <jmeter-args>`; `up`
+    # without an override runs the bundled smoke-test plan below.
+    command:
+      - -n
+      - -t
+      - /jmeter/test-plans/smoke-test.jmx
+      - -l
+      - /jmeter/reports/smoke-test.jtl
+      - -j
+      - /jmeter/logs/jmeter.log
+    volumes:
+      # Test plans are versioned source, mounted read-only; everything else
+      # is runtime output and stays writable.
+      - ./docker/jmeter/test-plans:/jmeter/test-plans:ro
+      - ./reports/jmeter:/jmeter/reports
+      - ./logs/jmeter:/jmeter/logs
+      - ./data/jmeter/tmp:/jmeter/tmp
+      - ./data/jmeter/artifacts:/jmeter/artifacts
+    networks:
+      - app-network
 
 networks:
   app-network:
