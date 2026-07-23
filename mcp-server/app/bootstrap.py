@@ -513,7 +513,6 @@ def build_operation_notification_flow_from_settings(
 # shared here so the router and dispatcher operate on one pool graph (Gate A).
 
 _performance_pool_manager = None  # process-wide singleton (built once)
-_jmeter_test_service = None  # process-wide singleton (built once)
 
 
 def get_performance_pool_manager(*, config=None):
@@ -624,30 +623,3 @@ def build_performance_worker_router_from_settings(*, config=None):
         coordinator,
         auth_dependency=build_worker_token_auth(config.performance_worker_token),
     )
-
-
-def build_jmeter_test_service():
-    """Return the process-wide ``run_jmeter_test`` service (built once).
-
-    The one construction site (Gates C/E) for the JMeter-first public tool: a JMX
-    whitelist validator, the filesystem plan store under the SAME base the
-    coordinator uses (``data/jmeter/plans``, so a stored plan resolves by
-    operation id at pull time), and a persist-only ``OperationService`` over the
-    shared Operations DAO (the queue the running dispatcher polls). The service
-    validates a ``.jmx`` file and enqueues a run; it never executes.
-    """
-    global _jmeter_test_service
-    if _jmeter_test_service is None:
-        from pathlib import Path  # noqa: PLC0415
-
-        from app.dao.operation_dao import get_operation_dao  # noqa: PLC0415
-        from app.integrations.jmeter.plan_validator import JmxPlanValidator  # noqa: PLC0415
-        from app.services.jmeter.run_service import JMeterTestService  # noqa: PLC0415
-        from app.services.performance.stores import FilesystemPlanStore  # noqa: PLC0415
-
-        _jmeter_test_service = JMeterTestService(
-            validator=JmxPlanValidator(),
-            plan_store=FilesystemPlanStore(Path("data/jmeter/plans")),
-            operation_service=build_performance_operation_service(get_operation_dao()),
-        )
-    return _jmeter_test_service

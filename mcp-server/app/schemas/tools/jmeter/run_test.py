@@ -1,11 +1,3 @@
-"""Input schema for the ``run_jmeter_test`` MCP tool.
-
-JMeter-first: a tester already has a ``.jmx`` test plan (built in Apache JMeter)
-and wants to run it — exactly as ``jmeter -n -t <file>`` does. The tool takes the
-**path** to that existing file, not its XML content, and there is no prior
-"generate" step or plan id.
-"""
-
 from typing import Optional
 
 from pydantic import BaseModel, Field

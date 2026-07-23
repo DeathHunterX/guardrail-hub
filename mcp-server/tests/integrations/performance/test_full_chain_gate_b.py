@@ -34,7 +34,8 @@ from app.services.performance.engine.dto import (
     ExecutionResult,
     ExecutionStatus,
 )
-from app.services.jmeter.run_service import JMeterTestService
+from app.schemas.tools.jmeter.run_test import RunJmeterTestRequest
+from app.services.tools.jmeter.run_service import JmeterRunService
 from app.services.performance.persistence import ReportChannelPersistence
 from app.services.performance.runtime import PerformanceRuntime, WorkspaceManager
 from app.services.performance.stores import FilesystemPlanStore, FilesystemReportStore
@@ -149,8 +150,12 @@ class GateBFullChainTests(unittest.TestCase):
             # ── 2) Public MCP tool validates the file, stores the plan, and
             #      enqueues — stamping the internal type. It stores the plan
             #      under the generated operation id (the key the worker pulls by).
-            run = JMeterTestService(JmxPlanValidator(), plan_store, ops)
-            op_id = run.run(str(jmx_file), timeout_seconds=30.0)
+            run = JmeterRunService(
+                operation_service=ops, validator=JmxPlanValidator(), plan_store=plan_store
+            )
+            op_id = run.run(
+                RunJmeterTestRequest(jmx_file=str(jmx_file), timeout_seconds=30.0)
+            )["operation_id"]
             stamped = records.by_id[op_id].metadata["operation_type"]
             self.assertEqual(stamped, _PERF_TYPE)
 

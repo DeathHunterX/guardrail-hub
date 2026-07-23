@@ -1,10 +1,9 @@
-"""The ``run_jmeter_test`` public MCP tool — JMeter-first: run an existing .jmx.
+"""The ``run_jmeter_test`` MCP tool — JMeter-first: run an existing .jmx.
 
-Covers the contract: a tester passes a path to an existing ``.jmx`` file; the
-tool validates it, stores the plan under a fresh operation id (before enqueueing),
-creates a QUEUED operation stamped with the internal engine type, and returns the
-operation id. Missing file → 404, invalid plan → 400, and re-running the same file
-starts a new run (no once-only plan id). It enqueues; it never executes.
+Structured like the OWASP ZAP tool tests: the service is a self-wiring singleton
+instantiated directly by the router (no Depends). Unit tests inject fakes through
+the singleton's optional-injection ``__init__`` (as the ZAP services allow), and
+the endpoint tests prime the singleton before driving the router.
 """
 
 import ast
@@ -20,12 +19,9 @@ from app.constants.batch import BatchType
 from app.integrations.jmeter.jmx_validator import JmxValidationError
 from app.integrations.jmeter.plan_validator import JmxPlanValidator
 from app.schemas.performance.operation_type import PerformanceOperationType
-from app.services.jmeter.run_service import JMeterTestService, JmxFileNotFoundError
-from app.routers.mcp.jmeter_router import (
-    get_jmeter_test_service,
-    jmeter_router,
-    run_jmeter_test,
-)
+from app.schemas.tools.jmeter.run_test import RunJmeterTestRequest
+from app.routers.mcp.jmeter_router import jmeter_router
+from app.services.tools.jmeter.run_service import JmeterRunService, JmxFileNotFoundError
 
 _PERF_TYPE = PerformanceOperationType.PERFORMANCE_TEST.value
 _VALID = "<jmeterTestPlan><hashTree/></jmeterTestPlan>"
@@ -59,18 +55,24 @@ def _write(dirpath, name, content):
     return str(p)
 
 
+def _service(ops, store):
+    """A JmeterRunService with injected fakes (the ZAP-style optional injection)."""
+    return JmeterRunService(operation_service=ops, validator=JmxPlanValidator(), plan_store=store)
+
+
 class RunServiceTests(unittest.TestCase):
     def setUp(self):
         self.store = _FakePlanStore()
         self.ops = _FakeOps()
-        self.service = JMeterTestService(JmxPlanValidator(), self.store, self.ops)
+        self.service = _service(self.ops, self.store)
         self.tmp = tempfile.mkdtemp()
 
     def test_runs_existing_file_and_stores_plan_before_enqueue(self):
         jmx = _write(self.tmp, "load.jmx", _VALID)
-        op_id = self.service.run(jmx, timeout_seconds=120.0)
+        rs = self.service.run(RunJmeterTestRequest(jmx_file=jmx, timeout_seconds=120.0))
+        op_id = rs["operation_id"]
+        self.assertEqual(rs["status"], "queued")
         # Plan stored under the returned operation id (the worker's pull key) ...
-        self.assertIn(op_id, self.store.puts)
         self.assertEqual(self.store.puts[op_id], (_VALID.encode(), 120.0))
         # ... and the operation was enqueued with the internal type + jmx path.
         oid, batch, meta = self.ops.created[0]
@@ -81,21 +83,21 @@ class RunServiceTests(unittest.TestCase):
 
     def test_rerunning_same_file_starts_a_new_run(self):
         jmx = _write(self.tmp, "load.jmx", _VALID)
-        a = self.service.run(jmx)
-        b = self.service.run(jmx)
+        a = self.service.run(RunJmeterTestRequest(jmx_file=jmx))["operation_id"]
+        b = self.service.run(RunJmeterTestRequest(jmx_file=jmx))["operation_id"]
         self.assertNotEqual(a, b)  # no once-only plan id
         self.assertEqual(len(self.ops.created), 2)
 
     def test_missing_file_raises_and_enqueues_nothing(self):
         with self.assertRaises(JmxFileNotFoundError):
-            self.service.run("/does/not/exist.jmx")
+            self.service.run(RunJmeterTestRequest(jmx_file="/does/not/exist.jmx"))
         self.assertEqual(self.ops.created, [])
         self.assertEqual(self.store.puts, {})
 
     def test_scripting_plan_rejected_and_enqueues_nothing(self):
         jmx = _write(self.tmp, "bad.jmx", _SCRIPTING)
         with self.assertRaises(JmxValidationError):
-            self.service.run(jmx)
+            self.service.run(RunJmeterTestRequest(jmx_file=jmx))
         self.assertEqual(self.ops.created, [])
         self.assertEqual(self.store.puts, {})
 
@@ -104,10 +106,10 @@ class RunEndpointTests(unittest.TestCase):
     def setUp(self):
         self.store = _FakePlanStore()
         self.ops = _FakeOps()
-        service = JMeterTestService(JmxPlanValidator(), self.store, self.ops)
+        # Prime the singleton so the router's JmeterRunService() reuses these fakes.
+        _service(self.ops, self.store)
         app = FastAPI()
         app.include_router(jmeter_router)
-        app.dependency_overrides[get_jmeter_test_service] = lambda: service
         self.client = TestClient(app)
         self.tmp = tempfile.mkdtemp()
 
@@ -136,8 +138,8 @@ class RunEndpointTests(unittest.TestCase):
 
 
 class ScopeGuardTests(unittest.TestCase):
-    """The public tool enqueues but never executes: no runtime/worker/dispatcher/
-    pool imports, and it reads no Settings."""
+    """The public tool enqueues but never executes: it imports no runtime /
+    worker-execution / dispatcher / pool / scheduler / registry machinery."""
 
     _FORBIDDEN_PREFIXES = (
         "app.services.performance.runtime",
@@ -158,15 +160,13 @@ class ScopeGuardTests(unittest.TestCase):
                 mods.extend(a.name for a in node.names)
         return mods
 
-    def test_service_has_no_execution_or_settings_imports(self):
-        mods = self._imports("app/services/jmeter/run_service.py")
-        for mod in mods:
+    def test_service_has_no_execution_imports(self):
+        for mod in self._imports("app/services/tools/jmeter/run_service.py"):
             for forbidden in self._FORBIDDEN_PREFIXES:
                 self.assertFalse(
                     mod == forbidden.rstrip(".") or mod.startswith(forbidden),
-                    msg=f"test_runner imports execution machinery: {mod}",
+                    msg=f"run_service imports execution machinery: {mod}",
                 )
-            self.assertFalse(mod == "app.core.config" or mod.startswith("app.core.config."))
 
 
 if __name__ == "__main__":
