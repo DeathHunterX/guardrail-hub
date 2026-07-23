@@ -207,6 +207,47 @@ class DispatcherGenericRoutingTests(unittest.TestCase):
         self.assertEqual(pool.assign_calls, [])
         self.assertEqual(len(op_service.failed), 1)
 
+    def test_foreign_operation_type_is_ignored_not_failed(self):
+        # ADR-0010 §4.12: an operation whose type is outside the ZAP supported
+        # set belongs to another engine — it is left QUEUED, never failed.
+        handler = _RecordingHandler()
+        registry = ZapOperationRegistry()
+        registry.register(
+            _operation(ZapOperationType.API_SCAN, ExecutionStrategy.SEQUENTIAL, handler)
+        )
+        pool = _FakePoolManager(worker=_FakeWorker())
+        op_service = _FakeOperationService()
+
+        dispatcher = _dispatcher(registry, pool, op_service, _InlineExecutor())
+        dispatcher._dispatch_one(
+            _record(
+                ZapOperationType.API_SCAN,
+                {"operation_type": "performance_test", "request": {"value": "z"}},
+            )
+        )
+
+        self.assertEqual(pool.assign_calls, [])  # not assigned
+        self.assertEqual(op_service.failed, [])  # and NOT failed (byte-for-byte: was fail; now ignore)
+        self.assertEqual(len(handler.calls), 0)
+
+    def test_legacy_operation_without_type_is_still_dispatched(self):
+        # A missing operation_type is a legacy ZAP row (registry defaults to
+        # API_SCAN); the §4.12 filter must not drop it.
+        handler = _RecordingHandler()
+        registry = ZapOperationRegistry()
+        registry.register(
+            _operation(ZapOperationType.API_SCAN, ExecutionStrategy.SEQUENTIAL, handler)
+        )
+        pool = _FakePoolManager(worker=_FakeWorker())
+
+        dispatcher = _dispatcher(registry, pool, _FakeOperationService(), _InlineExecutor())
+        dispatcher._dispatch_one(
+            _record(ZapOperationType.API_SCAN, {"request": {"value": "y"}})  # no operation_type
+        )
+
+        self.assertEqual(pool.assign_calls, ["op-1"])
+        self.assertEqual(len(handler.calls), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

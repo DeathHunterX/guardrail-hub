@@ -40,6 +40,7 @@ from app.schemas.tools.owasp_zap.worker import ZapWorkerLifecycleState
 from app.services.operations.operation_service import OperationService
 from app.services.tools.owasp_zap.execution.execution_context import ExecutionContext
 from app.services.tools.owasp_zap.execution.handler import ZapOperation
+from app.services.tools.owasp_zap.execution.operation_type import ZapOperationType
 from app.services.tools.owasp_zap.execution.registry import ZapOperationRegistry
 from app.services.tools.owasp_zap.execution.zap_worker_context import ZapWorkerContext
 
@@ -83,6 +84,14 @@ class OwaspZapDispatcher:
         self._queue_poll_interval = queue_poll_interval_seconds
         self._sweep_interval = heartbeat_sweep_interval_seconds
         self._heartbeat_timeout = heartbeat_timeout_seconds
+
+        # This dispatcher's supported operation type set (ADR-0010 §4.12): the
+        # ZAP operation-type namespace. The shared Operations queue may now also
+        # hold other engines' operations; an operation whose type is not a ZAP
+        # type is left QUEUED for its own dispatcher, never failed here. A type
+        # that *is* in this namespace but is unregistered still fails, exactly as
+        # before — that is a genuine ZAP misconfiguration, not a foreign op.
+        self._supported_operation_types = frozenset(t.value for t in ZapOperationType)
 
         self._logger = MCPLogger("OwaspZapDispatcher")
         self._stop_event = threading.Event()
@@ -165,6 +174,21 @@ class OwaspZapDispatcher:
         registry (never a concrete tool) and branches only on the operation's
         ``execution_strategy.requires_worker`` — a tool-agnostic capability.
         """
+        # Queue scoping (ADR-0010 §4.12): an operation whose type is outside this
+        # dispatcher's supported set belongs to another engine's dispatcher —
+        # ignore it (leave it QUEUED), never fail it. A missing operation_type is
+        # a legacy ZAP row (the registry defaults it to API_SCAN), so it is not
+        # filtered here; only an explicit, non-ZAP type is foreign.
+        raw_type = (operation.metadata or {}).get("operation_type")
+        if raw_type is not None and raw_type not in self._supported_operation_types:
+            self._logger.debug(
+                "Operation '%s' has type '%s' outside this dispatcher's supported set "
+                "— leaving it QUEUED for its own dispatcher.",
+                operation.operation_id,
+                raw_type,
+            )
+            return
+
         try:
             zap_operation = self._registry.resolve_from_metadata(operation.metadata)
         except Exception as exc:  # pylint: disable=broad-except

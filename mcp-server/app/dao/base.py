@@ -1,7 +1,24 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Collection, Optional
 
 from app.dao.operation_record import OperationRecord
+
+
+def scope_queued_by_type(
+    records: list[OperationRecord], types: Optional[Collection[str]]
+) -> list[OperationRecord]:
+    """Filter *records* to those whose ``metadata['operation_type']`` is in *types*.
+
+    The one place the type-scoped queued read is implemented (ADR-0010 §4.12), so
+    every DAO backend shares identical scoping semantics. ``types=None`` returns
+    *records* unchanged (the original unscoped behaviour). Operations with no
+    ``operation_type`` in metadata are only returned by the unscoped read — a
+    scoped caller asks for explicit types.
+    """
+    if types is None:
+        return records
+    allowed = frozenset(types)
+    return [r for r in records if r.metadata.get("operation_type") in allowed]
 
 
 class BaseOperationDAO(ABC):
@@ -124,13 +141,21 @@ class BaseOperationDAO(ABC):
 
     # ── Queue (the Operations table *is* the queue — no in-memory queue) ──────
 
-    def get_queued_operations(self) -> list[OperationRecord]:
+    def get_queued_operations(
+        self, types: Optional[Collection[str]] = None
+    ) -> list[OperationRecord]:
         """
-        Return every ``QUEUED`` operation, oldest first (FIFO by ``created_at``).
+        Return ``QUEUED`` operations, oldest first (FIFO by ``created_at``).
 
-        This is what the Pool Manager polls instead of maintaining an
+        This is what a Pool Manager / dispatcher polls instead of maintaining an
         in-memory waiting queue — queued operations, and therefore pending
         requests, survive a server restart because they live here.
+
+        When *types* is given, only operations whose
+        ``metadata['operation_type']`` is in *types* are returned — the
+        **type-scoped** read that lets multiple engines' dispatchers share one
+        queue safely (ADR-0010 §4.12). ``types=None`` is the original **unscoped**
+        read, preserved unchanged for backward compatibility.
 
         The default implementation is a correct but not necessarily
         efficient fallback built on :meth:`get_by_status`; backends should
@@ -143,7 +168,7 @@ class BaseOperationDAO(ABC):
         from app.domain.lifecycle import OperationPhase  # noqa: PLC0415
 
         records = self.get_by_status(OperationPhase.QUEUED)
-        return sorted(records, key=lambda r: r.created_at)
+        return scope_queued_by_type(sorted(records, key=lambda r: r.created_at), types)
 
     # ── Startup schema readiness ────────────────────────────────────────────
 
