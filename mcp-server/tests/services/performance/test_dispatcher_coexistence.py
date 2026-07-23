@@ -6,11 +6,10 @@ a declared supported operation type set, and the same assertions apply. A future
 engine (Burp, Trivy, Semgrep, Nuclei, MobSF, …) reuses this exact contract by
 adding its dispatcher + supported set to the wiring below.
 
-Marked ``xfail`` on purpose: it is expected to FAIL until Component 5 lands —
-today the ZAP dispatcher still fails operations whose type it does not recognise
-(the §4.12 scoping change is Component 5), and the Performance dispatcher does not
-exist yet. When both land, this test passes and the marker is removed; it then
-guards the invariant forever.
+Active as of Component 5: the ZAP dispatcher ignores foreign operations (§4.12
+scoping) and the Performance dispatcher exists, so this test now passes and
+guards the invariant permanently. (It was authored xfail ahead of Component 5;
+the marker was removed once both landed.)
 
 Contract verified:
   ✓ each dispatcher processes only its supported type set (INV12)
@@ -188,10 +187,6 @@ class SharedQueueCoexistenceTests(unittest.TestCase):
             already_assigned |= assigned
         self.assertEqual(already_assigned, all_ids, "every op assigned exactly once; none skipped")
 
-    @pytest.mark.xfail(
-        reason="Component 5: Performance dispatcher + scoped ZAP read (ADR-0010 §4.12) not yet implemented",
-        strict=False,
-    )
     def test_two_dispatchers_coexist_over_shared_queue(self):
         ops = [
             _op("zap-A", _ZAP_TYPE),

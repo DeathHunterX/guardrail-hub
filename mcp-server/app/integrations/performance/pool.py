@@ -10,7 +10,7 @@ execution happens later, on the worker.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from app.core.mcp_logger import MCPLogger
 from app.integrations.performance.registry import PerformanceWorkerRegistry
@@ -45,3 +45,11 @@ class PerformancePoolManager:
 
     def request_cancel(self, worker_id: str, operation_id: str) -> bool:
         return self._registry.request_cancel(worker_id, operation_id)
+
+    def sweep_expired(self, timeout_seconds: float) -> List[Tuple[str, str]]:
+        """Mark heartbeat-expired workers Offline; return orphaned (worker, op) pairs.
+
+        A pass-through to the registry so the dispatcher's sweep loop depends only
+        on the pool. The dispatcher fails each returned operation (no auto-retry).
+        """
+        return self._registry.sweep_expired(timeout_seconds)
