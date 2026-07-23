@@ -11,7 +11,9 @@ mounts the returned router. Namespace is ``/performance/…`` — distinct from
 ZAP's ``/workers`` (§4.9).
 """
 
-from fastapi import APIRouter, HTTPException
+from typing import Callable, Optional
+
+from fastapi import APIRouter, Depends, HTTPException
 
 from app.integrations.performance.registry import WorkerNotRegisteredError
 from app.schemas.performance.report import OperationReport
@@ -30,9 +32,19 @@ from app.services.performance.worker_api import (
 )
 
 
-def build_performance_worker_router(coordinator: WorkerCoordinator) -> APIRouter:
-    """Return a router bound to *coordinator* (mounted by the composition root)."""
-    router = APIRouter(prefix="/performance", tags=["Performance Workers"])
+def build_performance_worker_router(
+    coordinator: WorkerCoordinator,
+    auth_dependency: Optional[Callable[..., None]] = None,
+) -> APIRouter:
+    """Return a router bound to *coordinator* (mounted by the composition root).
+
+    When *auth_dependency* is provided (e.g. ``build_worker_token_auth(...)``), it
+    is applied as a **router-level** dependency, so every worker endpoint is
+    authenticated at the boundary (§4.9). Authentication is purely infrastructure
+    here — the coordinator is unchanged and unaware of it.
+    """
+    dependencies = [Depends(auth_dependency)] if auth_dependency is not None else []
+    router = APIRouter(prefix="/performance", tags=["Performance Workers"], dependencies=dependencies)
 
     @router.post("/workers/register", response_model=PerformanceWorkerRegisterResponse)
     def register(request: PerformanceWorkerRegisterRequest) -> PerformanceWorkerRegisterResponse:
