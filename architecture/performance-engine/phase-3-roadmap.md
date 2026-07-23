@@ -31,6 +31,12 @@ Every other module must receive them by dependency injection only. (Tests may co
 
 **Implementation note (grounded):** the scan MUST be **import-origin-aware**, not bare-name. The class names `RoundRobinScheduler` and `WorkerScheduler` are **shared** with the ZAP subsystem (`app/integrations/owasp_zap/scheduler.py`; ZAP constructs `RoundRobinScheduler()` in its own composition root `owasp_zap/runtime.py`). A bare-name match would false-positive on ZAP's legitimate construction. Gate C must resolve each constructed name to its import source and only flag classes imported from `app.integrations.performance.*` / `app.services.performance.*` (the four uniquely-named ones — `PerformanceWorkerRegistry`, `PerformancePoolManager`, `PerformanceDispatcher`, `WorkerCoordinator` — plus the Performance `RoundRobinScheduler` resolved by its `app.integrations.performance.scheduler` origin). ZAP's parallel scheduler is out of scope for this gate.
 
+### Gate D — Dependency-Direction Purity  (lands in C3.4)
+An **AST/import** test proving the composition root is a **dependency sink only**. No subsystem module (`app/services/performance/**`, `app/integrations/performance/**` except the wiring module itself, `app/integrations/jmeter/**`) may import `integrations.performance.wiring`, `bootstrap`, or any other composition-root module. The direction is strictly `Composition Root → Subsystem`, never the reverse. *Grounded baseline: clean today (no subsystem module imports a composition root).*
+
+### Gate E — Configuration Ownership  (lands in C3.4)
+An **AST/import** test proving configuration concerns live **only** in the composition root (`wiring.py` + `bootstrap.py`). Subsystem modules (Runtime, Worker, Dispatcher, Scheduler, Registry, Pool, Runner, Validator, redaction, workspace, coordinator, persistence, clients) must **never**: read `Settings` (`app.core.config`), construct concrete infrastructure implementations (the concrete stores, senders, clients, executors, or the subsystem singletons), create singletons, or assemble their own dependencies. They receive everything by injection. *Grounded baseline: clean today (no subsystem module reads `Settings` or constructs infrastructure).*
+
 ---
 
 ## Commits
@@ -52,10 +58,10 @@ A FastAPI dependency verifying `Authorization: Bearer` against `PERFORMANCE_WORK
 - *Acceptance:* missing/invalid token → 401; valid → passes; coordinator least-privilege (pull-mismatch → 409) still holds (risk R-C).
 - *Gate:* auth unit tests (both paths); coordinator logic unchanged.
 
-### C3.4 — Composition root + lifecycle  ▸ **Gate A, Gate C**
+### C3.4 — Composition root + lifecycle  ▸ **Gates A, C, D, E**
 `integrations/performance/wiring.py` singletons (Registry/Scheduler/Pool); `bootstrap.build_performance_coordinator` + `build_performance_dispatcher`; `startup.py` starts the dispatcher (gated on `DATABASE_PROVIDER`, risk R-D); `main.py` mounts the authed router + lifespan stop.
-- *Acceptance:* **Gate A** — all five singletons instantiated once and shared (identity asserted); **Gate C** — AST purity: the five classes are constructed only in wiring/bootstrap; `OperationService`-as-`OperationStatusSink` conformance asserted (risk R-E); app boots in test; router exposes the four routes.
-- *Gate:* wiring/identity test (Gate A) + AST purity test (Gate C) + conformance assertion; diff limited to wiring/bootstrap/startup/main.
+- *Acceptance:* **Gate A** — all five singletons instantiated once and shared (identity asserted); **Gate C** — AST purity: the five classes constructed only in wiring/bootstrap (import-origin-aware); **Gate D** — no subsystem module imports the composition root (sink-only direction); **Gate E** — `Settings` reads + concrete-infrastructure construction occur only in wiring/bootstrap; `OperationService`-as-`OperationStatusSink` conformance asserted (risk R-E); app boots in test; router exposes the four routes.
+- *Gate:* Gate-A identity test + Gate-C construction-purity test + Gate-D direction test + Gate-E config-ownership test + conformance assertion; diff limited to wiring/bootstrap/startup/main.
 
 ### C3.5 — MCP tool `generate_performance_plan`
 Validate via `JmxPlanValidator` → store in `PlanStore` → return the plan reference. No LLM/analysis.
