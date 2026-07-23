@@ -1,37 +1,20 @@
 # GuardRail Hub
 
-GuardRail Hub is a developer-focused **security testing and QA orchestration platform** that connects multiple security and testing tools into one controlled workflow. It targets security, system-behavior, and release-readiness validation across web applications, APIs, mobile apps, containers, dependencies, secrets, infrastructure as code, and E2E flows, exposed to both direct API clients and AI assistants via MCP. GuardRail Hub is designed as a multi-tool orchestration platform, not a wrapper around a single scanner.
+GuardRail Hub is a developer-focused **security testing and QA orchestration platform** that connects multiple security and testing tools into one controlled workflow.
 
-> ⚠️ **Alpha Release**
->
-> GuardRail Hub is currently under active development.
->
-> The core MCP runtime, worker orchestration, Slack notifications, and OWASP ZAP integration are available.
-> Additional integrations (Apache JMeter, LLM providers, Semgrep, Trivy, Checkov, etc.) are planned.
->
-> APIs and project structure may evolve before v1.0.
+The project focuses on helping developers, teams, and organizations validate security, system behavior, and release readiness across:
 
----
+* Web applications
+* APIs
+* Mobile applications
+* Containers
+* Dependencies
+* Secrets
+* Infrastructure as Code
+* E2E security flows
+* MCP-based internal tools
 
-## Current Status
-
-### Implemented
-
-* MCP Server (FastAPI, tools exposed via the Model Context Protocol)
-* Worker orchestration (self-registering ZAP worker pool with heartbeat and drain/remove management)
-* Queue-based execution (background dispatcher assigns queued operations to idle workers)
-* Slack notifications (scan lifecycle and progress posted and updated in place)
-* 3 working OWASP ZAP tools: `scan_api`, `scan_api_scenario`, `scan_api_suite`
-
-### In Progress
-
-* Apache JMeter
-* LLM provider integrations
-* Additional security tools (Semgrep, Trivy, Checkov, Gitleaks, MobSF, OSV-Scanner/Dependency-Check, Schemathesis, Playwright)
-* Full browser-based ZAP web/interactive scanning (`scan_website_application`, `scan_interactive_web_session` endpoints exist but are stubbed — "in development")
-* Web dashboard and mobile app (see [Roadmap](#roadmap))
-
-The architecture is considered stable; the project is in Alpha because tool and feature coverage is still limited.
+GuardRail Hub is not designed to be a wrapper around one scanner. It is designed as a **multi-tool security and testing orchestration platform**.
 
 ---
 
@@ -43,55 +26,399 @@ The core idea is:
 
 > A security testing MCP/platform that orchestrates multiple security and QA tools across web, API, mobile, container, dependency, secret, IaC, and E2E testing.
 
-Instead of asking developers to manually run many tools separately, GuardRail Hub is designed to provide:
+Instead of asking developers to manually run many tools separately, GuardRail Hub provides:
 
 * Tool orchestration
-* Runner/worker management
+* Runner management
 * Token-based access control
 * Policy enforcement
 * Queue-based execution
 * Audit logging
-* Unified, normalized reports
+* Unified reports
 * Public and self-hosted execution modes
 * MCP integration for AI/client-driven tool interaction
 
-Some of these (queue-based execution, worker management, MCP integration) are implemented today; others (token-based access control, policy enforcement, audit logging) are design targets — see [Current Status](#current-status).
+---
+
+## MVP Toolset
+
+For the MVP, GuardRail Hub does not try to support 50 tools.
+
+The first version focuses on a small but strong set of security and QA tools:
+
+| Category          | Suggested First Tool            |
+| ----------------- | ------------------------------- |
+| Web DAST          | OWASP ZAP                       |
+| API scan          | ZAP API Scan or Schemathesis    |
+| SAST              | Semgrep                         |
+| Dependency scan   | OSV-Scanner or Dependency-Check |
+| Secret scan       | Gitleaks                        |
+| Container scan    | Trivy                           |
+| IaC scan          | Checkov                         |
+| Mobile scan       | MobSF                           |
+| E2E security test | Playwright                      |
+| Report format     | SARIF + JSON + Markdown + HTML         |
+
+This gives the project a clear message:
+
+> GuardRail Hub is a security testing MCP/platform that orchestrates multiple security and QA tools across web, API, mobile, container, dependency, secret, IaC, and E2E testing.
 
 ---
 
-## Key Features
+## Why This Toolset?
 
-* **MCP-native.** Tools are exposed via the Model Context Protocol, alongside a plain HTTP API, so both AI assistants/MCP clients and regular API clients can invoke scans.
-* **Asynchronous, queue-based execution.** Scans run as background operations tracked by an `operation_id`, not inline in the request path.
-* **Self-registering worker pool.** Worker containers register and heartbeat automatically; scale horizontally with `docker compose --profile zap up --scale zap=N`, no server-side reconfiguration needed.
-* **Live Slack notifications.** Scan lifecycle and progress events are posted to Slack and updated in place as a scan runs.
-* **Pluggable persistence.** PostgreSQL and DynamoDB behind a common DAO interface, selected via `DATABASE_PROVIDER`.
-* **Extensible tool architecture.** A typed operation registry with handler/execution-strategy abstractions lets new tools plug into the same dispatcher and reporting pipeline without server rework — the foundation the roadmap's additional integrations build on.
-* **Multi-format reporting.** Normalized findings are exported as Markdown, JSON, and SARIF 2.1.0.
+The MVP toolset is selected to cover the most common security/testing areas developers face in real projects.
+
+### Web DAST
+
+OWASP ZAP is used for web application dynamic security testing.
+
+It can support:
+
+* Passive scan
+* Baseline scan
+* Active scan
+* API scan
+* Security misconfiguration detection
+
+However, ZAP is treated as a **heavy scanner**, not a default public realtime scan engine.
 
 ---
 
-## Current Supported Tools
+### API Scan
 
-The MCP server currently exposes OWASP ZAP as three working, queue-backed MCP tools:
+GuardRail Hub can use either:
 
-| Tool | Category | Status | Description |
-| --- | --- | --- | --- |
-| `scan_api` | API DAST | ✅ Implemented | Security-scan a single API endpoint (quick or full mode), with bearer/JWT or cookie authentication. |
-| `scan_api_scenario` | API DAST | ✅ Implemented | Replay an authenticated, ordered API workflow (e.g. login → get profile → create order), propagating variables/cookies/tokens between steps. |
-| `scan_api_suite` | API DAST | ✅ Implemented | Scan a whole application composed of multiple API services: expands each service's OpenAPI spec into child `scan_api` scans, fans them out across the worker pool, and aggregates one application report. |
-| `scan_website_application` | Web DAST | 🚧 Stubbed, not implemented | Endpoint exists; browser-automation architecture is still under evaluation. |
-| `scan_interactive_web_session` | Web DAST | 🚧 Stubbed, not implemented | Endpoint exists; not yet implemented. |
+* ZAP API Scan
+* Schemathesis
 
-All three implemented tools run asynchronously via the queue dispatcher, execute on the horizontally scalable ZAP worker pool, and produce Markdown, JSON, and SARIF reports.
+This category focuses on API security and behavior testing, such as:
 
-Everything else described below — SAST, dependency scanning, secret scanning, container scanning, IaC scanning, mobile scanning, and E2E testing — is planned tooling, not yet implemented. See [Roadmap](#roadmap).
+* OpenAPI-based API testing
+* Invalid input testing
+* Auth-related API behavior
+* Status code validation
+* Unexpected response detection
+
+---
+
+### SAST
+
+Semgrep is used for static code analysis.
+
+It can detect:
+
+* Insecure code patterns
+* Dangerous API usage
+* Injection-prone patterns
+* Framework-specific security issues
+* Custom team rules
+
+---
+
+### Dependency Scan
+
+OSV-Scanner or Dependency-Check can be used for dependency vulnerability scanning.
+
+This helps detect vulnerable packages in:
+
+* Node.js projects
+* Python projects
+* Java projects
+* Other package ecosystems
+
+---
+
+### Secret Scan
+
+Gitleaks is used for detecting secrets inside source code or repository history.
+
+It can detect:
+
+* API keys
+* Private tokens
+* Cloud credentials
+* Database URLs
+* SSH keys
+* Accidentally committed secrets
+
+---
+
+### Container Scan
+
+Trivy is used for container and filesystem scanning.
+
+It can detect:
+
+* Vulnerable OS packages
+* Vulnerable application dependencies
+* Container image issues
+* Misconfigurations
+
+---
+
+### IaC Scan
+
+Checkov is used for Infrastructure as Code scanning.
+
+It can detect issues in:
+
+* Terraform
+* Kubernetes manifests
+* CloudFormation
+* Dockerfiles
+* CI/CD configuration
+* Cloud security configuration
+
+---
+
+### Mobile Scan
+
+MobSF is used for mobile application security analysis.
+
+It can support:
+
+* Android APK scanning
+* iOS IPA scanning
+* Static mobile analysis
+* Permission review
+* Hardcoded secret detection
+* Mobile security misconfiguration checks
+
+---
+
+### E2E Security Test
+
+Playwright is used for E2E security and system behavior testing.
+
+It can validate:
+
+* Login flow
+* Logout flow
+* Private route protection
+* RBAC behavior
+* Ownership-based access
+* Auth bypass attempts
+* Sensitive field exposure
+* User A cannot access User B’s data
+
+---
+
+### Report Format
+
+GuardRail Hub normalizes output into:
+
+* SARIF
+* JSON
+* Markdown
+
+The goal is to allow reports to be used in:
+
+* Web dashboard
+* Pull requests
+* Merge requests
+* CI/CD artifacts
+* Security review documents
+* Audit history
+
+---
+
+## Production Scanning Strategy
+
+Production scanning must be handled carefully.
+
+Not all security tools are safe to run directly against production systems, especially when many users can trigger scans at the same time.
+
+GuardRail Hub separates scanning modes based on environment and risk level.
+
+| Mode                    | Safe Tools                                                   |
+| ----------------------- | ------------------------------------------------------------ |
+| Production passive scan | Header scan, TLS scan, passive ZAP, availability-safe checks |
+| Staging active scan     | ZAP active scan, Burp, fuzzing, auth bypass tests            |
+| CI/CD scan              | SAST, SCA, secret scan, IaC scan, container scan             |
+| Runtime monitoring      | Falco, WAF logs, SIEM, CSP reports, error monitoring         |
+
+---
+
+## Scanning Modes
+
+### 1. Production Passive Scan
+
+Production passive scan is designed to be safe for live systems.
+
+It should avoid aggressive payloads, fuzzing, destructive behavior, or high request volume.
+
+Recommended checks:
+
+* Security headers
+* TLS configuration
+* HTTPS redirect
+* Cookie flags
+* CORS basic checks
+* Passive ZAP scan
+* Availability-safe checks
+* Basic exposure checks
+* Public metadata checks
+
+Production passive scan should be:
+
+* Low impact
+* Rate-limited
+* Queue-controlled
+* Safe for public-facing systems
+* Suitable for scheduled monitoring
+
+---
+
+### 2. Staging Active Scan
+
+Staging active scan is used for deeper security testing.
+
+This mode can include more aggressive tools and techniques because it should run against a staging or test environment.
+
+Recommended tools/checks:
+
+* ZAP active scan
+* Burp Suite
+* API fuzzing
+* Auth bypass tests
+* Business logic tests
+* Broken access control tests
+* Injection payload tests
+* File upload abuse tests
+
+Staging active scan should require:
+
+* Explicit target approval
+* Correct environment selection
+* Strong rate limits
+* Timeout limits
+* Clear audit logs
+
+---
+
+### 3. CI/CD Scan
+
+CI/CD scan is designed to run before code reaches production.
+
+Recommended tools:
+
+* Semgrep for SAST
+* OSV-Scanner or Dependency-Check for dependency scanning
+* Gitleaks for secret scanning
+* Checkov for IaC scanning
+* Trivy for container scanning
+* Playwright for E2E security tests
+
+CI/CD scans are useful because they catch issues before deployment.
+
+They can block merge or deployment when critical issues are found.
+
+---
+
+### 4. Runtime Monitoring
+
+Runtime monitoring is not the same as active scanning.
+
+It focuses on observing security signals from running systems.
+
+Recommended sources:
+
+* Falco
+* WAF logs
+* SIEM logs
+* CSP violation reports
+* Error monitoring
+* Application logs
+* Infrastructure logs
+
+Runtime monitoring is useful for detecting suspicious behavior after deployment.
+
+---
+
+## OWASP ZAP Scaling Consideration
+
+OWASP ZAP is a powerful DAST tool, but it can become expensive and difficult to scale if used incorrectly.
+
+A major concern is public usage.
+
+If every public scan request starts a new ZAP container, the system can quickly run into problems:
+
+* High CPU usage
+* High memory usage
+* Long scan queues
+* Timeout issues
+* Poor user experience
+* Expensive infrastructure
+* Risky production scanning behavior
+
+This may not be obvious with 10 users, but it becomes a serious architecture problem with 100+ users.
+
+Therefore, GuardRail Hub treats ZAP as a **high-cost tool**.
+
+ZAP should be executed through:
+
+* Queue-based jobs
+* Runner capability checks
+* Concurrency limits
+* Timeout limits
+* Target verification
+* Self-hosted runners for private or heavy scans
+
+---
+
+## Public vs Self-hosted ZAP Usage
+
+### Public Web/Mobile Usage
+
+For public users, GuardRail Hub should not start a ZAP container for every request.
+
+Public users should use lightweight checks by default.
+
+Recommended public mode:
+
+* Header scan
+* TLS scan
+* Cookie flag scan
+* Basic CORS check
+* Passive checks
+* Availability-safe checks
+* Limited ZAP baseline only if queued and verified
+
+ZAP active scan should not be a default public feature.
+
+---
+
+### Self-hosted Customer Usage
+
+For customers using a self-hosted MCP server or self-hosted runner, ZAP can be scaled based on their own infrastructure.
+
+In this mode, the customer controls:
+
+* Number of ZAP containers
+* Runner concurrency
+* CPU limit
+* Memory limit
+* Network access
+* Internal target access
+* Scan timeout
+* Scan scheduling
+
+Example:
+
+```env
+ZAP_ENABLED=true
+ZAP_MAX_CONCURRENT_JOBS=3
+ZAP_CONTAINER_MEMORY_LIMIT=2g
+ZAP_CONTAINER_CPU_LIMIT=1
+ZAP_JOB_TIMEOUT_SECONDS=1800
+```
+
+This is safer because the customer owns the environment and resources.
 
 ---
 
 ## Architecture Overview
-
-The diagram below shows GuardRail Hub's target platform architecture. Today, the **MCP Server** and the **ZAP path inside the Runner** are implemented; the Web Platform and Mobile App are design targets tracked in [Roadmap](#roadmap) Phase 3.
 
 ```txt
 GuardRail Hub
@@ -133,84 +460,156 @@ GuardRail Hub
     └── Report Normalizer
 ```
 
-### MCP Server
-
-The MCP server is a standalone FastAPI service. It can be deployed separately and given to customers as a source folder, a Docker image, a docker-compose setup, or a copy-paste install command. It is designed to not depend directly on the web platform source code, communicating with it only through API calls when running in connected mode.
-
-Two deployment modes and two token-authority models are part of the target design:
-
-```txt
-Modes:          STANDALONE, CONNECTED
-Token Authority: SELF_MANAGED, PLATFORM_ISSUED
-```
-
-Token validation and policy enforcement (referenced above) are configuration/schema scaffolding today, not enforced — see [Current Status](#current-status).
-
-### Runner / Worker
-
-Execution of tools is designed to happen through jobs, not inline in web/mobile requests. Today this is realized as the self-registering **ZAP worker pool**: worker containers register and heartbeat, and are responsible for picking up queued operations, running the scan, parsing tool output, normalizing findings, and generating reports. Future tools are expected to plug into the same worker/dispatch model.
-
 ---
 
 ## Repository Structure
 
 ```txt
-guardrail-hub/
+guardrail/
 │
-├── mcp-server/                  # Implemented — FastAPI MCP server + ZAP worker
+├── web/
 │   ├── app/
-│   │   ├── core/                # Config, logging, exceptions
-│   │   ├── routers/
-│   │   │   ├── mcp/              # MCP-exposed tool routers (owasp_zap_router.py)
-│   │   │   └── public/           # health, history, worker registration/heartbeat
-│   │   ├── schemas/
-│   │   ├── services/
-│   │   │   ├── tools/             # per-tool services (owasp_zap/*)
-│   │   │   ├── operations/        # operation orchestration, dispatcher
-│   │   │   ├── notification/      # event bus, Slack rendering/dispatch
-│   │   │   ├── platform/          # lifecycle reporting
-│   │   │   └── evaluations/
-│   │   ├── integrations/
-│   │   │   ├── owasp_zap/        # ZAP client, worker registry
-│   │   │   └── chat/slack/       # Slack channel adapter
-│   │   ├── dao/                  # Postgres / DynamoDB DAOs
-│   │   ├── domain/, helpers/, constants/
-│   │   └── main.py
-│   │
-│   ├── dependencies/
-│   ├── config/
-│   ├── docs/
-│   ├── tests/
-│   ├── changelog/
-│   ├── docker-compose.yml
-│   ├── pyproject.toml
-│   ├── CHANGELOG.md
+│   ├── components/
+│   ├── features/
+│   ├── server/
+│   ├── prisma/
+│   ├── public/
+│   ├── .env.example
+│   ├── package.json
 │   └── README.md
 │
-├── web/                          # Scaffold — marketing site (Next.js), no dashboard yet
-├── mobile/                       # Empty scaffold (android/, apple/)
-├── api/                          # Empty, reserved
-├── docs/                         # Project documentation site
-├── architecture/                 # Design docs (chatops, zap-worker-pool, ...)
-├── AGENTS.md
+├── mobile/
+│   ├── app/
+│   ├── components/
+│   ├── features/
+│   ├── lib/
+│   ├── assets/
+│   ├── .env.example
+│   ├── package.json
+│   └── README.md
+│
+├── mcp-server/
+│   ├── app/
+│   │   ├── core/
+│   │   ├── routers/
+│   │   │   ├── public/
+│   │   │   ├── mcp/
+│   │   │   └── internal/
+│   │   ├── schemas/
+│   │   ├── services/
+│   │   ├── dependencies/
+│   │   ├── tools/
+│   │   ├── policies/
+│   │   ├── audit/
+│   │   ├── clients/
+│   │   ├── security/
+│   │   └── main.py
+│   │
+│   ├── cli/
+│   ├── config/
+│   ├── examples/
+│   ├── docs/
+│   ├── tests/
+│   ├── data/
+│   ├── logs/
+│   ├── scripts/
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── .env.example
+│   ├── pyproject.toml
+│   └── README.md
+│
+├── runner/
+│   ├── app/
+│   │   ├── core/
+│   │   ├── jobs/
+│   │   ├── tools/
+│   │   │   ├── zap/
+│   │   │   ├── schemathesis/
+│   │   │   ├── semgrep/
+│   │   │   ├── osv_scanner/
+│   │   │   ├── dependency_check/
+│   │   │   ├── gitleaks/
+│   │   │   ├── trivy/
+│   │   │   ├── checkov/
+│   │   │   ├── mobsf/
+│   │   │   ├── playwright/
+│   │   │   └── lightweight/
+│   │   │
+│   │   ├── orchestrator/
+│   │   │   ├── tool_registry.py
+│   │   │   ├── runner_selector.py
+│   │   │   ├── concurrency_limiter.py
+│   │   │   └── job_dispatcher.py
+│   │   │
+│   │   ├── reports/
+│   │   │   ├── normalizer.py
+│   │   │   ├── sarif.py
+│   │   │   ├── json_report.py
+│   │   │   └── markdown.py
+│   │   │
+│   │   └── policies/
+│   │       ├── capability_policy.py
+│   │       ├── quota_policy.py
+│   │       └── target_policy.py
+│   │
+│   ├── Dockerfile
+│   ├── docker-compose.yml
+│   ├── .env.example
+│   └── README.md
+│
+├── docs/
+│   ├── architecture.md
+│   ├── deployment.md
+│   ├── mcp-server.md
+│   ├── runner.md
+│   ├── web.md
+│   └── mobile.md
+│
+├── docker/
+├── scripts/
 ├── README.md
 └── LICENSE
 ```
 
-`web/` and `mobile/` are scaffolds today (a marketing page and an empty app shell, respectively) — see [Current Status](#current-status).
-
 ---
 
-## Quick Start
+## MCP Server
 
-The fastest way to run the implemented part of the stack (MCP server + a ZAP worker):
+The MCP server is a standalone FastAPI service.
+
+It can be deployed separately and given to customers as:
+
+* A source folder
+* A Docker image
+* A docker-compose setup
+* A copy-paste install command
+
+The MCP server should not depend directly on the web platform source code.
+
+It should only communicate with the web platform through API calls when running in connected mode.
+
+### MCP Server Modes
+
+```txt
+STANDALONE
+CONNECTED
+```
+
+### Token Authority
+
+```txt
+SELF_MANAGED
+PLATFORM_ISSUED
+```
+
+### Example MCP Server Setup
 
 ```bash
-git clone <repository-url> guardrail-hub
-cd guardrail-hub/mcp-server
+cd mcp-server
 cp .env.example .env
-docker network create guardrail-shared   # first time only
-docker compose --profile zap up -d --build
+uv sync
+uv run python run.py
 ```
 
 Check health:
@@ -219,122 +618,33 @@ Check health:
 curl http://localhost:8787/health
 ```
 
-Default URL: `http://localhost:8787`
-
----
-
-## Setup
-
-### Requirements
-
-Recommended:
-
-* Node.js 20+
-* Python 3.12+
-* Docker
-* Docker Compose
-* pnpm
-* uv
-
-```bash
-npm install -g pnpm
-pip install uv
-```
-
-### Root Project
-
-```bash
-git clone <repository-url> guardrail
-cd guardrail
-```
-
-### MCP Server
-
-Local (without Docker) — no ZAP worker, useful for API-only development:
+Run with Docker:
 
 ```bash
 cd mcp-server
 cp .env.example .env
-uv sync
-uv run uvicorn app.main:app --reload --port 8787
-```
-
-Default URL: `http://localhost:8787`
-
-With Docker (MCP server + a ZAP worker):
-
-```bash
-cd mcp-server
-cp .env.example .env
-docker network create guardrail-shared   # first time only
-docker compose --profile zap up -d --build --scale zap=2
-```
-
-Health check:
-
-```bash
-curl http://localhost:8787/health
-```
-
-Key `.env` settings (see `docs/configuration.md` for the full reference):
-
-```env
-MCP_MODE=STANDALONE            # STANDALONE | CONNECTED
-TOKEN_AUTHORITY=SELF_MANAGED   # SELF_MANAGED | PLATFORM_ISSUED
-DATABASE_PROVIDER=NONE         # NONE | POSTGRES | DYNAMODB
-
-ZAP_API_KEY=change-this-zap-key
-ZAP_SCAN_TIMEOUT_SECONDS=600
-
-SLACK_ENABLED=false
-SLACK_BOT_TOKEN=
-SLACK_DEFAULT_CHANNEL=
-```
-
-### Web Platform
-
-```bash
-cd web
-pnpm install
-pnpm dev
-```
-
-Default URL: `http://localhost:3000`
-
-`web/` is currently a marketing/landing page, not a product dashboard — see [Current Status](#current-status).
-
----
-
-## Development Flow
-
-1. Start the MCP server (and its ZAP worker container(s) via docker-compose).
-2. Submit a scan through one of the three implemented ZAP tools (`scan_api`, `scan_api_scenario`, `scan_api_suite`), directly over HTTP or via an MCP client.
-3. Poll `GET /tools/history/get-result` for the operation, or watch progress via Slack if notifications are configured.
-4. Review the normalized Markdown/JSON/SARIF report.
-
-```txt
-Client submits scan request (HTTP or MCP)
-        ↓
-Router validates the request, enqueues a QUEUED operation
-        ↓
-Background dispatcher matches the operation to an idle worker
-        ↓
-Worker executes the ZAP scan
-        ↓
-Results are normalized into the finding model
-        ↓
-SARIF / JSON / Markdown reports are generated
-        ↓
-Slack is notified of progress and completion (if configured)
+docker compose up -d --build
 ```
 
 ---
 
-## Tool Registry
+## Runner
 
-New tools are designed to plug into a shared operation registry rather than being hard-wired into the dispatcher — this is how the three ZAP tools already coexist behind one dispatch path, and how future tools (JMeter, Semgrep, Trivy, Checkov, etc.) are intended to be added.
+The runner executes tools through jobs.
 
-The target per-tool metadata model looks like this:
+It should not run heavy tools directly inside web/mobile requests.
+
+The runner is responsible for:
+
+* Pulling or receiving scan jobs
+* Checking tool capability
+* Applying concurrency limits
+* Running the selected tool
+* Parsing tool output
+* Normalizing findings
+* Generating reports
+
+### Example Runner Tool Metadata
 
 ```json
 {
@@ -352,7 +662,27 @@ The target per-tool metadata model looks like this:
 }
 ```
 
-Target tool categories:
+---
+
+## Tool Registry
+
+GuardRail Hub uses a tool registry to define supported tools.
+
+Each tool can define:
+
+* Name
+* Category
+* Risk level
+* Resource cost
+* Execution mode
+* Required permissions
+* Required runner capability
+* Timeout
+* Concurrency limit
+* Output parser
+* Report mapping
+
+Example categories:
 
 ```txt
 DAST
@@ -367,15 +697,15 @@ E2E_SECURITY_TEST
 RUNTIME_MONITORING
 ```
 
-Fields such as `requiresApproval` and `requiresDomainVerification` describe the target policy model; policy enforcement is not yet wired up (see [Current Status](#current-status)).
-
 ---
 
 ## Report Normalization
 
-Each tool has its own output format. GuardRail Hub normalizes results into a common finding model so reports can be used in a web dashboard, pull/merge requests, CI/CD artifacts, security review documents, and audit history.
+Each tool has its own output format.
 
-Example finding:
+GuardRail Hub normalizes results into a common finding model.
+
+Example:
 
 ```json
 {
@@ -394,60 +724,163 @@ Example finding:
 }
 ```
 
-Supported report outputs today: **SARIF 2.1.0, JSON, and Markdown** (produced by the OWASP ZAP tools' aggregation and reporting pipeline).
+Supported report outputs:
+
+* SARIF
+* JSON
+* Markdown
 
 ---
 
-## Production Scanning Strategy
+## Setup
 
-Not all security tools are safe to run directly against production systems, especially when many users can trigger scans at once. This section describes GuardRail Hub's intended scanning-safety model; most of it is guidance the platform is designed around rather than policy the server currently enforces.
+### Requirements
 
-| Mode | Safe Tools |
-| --- | --- |
-| Production passive scan | Header scan, TLS scan, passive ZAP, availability-safe checks |
-| Staging active scan | ZAP active scan, Burp, fuzzing, auth bypass tests |
-| CI/CD scan | SAST, SCA, secret scan, IaC scan, container scan |
-| Runtime monitoring | Falco, WAF logs, SIEM, CSP reports, error monitoring |
+Recommended:
 
-### 1. Production Passive Scan
+* Node.js 20+
+* Python 3.12+
+* Docker
+* Docker Compose
+* pnpm
+* uv
 
-Designed to be safe for live systems — no aggressive payloads, fuzzing, destructive behavior, or high request volume. Recommended checks: security headers, TLS configuration, HTTPS redirect, cookie flags, basic CORS checks, passive ZAP scan, availability-safe checks, basic exposure checks, public metadata checks. Should be low impact, rate-limited, queue-controlled, and suitable for scheduled monitoring of public-facing systems.
+Install pnpm:
 
-### 2. Staging Active Scan
-
-Deeper, more aggressive testing intended for a staging/test environment: ZAP active scan, Burp Suite, API fuzzing, auth bypass tests, business logic tests, broken access control tests, injection payload tests, file upload abuse tests. Should require explicit target approval, correct environment selection, strong rate limits, timeout limits, and clear audit logs.
-
-### 3. CI/CD Scan
-
-Designed to run before code reaches production: Semgrep (SAST), OSV-Scanner/Dependency-Check (SCA), Gitleaks (secrets), Checkov (IaC), Trivy (containers), Playwright (E2E security tests). Useful for catching issues before deployment and can block merge or deployment when critical issues are found. None of these tools are implemented yet — see [Roadmap](#roadmap).
-
-### 4. Runtime Monitoring
-
-Distinct from active scanning — observing security signals from running systems via sources like Falco, WAF logs, SIEM logs, CSP violation reports, error monitoring, application/infrastructure logs. Useful for detecting suspicious behavior after deployment. Not implemented; not currently on the near-term roadmap.
-
-### OWASP ZAP Scaling Consideration
-
-OWASP ZAP is a powerful DAST tool but can become expensive and hard to scale if used incorrectly — if every public scan request started a new ZAP container, the system would quickly hit high CPU/memory usage, long queues, timeouts, and expensive infrastructure. This is not obvious at 10 users but becomes a serious problem at 100+. GuardRail Hub therefore treats ZAP as a **high-cost tool**, executed through queue-based jobs, worker capability checks, concurrency limits, timeout limits, target verification, and (for private or heavy scans) self-hosted workers.
-
-### Public vs. Self-hosted ZAP Usage
-
-For public users, GuardRail Hub is designed to avoid starting a ZAP container per request — public usage should default to lightweight checks (header/TLS/cookie/CORS scans, passive checks, availability-safe checks, limited baseline ZAP only if queued and verified). ZAP active scan is not intended to be a default public feature.
-
-For self-hosted deployments, the operator controls worker count (`docker compose --profile zap up --scale zap=N`), standard Docker resource limits, network access, and scan timeouts, e.g.:
-
-```env
-ZAP_API_KEY=change-this-zap-key
-ZAP_SCAN_TIMEOUT_SECONDS=600
-ZAP_WORKER_HEARTBEAT_TIMEOUT_SECONDS=60
+```bash
+npm install -g pnpm
 ```
 
-This is safer because the operator owns the environment and resources.
+Install uv:
 
-### Security Principles
+```bash
+pip install uv
+```
+
+---
+
+## Setup Root Project
+
+```bash
+git clone <repository-url> guardrail
+cd guardrail
+```
+
+---
+
+## Setup Web Platform
+
+```bash
+cd web
+cp .env.example .env
+pnpm install
+pnpm dev
+```
+
+Default URL:
+
+```txt
+http://localhost:3000
+```
+
+---
+
+## Setup MCP Server
+
+```bash
+cd mcp-server
+cp .env.example .env
+uv sync
+uv run python run.py
+```
+
+Default URL:
+
+```txt
+http://localhost:8787
+```
+
+Health check:
+
+```bash
+curl http://localhost:8787/health
+```
+
+---
+
+## Setup Runner
+
+```bash
+cd runner
+cp .env.example .env
+docker compose up -d --build
+```
+
+Example runner `.env`:
+
+```env
+RUNNER_MODE=SELF_HOSTED
+RUNNER_ID=local_runner
+
+LIGHTWEIGHT_CHECK_ENABLED=true
+
+ZAP_ENABLED=true
+ZAP_MAX_CONCURRENT_JOBS=1
+ZAP_JOB_TIMEOUT_SECONDS=900
+
+SEMGREP_ENABLED=true
+GITLEAKS_ENABLED=true
+TRIVY_ENABLED=true
+CHECKOV_ENABLED=true
+MOBSF_ENABLED=false
+```
+
+---
+
+## Development Flow
+
+1. Start the MCP server.
+2. Start the web platform.
+3. Start the runner.
+4. Register the runner in the web platform.
+5. Configure available tools.
+6. Create a project target.
+7. Run a scan workflow.
+8. Review normalized findings and reports.
+
+---
+
+## Example Scan Workflow
+
+```txt
+User selects scan workflow
+        ↓
+GuardRail API validates project and permission
+        ↓
+Policy engine checks tool risk and target environment
+        ↓
+Scan job is queued
+        ↓
+Runner selector finds a capable runner
+        ↓
+Runner executes tools
+        ↓
+Tool outputs are normalized
+        ↓
+SARIF / JSON / Markdown reports are generated
+        ↓
+Findings are shown in dashboard
+```
+
+---
+
+## Security Principles
+
+GuardRail Hub follows these principles:
 
 * Do not run heavy security tools directly in public request handlers.
 * Use queue-based execution for expensive tools.
-* Use self-hosted workers for private or heavy scans.
+* Use self-hosted runners for private or heavy scans.
 * Require domain verification for active scans.
 * Separate production passive scan from staging active scan.
 * Use CI/CD scans to catch issues before deployment.
@@ -460,25 +893,30 @@ This is safer because the operator owns the environment and resources.
 
 ## Roadmap
 
-### Phase 1: MCP Server MVP — done
+### Phase 1: MCP Server MVP
 
-* FastAPI MCP server, standalone mode
-* Self-managed token model (declared; enforcement in progress)
-* Tool/operation registry
+* FastAPI MCP server
+* Standalone mode
+* Self-managed token
+* Tool registry
+* Basic policy check
 * Local audit log
 * Docker setup
 
-### Phase 2: Runner MVP — done
+### Phase 2: Runner MVP
 
-* Self-registering ZAP worker pool
-* OWASP ZAP API scan, scenario scan, and suite scan
-* JSON, Markdown, and SARIF reports
+* Lightweight web checks
+* OWASP ZAP baseline scan
+* Semgrep
+* Gitleaks
+* Trivy
+* JSON and Markdown reports
 
 ### Phase 3: Web Control Plane
 
 * Project management
 * Token management
-* Runner/worker registration UI
+* Runner registration
 * Tool registry UI
 * Scan run dashboard
 * Finding dashboard
@@ -486,31 +924,22 @@ This is safer because the operator owns the environment and resources.
 
 ### Phase 4: Expanded Tool Support
 
-Planned tool categories, condensed from the platform's original tool-selection rationale:
-
-| Category | Target Tool(s) | What it covers |
-| --- | --- | --- |
-| API scan | Schemathesis (in addition to ZAP) | OpenAPI-based testing, invalid input testing, auth-related behavior, status code validation |
-| SAST | Semgrep | Insecure code patterns, dangerous API usage, injection-prone code, framework-specific issues, custom rules |
-| Dependency scan (SCA) | OSV-Scanner or Dependency-Check | Vulnerable packages across Node.js, Python, Java, and other ecosystems |
-| Secret scan | Gitleaks | API keys, private tokens, cloud credentials, database URLs, SSH keys, accidentally committed secrets |
-| Container scan | Trivy | Vulnerable OS packages, vulnerable app dependencies, container image issues, misconfigurations |
-| IaC scan | Checkov | Terraform, Kubernetes manifests, CloudFormation, Dockerfiles, CI/CD config, cloud security config |
-| Mobile scan | MobSF | Android APK / iOS IPA static analysis, permission review, hardcoded secrets, mobile misconfigurations |
-| E2E security test | Playwright | Login/logout flow, private route protection, RBAC, ownership-based access, auth bypass, cross-user data isolation |
-| Full browser-based Web DAST | OWASP ZAP (context creation, form auth) | `scan_website_application` / `scan_interactive_web_session` completion |
-| Performance | Apache JMeter | Not yet scoped in detail |
-| LLM evaluation | LLM providers | Not yet scoped in detail |
+* Schemathesis
+* OSV-Scanner or Dependency-Check
+* Checkov
+* MobSF
+* Playwright E2E security tests
+* SARIF export
 
 ### Phase 5: Production-ready Orchestration
 
-* Worker/runner capability management
+* Runner capability management
 * Quota policy
 * Domain verification
 * Approval workflow
 * Team/organization mode
 * Connected MCP mode
-* Self-hosted worker setup command
+* Self-hosted runner setup command
 
 ---
 
@@ -519,3 +948,21 @@ Planned tool categories, condensed from the platform's original tool-selection r
 GuardRail Hub Community Edition is licensed under the Apache License 2.0.
 
 Enterprise features, hosted services, and advanced organization controls may be provided under a separate commercial license.
+
+---
+
+## Summary
+
+GuardRail Hub is a multi-tool security and QA orchestration platform for developers and teams.
+
+It integrates tools such as OWASP ZAP, Semgrep, Gitleaks, Trivy, Checkov, MobSF, Schemathesis, and Playwright into a controlled workflow with:
+
+* MCP support
+* Runner-based execution
+* Token-based access control
+* Policy enforcement
+* Queue-based scanning
+* Public and self-hosted modes
+* Unified SARIF, JSON, and Markdown reports
+
+The main goal is to help developers and teams safely validate system behavior and security across web, API, mobile, container, dependency, secret, IaC, and E2E testing.
