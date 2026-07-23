@@ -62,15 +62,3 @@ class ZapMixin:
     # How often the Pool Manager polls the Operations table for QUEUED
     # operations and tries to assign them to an idle worker.
     zap_queue_poll_interval_seconds: float = 2.0
-
-    # =====================================================
-    # In-process scan executors (thread-pool sizing)
-    # =====================================================
-    # Each scan service submits its per-operation run to a bounded thread pool
-    # so the Dispatcher never blocks. Real concurrency is bounded by the number
-    # of registered Active ZAP workers (the Pool Manager), NOT by these caps —
-    # they only bound in-process thread overhead. Injected at construction and
-    # settings-bounded (ADR-0009 H4); the defaults preserve the previous fixed
-    # cap of 32.
-    zap_scan_executor_max_workers: int = 32
-    zap_scenario_executor_max_workers: int = 32

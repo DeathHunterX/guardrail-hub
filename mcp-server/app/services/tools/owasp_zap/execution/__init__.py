@@ -10,7 +10,6 @@ the composition root — no Dispatcher or WorkerService change.
 See ``architecture/zap-generic-execution/DESIGN.md``.
 """
 
-from app.services.tools.owasp_zap.execution.execution_context import ExecutionContext
 from app.services.tools.owasp_zap.execution.execution_strategy import ExecutionStrategy
 from app.services.tools.owasp_zap.execution.handler import (
     ZapOperation,
@@ -23,7 +22,6 @@ from app.services.tools.owasp_zap.execution.registry import (
 )
 
 __all__ = [
-    "ExecutionContext",
     "ExecutionStrategy",
     "UnknownOperationTypeError",
     "ZapOperation",

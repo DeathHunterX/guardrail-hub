@@ -47,9 +47,12 @@ def _make_operation(
 class ExecutionStrategyTests(unittest.TestCase):
     def test_worker_bound_strategies_require_a_worker(self):
         self.assertTrue(ExecutionStrategy.SEQUENTIAL.requires_worker)
+        self.assertTrue(ExecutionStrategy.PARALLEL.requires_worker)
+        self.assertTrue(ExecutionStrategy.BATCH.requires_worker)
 
     def test_orchestration_strategies_do_not_require_a_worker(self):
         self.assertFalse(ExecutionStrategy.FAN_OUT.requires_worker)
+        self.assertFalse(ExecutionStrategy.FAN_IN.requires_worker)
 
 
 class ZapOperationSerializationTests(unittest.TestCase):

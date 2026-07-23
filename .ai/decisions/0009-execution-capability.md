@@ -1,6 +1,6 @@
 # 0009 — Has Execution Become an Architectural Capability?
 
-Status: **Accepted** — ratified by backend-owner 2026-07-22. Decision: **reject** the Execution capability; **approve** the H1–H4 contract-hygiene fix (§4, §10). The approved hygiene is executed as **Phase 0** of the Performance Engine work, which is the second execution substrate this ADR's §6 named as the reopening condition — see [Decision 0010](0010-performance-engine-capability.md).
+Status: **Proposed** — recommendation is **Reject the capability; approve a narrow contract-hygiene fix**. Requires backend-owner ratification.
 Owner: Loi Phan
 Date: 2026-07-20
 Relates to: [Decision 0007](0007-domain-layer-justification.md) (the evidentiary standard this ADR is held to), [Decision 0008](0008-domain-ubiquitous-language.md) §2.3 (which already rejected Execution as *domain* vocabulary), [domain-layer-growth-stress-test.md](../architecture/evidence/domain-layer-growth-stress-test.md) §5 (which first flagged execution as the next pressure point).

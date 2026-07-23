@@ -3,18 +3,19 @@ execution contract.
 
 A scenario is a worker-bound, single-session scan (one authenticated workflow
 runs on one worker), so its :class:`ExecutionStrategy` is ``SEQUENTIAL`` and the
-Dispatcher always passes a bound ``ZapWorkerContext``. The handler does no
+Dispatcher always passes a bound ``ZapWorkerInfo``. The handler does no
 scheduling — it delegates to the service, which submits the run to its thread
 pool and releases the worker when done (mirroring scan_api).
 """
 
+from typing import Optional
+
 from app.schemas.tools.owasp_zap.scan_api_scenario import ZapApiScenarioScanRequest
+from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
 from app.services.operations.operation_service import OperationService
-from app.services.tools.owasp_zap.execution.execution_context import ExecutionContext
 from app.services.tools.owasp_zap.execution.execution_strategy import ExecutionStrategy
 from app.services.tools.owasp_zap.execution.handler import ZapOperation
 from app.services.tools.owasp_zap.execution.operation_type import ZapOperationType
-from app.services.tools.owasp_zap.execution.zap_worker_context import ZapWorkerContext
 from app.services.tools.owasp_zap.scan_api_scenario import ZapApiScenarioService
 
 
@@ -28,11 +29,11 @@ class ApiScenarioHandler:
         self,
         operation_id: str,
         request: ZapApiScenarioScanRequest,
-        context: ExecutionContext,
+        worker: Optional[ZapWorkerInfo],
     ) -> None:
-        if not isinstance(context, ZapWorkerContext):  # defensive: worker-bound always has a worker
+        if worker is None:  # defensive: worker-bound strategy always has a worker
             raise ValueError("ApiScenarioHandler.execute requires an assigned worker")
-        self._service.run_assigned(operation_id, request, context.worker)
+        self._service.run_assigned(operation_id, request, worker)
 
 
 def build_api_scenario_operation(operation_service: OperationService) -> ZapOperation:

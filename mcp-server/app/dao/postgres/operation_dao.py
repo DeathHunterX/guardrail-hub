@@ -24,10 +24,10 @@ non-zero exit code rather than serving requests against a missing schema.
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Collection, Optional
+from typing import Any, Optional
 
 from app.core.mcp_logger import MCPLogger
-from app.dao.base import BaseOperationDAO, scope_queued_by_type
+from app.dao.base import BaseOperationDAO
 from app.dao.postgres.postgres_dao import PostgresDAO
 from app.dao.operation_record import OperationRecord
 from app.domain.lifecycle import OperationPhase
@@ -299,19 +299,13 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
         finally:
             conn.close()
 
-    def get_queued_operations(
-        self, types: Optional[Collection[str]] = None
-    ) -> list[OperationRecord]:
+    def get_queued_operations(self) -> list[OperationRecord]:
         """
-        Return ``QUEUED`` operations, oldest first — a dispatcher's queue read.
+        Return every ``QUEUED`` operation, oldest first — the Pool Manager's queue.
 
         Uses ``ORDER BY created_at ASC`` directly (backed by
-        ``idx_operations_status_created_at``). When *types* is given, the result
-        is scoped to operations whose ``metadata['operation_type']`` is in
-        *types* (ADR-0010 §4.12); ``types=None`` returns every queued operation
-        (unchanged, backward-compatible). Scoping is applied after the ordered
-        fetch via the shared :func:`scope_queued_by_type` helper, so all backends
-        share identical semantics.
+        ``idx_operations_status_created_at``) instead of the base class's
+        fetch-then-sort fallback.
 
         Returns:
             A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
@@ -331,8 +325,7 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
                 )
                 rows = cur.fetchall()
                 columns = [d[0] for d in cur.description]
-                records = [self._from_row(dict(zip(columns, row))) for row in rows]
-                return scope_queued_by_type(records, types)
+                return [self._from_row(dict(zip(columns, row))) for row in rows]
         except Exception:
             self._logger.error("Failed to fetch queued operations from PostgreSQL")
             raise

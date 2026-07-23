@@ -8,18 +8,19 @@ to before the generic-execution refactor — the Dispatcher just reaches it
 through the registry instead of a direct import.
 
 ``scan_api`` is a worker-bound, single-scan tool, so its
-:class:`ExecutionStrategy` is ``SEQUENTIAL`` and the Dispatcher always passes a
-bound ``ZapWorkerContext`` (never the empty ``ExecutionContext`` base).
+:class:`ExecutionStrategy` is ``SEQUENTIAL`` and ``worker`` is always a bound
+:class:`ZapWorkerInfo` (never ``None``).
 """
 
+from typing import Optional
+
 from app.schemas.tools.owasp_zap.api_scan import ZapApiScanRequest
+from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
 from app.services.operations.operation_service import OperationService
 from app.services.tools.owasp_zap.api_scanner import ZapApiScanService
-from app.services.tools.owasp_zap.execution.execution_context import ExecutionContext
 from app.services.tools.owasp_zap.execution.execution_strategy import ExecutionStrategy
 from app.services.tools.owasp_zap.execution.handler import ZapOperation
 from app.services.tools.owasp_zap.execution.operation_type import ZapOperationType
-from app.services.tools.owasp_zap.execution.zap_worker_context import ZapWorkerContext
 
 
 class ApiScanHandler:
@@ -32,19 +33,19 @@ class ApiScanHandler:
         self,
         operation_id: str,
         request: ZapApiScanRequest,
-        context: ExecutionContext,
+        worker: Optional[ZapWorkerInfo],
     ) -> None:
-        """Run an already-assigned API scan on the worker carried by *context*.
+        """Run an already-assigned API scan on *worker*.
 
-        ``context`` is guaranteed to be a :class:`ZapWorkerContext` for this
-        worker-bound strategy; the Dispatcher only calls this after the Pool
-        Manager has bound a worker to *operation_id*. Delegates verbatim to the
-        existing service, which submits the matching worker function to its
-        thread pool and releases the worker when done.
+        ``worker`` is guaranteed non-``None`` for this worker-bound strategy;
+        the Dispatcher only calls this after the Pool Manager has bound the
+        worker to *operation_id*. Delegates verbatim to the existing service,
+        which submits the matching worker function to its thread pool and
+        releases the worker when done.
         """
-        if not isinstance(context, ZapWorkerContext):  # defensive: never for a worker-bound op
+        if worker is None:  # defensive: should never happen for a worker-bound op
             raise ValueError("ApiScanHandler.execute requires an assigned worker")
-        self._scan_service.run_assigned_scan(operation_id, request, context.worker)
+        self._scan_service.run_assigned_scan(operation_id, request, worker)
 
 
 def build_api_scan_operation(operation_service: OperationService) -> ZapOperation:

@@ -17,7 +17,7 @@ resolves this operation's handler from the registry and calls
 
 import time
 import uuid
-from concurrent.futures import Executor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from typing import Any, Optional
 
@@ -47,6 +47,11 @@ from app.services.tools.owasp_zap.scenario.context import (
     resolve_execution_order,
 )
 
+# Own thread pool, matching api_scanner's decoupling rationale: real concurrency
+# is bounded by the number of registered ZAP workers, not this executor.
+executor = ThreadPoolExecutor(max_workers=32, thread_name_prefix="zap-scenario-worker")
+
+
 class ZapApiScenarioService:
     """Singleton service that runs OWASP ZAP API scenario scans on a worker."""
 
@@ -62,16 +67,10 @@ class ZapApiScenarioService:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(
-        self,
-        operation_service: Optional[OperationService] = None,
-        executor: Optional[Executor] = None,
-    ) -> None:
+    def __init__(self, operation_service: Optional[OperationService] = None) -> None:
         if getattr(self, "_initialized", False):
             if operation_service is not None:
                 self.operation_service = operation_service
-            if executor is not None:
-                self._executor = executor
             return
 
         self.app_logger = MCPLogger("OwaspZapApiScenarioScanService")
@@ -80,14 +79,6 @@ class ZapApiScenarioService:
         self.operation_dao = get_operation_dao()
         self.operation_service = operation_service or OperationService(
             self.operation_dao, InProcessEventDispatcher()
-        )
-        # Own thread pool, matching api_scanner's decoupling rationale: real
-        # concurrency is bounded by the number of registered ZAP workers, not
-        # this executor. Injectable + settings-bounded (ADR-0009 H4); default
-        # preserves the previous fixed cap and thread-name prefix.
-        self._executor = executor or ThreadPoolExecutor(
-            max_workers=settings.zap_scenario_executor_max_workers,
-            thread_name_prefix="zap-scenario-worker",
         )
         self._initialized = True
 
@@ -146,7 +137,7 @@ class ZapApiScenarioService:
         worker: ZapWorkerInfo,
     ) -> None:
         """Submit the scenario run to the thread pool (never blocks the Dispatcher)."""
-        self._executor.submit(self._run_scenario, operation_id, request, worker)
+        executor.submit(self._run_scenario, operation_id, request, worker)
 
     def _run_scenario(
         self,

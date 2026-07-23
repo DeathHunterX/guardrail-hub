@@ -29,7 +29,7 @@ pool below.
 import re
 import time
 import uuid
-from concurrent.futures import Executor, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from threading import Lock
 from typing import Dict, Optional
 
@@ -64,6 +64,13 @@ from app.services.tools.owasp_zap.execution.operation_type import ZapOperationTy
 # Service
 from app.services.operations.operation_service import OperationService
 
+# Thread-pool sizing is decoupled from worker count on purpose: how many
+# scans can actually run concurrently is bounded by how many ZAP workers are
+# registered and Active (see the Pool Manager), not by this executor. A
+# generous fixed cap just bounds in-process thread overhead.
+executor = ThreadPoolExecutor(max_workers=32, thread_name_prefix="zap-scan-worker")
+
+
 class ZapApiScanService:
     """Singleton service that runs OWASP ZAP API scans on a thread-pool worker."""
 
@@ -82,34 +89,18 @@ class ZapApiScanService:
                     cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(
-        self,
-        operation_service: Optional[OperationService] = None,
-        executor: Optional[Executor] = None,
-    ) -> None:
+    def __init__(self, operation_service: Optional[OperationService] = None) -> None:
         # Singleton: allow startup to inject the shared (event-publishing)
-        # OperationService (and, symmetrically, a shared executor) even if a
-        # prior no-arg construction already ran.
+        # OperationService even if a prior no-arg construction already ran.
         if getattr(self, "_initialized", False):
             if operation_service is not None:
                 self.operation_service = operation_service
-            if executor is not None:
-                self._executor = executor
             return
 
         self.app_logger = MCPLogger("OwaspZapApiScanService")
         self.pool_manager = default_pool_manager
         self.zap_helpers = ZapApiScanHelpers()
         self.operation_dao = get_operation_dao()
-        # Thread-pool sizing is decoupled from worker count on purpose: how many
-        # scans can actually run concurrently is bounded by how many ZAP workers
-        # are registered and Active (see the Pool Manager), not by this executor.
-        # Injectable + settings-bounded (ADR-0009 H4); default preserves the
-        # previous fixed cap and thread-name prefix.
-        self._executor = executor or ThreadPoolExecutor(
-            max_workers=settings.zap_scan_executor_max_workers,
-            thread_name_prefix="zap-scan-worker",
-        )
         # All lifecycle transitions + progress go through OperationService (the
         # single owner of state transition, persistence, and event publication).
         # The scanner stays transport-agnostic: it knows OperationService, never
@@ -213,9 +204,9 @@ class ZapApiScanService:
         of its own.
         """
         if request.scan_mode == ZapScanMode.QUICK:
-            self._executor.submit(self.zap_scan_worker, operation_id, request, worker)
+            executor.submit(self.zap_scan_worker, operation_id, request, worker)
         else:
-            self._executor.submit(self.zap_full_scan_worker, operation_id, request, worker)
+            executor.submit(self.zap_full_scan_worker, operation_id, request, worker)
 
     # ------------------------------------------------------------------
     # Workers

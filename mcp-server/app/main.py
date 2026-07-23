@@ -107,11 +107,6 @@ async def lifespan(_app):
             startup.dispatcher.stop()
         except Exception:  # noqa: BLE001 - shutdown must never crash teardown
             pass
-        try:
-            if startup.performance_dispatcher is not None:
-                startup.performance_dispatcher.stop()
-        except Exception:  # noqa: BLE001 - shutdown must never crash teardown
-            pass
 
         # 2) Fail any operation still RUNNING at shutdown so it never hangs in a
         #    non-terminal state; the user is notified via the existing pipeline
@@ -169,15 +164,6 @@ if settings.cors_enabled:
 app.include_router(health_router)
 app.include_router(zap_worker_router)
 app.include_router(tools_router)
-
-# Performance worker-facing router (register/heartbeat/pull/report), authenticated
-# at the boundary. Built by the composition root; None (not mounted) when
-# DATABASE_PROVIDER=NONE, since the Operations queue has nothing to persist to.
-from app.bootstrap import build_performance_worker_router_from_settings  # noqa: E402
-
-_performance_worker_router = build_performance_worker_router_from_settings(config=settings)
-if _performance_worker_router is not None:
-    app.include_router(_performance_worker_router)
 
 # Static files — generic public asset server (reports, future tools UI, etc.)
 _public_dir = Path(ReportPaths.BASE_DIR)

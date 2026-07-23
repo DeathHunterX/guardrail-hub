@@ -28,11 +28,11 @@ For DynamoDB Local, prepend ``--endpoint-url http://localhost:8001``.
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Collection, Optional
+from typing import Any, Optional
 
 from app.core.config import settings
 from app.core.mcp_logger import MCPLogger
-from app.dao.base import BaseOperationDAO, scope_queued_by_type
+from app.dao.base import BaseOperationDAO
 from app.dao.dynamodb.dynamodb_dao import DynamoDBDAO
 from app.dao.operation_record import OperationRecord
 from app.domain.lifecycle import OperationPhase
@@ -292,24 +292,19 @@ class DynamoDBOperationDAO(DynamoDBDAO, BaseOperationDAO):
             )
             raise
 
-    def get_queued_operations(
-        self, types: Optional[Collection[str]] = None
-    ) -> list[OperationRecord]:
+    def get_queued_operations(self) -> list[OperationRecord]:
         """
-        Return ``QUEUED`` operations, oldest first — a dispatcher's queue read.
+        Return every ``QUEUED`` operation, oldest first — the Pool Manager's queue.
 
         DynamoDB scans have no native ordering, so results are sorted by
-        ``created_at`` in Python after the scan. When *types* is given, the
-        result is scoped to operations whose ``metadata['operation_type']`` is in
-        *types* (ADR-0010 §4.12) via the shared :func:`scope_queued_by_type`
-        helper; ``types=None`` returns every queued operation (unchanged).
+        ``created_at`` in Python after the (filtered) scan completes.
 
         Returns:
             A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
             oldest first.
         """
-        records = sorted(self.get_by_status(OperationPhase.QUEUED), key=lambda r: r.created_at)
-        return scope_queued_by_type(records, types)
+        records = self.get_by_status(OperationPhase.QUEUED)
+        return sorted(records, key=lambda r: r.created_at)
 
     def initialize_schema(self) -> None:
         """

@@ -6,9 +6,11 @@ orchestration executor with ``worker=None`` and never assigns it a ZAP worker â€
 workers only ever run the child ``scan_api`` operations the suite creates.
 """
 
+from typing import Optional
+
 from app.schemas.tools.owasp_zap.scan_api_suite import ZapApiSuiteScanRequest
+from app.schemas.tools.owasp_zap.worker import ZapWorkerInfo
 from app.services.operations.operation_service import OperationService
-from app.services.tools.owasp_zap.execution.execution_context import ExecutionContext
 from app.services.tools.owasp_zap.execution.execution_strategy import ExecutionStrategy
 from app.services.tools.owasp_zap.execution.handler import ZapOperation
 from app.services.tools.owasp_zap.execution.operation_type import ZapOperationType
@@ -25,12 +27,11 @@ class ApiSuiteHandler:
         self,
         operation_id: str,
         request: ZapApiSuiteScanRequest,
-        context: ExecutionContext,
+        worker: Optional[ZapWorkerInfo],
     ) -> None:
-        # context is the empty ExecutionContext base for an orchestration
-        # (FAN_OUT) strategy; the suite never occupies a worker. Runs on the
-        # Dispatcher's orchestration executor, so this call may block for the
-        # suite's lifetime (intended).
+        # worker is always None for an orchestration (FAN_OUT) strategy; the
+        # suite never occupies a worker. Runs on the Dispatcher's orchestration
+        # executor, so this call may block for the suite's lifetime (intended).
         self._service.run(operation_id, request)
 
 

@@ -34,9 +34,12 @@ MCP_OPERATIONS: list[str] = [
     "zap_scan_api_scenario",
     "zap_scan_api_suite",
 
+<<<<<<< HEAD
     # JMeter
     "run_jmeter_test",
 
+=======
+>>>>>>> parent of d5fa401 (Merge pull request #1 from DeathHunterX/feature/mcp-performance-engine)
     # History
     "get_result",
     "list_ids_by_type",
