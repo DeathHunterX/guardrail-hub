@@ -48,6 +48,9 @@ class StartupResult:
     operation_service: object
     dao: object
     notifier: object = None
+    # The Performance queue dispatcher (parallel to the ZAP one), stopped on
+    # shutdown the same way. None if not started.
+    performance_dispatcher: object = None
 
 
 def recover_interrupted_operations(
@@ -178,6 +181,22 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
     )
     dispatcher.start()
 
+    # Performance queue dispatcher — parallel subsystem on the SAME shared queue,
+    # scoped to Performance operation types (ADR-0010 §4.12). Same lifecycle
+    # pattern as the ZAP dispatcher: assembled here, started now, stopped by the
+    # lifespan. Uses a standalone (persist-only) OperationService.
+    from app.bootstrap import (  # noqa: PLC0415
+        build_performance_dispatcher,
+        build_performance_operation_service,
+    )
+
+    performance_dispatcher = build_performance_dispatcher(
+        dao=dao,
+        operation_service=build_performance_operation_service(dao),
+        config=settings,
+    )
+    performance_dispatcher.start()
+
     # Keep RUNNING notifications' elapsed clock advancing between progress
     # events (edits the existing message only). Started here, stopped by the
     # lifespan on shutdown. No-op when no update-capable channel is enabled.
@@ -194,4 +213,5 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
         operation_service=flow.operation_service,
         dao=dao,
         notifier=flow.notifier,
+        performance_dispatcher=performance_dispatcher,
     )

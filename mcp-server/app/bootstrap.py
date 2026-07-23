@@ -500,3 +500,126 @@ def build_operation_notification_flow_from_settings(
         dispatcher=dispatcher,
         notifier=notifier,
     )
+
+
+# =====================================================================
+# Performance Engine composition (ADR-0010 §4.4-§4.9)
+# =====================================================================
+# The composition root for the Performance subsystem: reads Settings (Gate E),
+# constructs the concrete stores + the pool/scheduler singleton (Gate C), and
+# assembles the coordinator, dispatcher, and authenticated worker router.
+# Subsystem modules receive everything by injection; the process-wide Worker
+# Registry singleton lives in ``app.integrations.performance.wiring`` and is
+# shared here so the router and dispatcher operate on one pool graph (Gate A).
+
+_performance_pool_manager = None  # process-wide singleton (built once)
+
+
+def get_performance_pool_manager(*, config=None):
+    """Return the process-wide Performance Pool Manager (built exactly once).
+
+    Builds the Scheduler with the settings-derived fitness
+    (``min_compatible_version``, §4.8 / INV11) over the shared Worker Registry,
+    then caches the pool so the coordinator and dispatcher share one
+    registry/scheduler/pool graph (Gate A).
+    """
+    global _performance_pool_manager
+    if _performance_pool_manager is None:
+        if config is None:
+            from app.core.config import settings as config  # noqa: PLC0415
+        from app.integrations.performance import wiring  # noqa: PLC0415
+        from app.integrations.performance.fitness import build_fitness  # noqa: PLC0415
+        from app.integrations.performance.pool import PerformancePoolManager  # noqa: PLC0415
+        from app.integrations.performance.scheduler import RoundRobinScheduler  # noqa: PLC0415
+
+        scheduler = RoundRobinScheduler(
+            build_fitness(config.performance_min_compatible_version)
+        )
+        _performance_pool_manager = PerformancePoolManager(wiring.registry, scheduler)
+    return _performance_pool_manager
+
+
+def build_performance_operation_service(dao):
+    """A standalone OperationService for the Performance subsystem (persist-only).
+
+    Performance operations persist their lifecycle to the shared Operations table
+    through this service; it is not subscribed to the notification pipeline in
+    this foundation (performance-op notifications are out of Phase 3 scope) —
+    transitions are persisted, published to an unsubscribed in-process bus.
+    """
+    return OperationService(dao, InProcessEventDispatcher())
+
+
+def build_performance_coordinator(operation_service, *, config=None):
+    """Assemble the WorkerCoordinator for the worker-facing API.
+
+    Shares the process-wide Worker Registry (wiring) and injects the concrete
+    filesystem stores + the operation-status sink. Reads Settings only here.
+    """
+    if config is None:
+        from app.core.config import settings as config  # noqa: PLC0415
+    from pathlib import Path  # noqa: PLC0415
+
+    from app.integrations.performance import wiring  # noqa: PLC0415
+    from app.services.performance.stores import (  # noqa: PLC0415
+        FilesystemPlanStore,
+        FilesystemReportStore,
+    )
+    from app.services.performance.worker_api import WorkerCoordinator  # noqa: PLC0415
+
+    return WorkerCoordinator(
+        registry=wiring.registry,
+        plans=FilesystemPlanStore(Path("data/jmeter/plans")),
+        reports=FilesystemReportStore(Path("reports/jmeter")),
+        operations=operation_service,
+        min_compatible_version=config.performance_min_compatible_version,
+    )
+
+
+def build_performance_dispatcher(*, dao, operation_service, config=None):
+    """Assemble the Performance queue dispatcher (unstarted).
+
+    Polls the shared queue scoped to the Performance operation types and assigns
+    to a fit worker via the shared pool. Not started — the caller (startup) owns
+    ``start()``/``stop()``, mirroring the ZAP dispatcher.
+    """
+    if config is None:
+        from app.core.config import settings as config  # noqa: PLC0415
+    from app.schemas.performance.operation_type import PerformanceOperationType  # noqa: PLC0415
+    from app.services.performance.dispatcher import PerformanceDispatcher  # noqa: PLC0415
+
+    return PerformanceDispatcher(
+        operation_dao=dao,
+        operation_service=operation_service,
+        pool_manager=get_performance_pool_manager(config=config),
+        supported_operation_types=frozenset(t.value for t in PerformanceOperationType),
+        queue_poll_interval_seconds=config.performance_queue_poll_interval_seconds,
+        heartbeat_sweep_interval_seconds=config.performance_worker_heartbeat_sweep_interval_seconds,
+        heartbeat_timeout_seconds=config.performance_worker_heartbeat_timeout_seconds,
+    )
+
+
+def build_performance_worker_router_from_settings(*, config=None):
+    """Build the authenticated worker-facing router, or ``None`` with no persistence.
+
+    Returns a mountable APIRouter (register/heartbeat/pull/report) with the
+    bearer-token auth dependency, or ``None`` when ``DATABASE_PROVIDER=NONE`` — the
+    Operations queue then has nothing to persist to (mirrors the ZAP gate).
+    """
+    if config is None:
+        from app.core.config import settings as config  # noqa: PLC0415
+    if config.database_provider == "NONE":
+        return None
+    from app.dao.operation_dao import get_operation_dao  # noqa: PLC0415
+    from app.routers.public.performance_worker_auth import build_worker_token_auth  # noqa: PLC0415
+    from app.routers.public.performance_worker_router import (  # noqa: PLC0415
+        build_performance_worker_router,
+    )
+
+    dao = get_operation_dao()
+    operation_service = build_performance_operation_service(dao)
+    coordinator = build_performance_coordinator(operation_service, config=config)
+    return build_performance_worker_router(
+        coordinator,
+        auth_dependency=build_worker_token_auth(config.performance_worker_token),
+    )
