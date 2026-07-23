@@ -513,6 +513,7 @@ def build_operation_notification_flow_from_settings(
 # shared here so the router and dispatcher operate on one pool graph (Gate A).
 
 _performance_pool_manager = None  # process-wide singleton (built once)
+_performance_plan_service = None  # process-wide singleton (built once)
 
 
 def get_performance_pool_manager(*, config=None):
@@ -623,3 +624,28 @@ def build_performance_worker_router_from_settings(*, config=None):
         coordinator,
         auth_dependency=build_worker_token_auth(config.performance_worker_token),
     )
+
+
+def build_performance_plan_service():
+    """Return the process-wide Performance plan-generation service (built once).
+
+    The one place the plan validator and the concrete plan store are constructed
+    (Gates C/E): a JMX whitelist validator plus a filesystem plan store under the
+    SAME base the coordinator uses (``data/jmeter/plans``), so a plan stored by
+    the ``generate_performance_plan`` tool is retrievable by the worker read path
+    (``PlanStore.get``) under one key space. Reads no Settings — the tool neither
+    enqueues nor executes, so no persistence gate applies.
+    """
+    global _performance_plan_service
+    if _performance_plan_service is None:
+        from pathlib import Path  # noqa: PLC0415
+
+        from app.integrations.jmeter.plan_validator import JmxPlanValidator  # noqa: PLC0415
+        from app.services.performance.plan_tool import PerformancePlanService  # noqa: PLC0415
+        from app.services.performance.stores import FilesystemPlanStore  # noqa: PLC0415
+
+        _performance_plan_service = PerformancePlanService(
+            validator=JmxPlanValidator(),
+            plan_store=FilesystemPlanStore(Path("data/jmeter/plans")),
+        )
+    return _performance_plan_service
