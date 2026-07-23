@@ -4,7 +4,7 @@ The integration-level proof of INV13 over the complete Phase-3 path:
 
     MCP tool → OperationService → DAO → Dispatcher → Assignment → Worker → Report → Persistence
 
-The operation type the ``execute_performance_test`` tool stamps must be
+The operation type the public ``run_jmeter_test`` tool stamps must be
 byte-identical at every hop where it appears, through to the persisted report —
 read at each stage (the dispatcher's scoped assignment, the worker's pull), never
 rewritten. Real subsystem objects are used throughout (registry, pool, scheduler,
@@ -34,7 +34,7 @@ from app.services.performance.engine.dto import (
     ExecutionResult,
     ExecutionStatus,
 )
-from app.services.performance.execute_tool import PerformanceExecuteService
+from app.services.jmeter.run_service import JMeterTestService
 from app.services.performance.persistence import ReportChannelPersistence
 from app.services.performance.runtime import PerformanceRuntime, WorkspaceManager
 from app.services.performance.stores import FilesystemPlanStore, FilesystemReportStore
@@ -142,13 +142,15 @@ class GateBFullChainTests(unittest.TestCase):
             records = _Records()
             ops = _OperationService(records)
 
-            # ── 1) A generated (stored) plan. ────────────────────────────────
-            plan_id = "11111111-2222-3333-4444-555555555555"
-            plan_store.put(plan_id, _PLAN, timeout_seconds=30.0)
+            # ── 1) A tester's existing .jmx file on disk. ────────────────────
+            jmx_file = base / "checkout-load.jmx"
+            jmx_file.write_bytes(_PLAN)
 
-            # ── 2) MCP tool stamps the type and enqueues (operation_id==plan_id).
-            execute = PerformanceExecuteService(plan_store, ops)
-            op_id = execute.execute(plan_id)
+            # ── 2) Public MCP tool validates the file, stores the plan, and
+            #      enqueues — stamping the internal type. It stores the plan
+            #      under the generated operation id (the key the worker pulls by).
+            run = JMeterTestService(JmxPlanValidator(), plan_store, ops)
+            op_id = run.run(str(jmx_file), timeout_seconds=30.0)
             stamped = records.by_id[op_id].metadata["operation_type"]
             self.assertEqual(stamped, _PERF_TYPE)
 
@@ -202,7 +204,6 @@ class GateBFullChainTests(unittest.TestCase):
             self.assertEqual(saved["status"], "completed")
 
             # ── INV13: the engine identity was read at every hop, never rewritten.
-            self.assertEqual(op_id, plan_id)  # identity carried end to end
             self.assertEqual(records.by_id[op_id].metadata["operation_type"], stamped)
 
 

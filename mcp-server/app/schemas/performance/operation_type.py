@@ -8,7 +8,7 @@ its queue read to a known set and an unknown/typo'd type fails fast at
 ``PerformanceOperationType(value)`` rather than routing nowhere.
 
 Single source of truth: the dispatcher derives its supported set from this enum,
-and the ``execute_performance_test`` tool stamps operations with it — the two
+and the public ``run_jmeter_test`` tool stamps operations with it — the two
 never drift (roadmap risk R-B).
 """
 
