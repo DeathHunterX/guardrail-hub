@@ -41,4 +41,5 @@ Append-only. A later decision that changes course adds a new record marking the 
 | [0006 — Service Package Design Standard](0006-service-package-design-standard.md) | Accepted | 2026-07-20 |
 | [0007 — Domain Layer Justification](0007-domain-layer-justification.md) | Accepted | 2026-07-20 |
 | [0008 — The Canonical Domain Language](0008-domain-ubiquitous-language.md) | Accepted | 2026-07-20 |
-| [0009 — Execution Capability](0009-execution-capability.md) | Proposed | 2026-07-20 |
+| [0009 — Execution Capability](0009-execution-capability.md) | Accepted | 2026-07-20 |
+| [0010 — Performance Engine Capability (Apache JMeter)](0010-performance-engine-capability.md) | Accepted | 2026-07-22 |

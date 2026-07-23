@@ -9,6 +9,7 @@ from fastapi import APIRouter
 
 # MCP routers
 from app.routers.mcp.owasp_zap_router import zap_router
+from app.routers.mcp.performance_router import performance_router
 
 # Public routers
 from app.routers.public.history_router import history_router
@@ -19,6 +20,7 @@ from app.routers.public.history_router import history_router
 
 tools_router = APIRouter(prefix="/tools")
 tools_router.include_router(zap_router, prefix="")
+tools_router.include_router(performance_router, prefix="")
 tools_router.include_router(history_router, prefix="")
 
 # ---------------------------------------------------------------------------
@@ -31,6 +33,10 @@ MCP_OPERATIONS: list[str] = [
     "zap_scan_api",
     "zap_scan_api_scenario",
     "zap_scan_api_suite",
+
+    # Performance
+    "generate_performance_plan",
+    "execute_performance_test",
 
     # History
     "get_result",

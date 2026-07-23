@@ -25,9 +25,15 @@ from app.domain.lifecycle import OperationPhase  # noqa: E402
 from app.services.tools.owasp_zap.execution.execution_strategy import (  # noqa: E402
     ExecutionStrategy,
 )
+from app.services.tools.owasp_zap.execution.execution_context import (  # noqa: E402
+    ExecutionContext,
+)
 from app.services.tools.owasp_zap.execution.handler import ZapOperation  # noqa: E402
 from app.services.tools.owasp_zap.execution.operation_type import (  # noqa: E402
     ZapOperationType,
+)
+from app.services.tools.owasp_zap.execution.zap_worker_context import (  # noqa: E402
+    ZapWorkerContext,
 )
 from app.services.tools.owasp_zap.execution.registry import (  # noqa: E402
     ZapOperationRegistry,
@@ -45,8 +51,8 @@ class _RecordingHandler:
     def __init__(self):
         self.calls = []
 
-    def execute(self, operation_id, request, worker):
-        self.calls.append((operation_id, request, worker))
+    def execute(self, operation_id, request, context):
+        self.calls.append((operation_id, request, context))
 
 
 class _FakeWorker:
@@ -147,8 +153,11 @@ class DispatcherGenericRoutingTests(unittest.TestCase):
 
         self.assertEqual(pool.assign_calls, ["op-1"])
         self.assertEqual(len(handler.calls), 1)
-        _, request, passed_worker = handler.calls[0]
-        self.assertIs(passed_worker, worker)
+        _, request, context = handler.calls[0]
+        # Worker-bound: the handler receives a ZapWorkerContext carrying the
+        # assigned worker (replacing the former bare worker argument).
+        self.assertIsInstance(context, ZapWorkerContext)
+        self.assertIs(context.worker, worker)
         self.assertEqual(request.value, "y")
 
     def test_orchestration_operation_runs_without_claiming_a_worker(self):
@@ -173,11 +182,14 @@ class DispatcherGenericRoutingTests(unittest.TestCase):
 
         # The worker pool was never consulted for an orchestration operation.
         self.assertEqual(pool.assign_calls, [])
-        # It ran on the orchestration executor, with worker=None, marked RUNNING.
+        # It ran on the orchestration executor with the empty ExecutionContext
+        # (no worker), marked RUNNING.
         self.assertEqual(executor.submitted, 1)
         self.assertEqual(op_service.started, ["op-1"])
         self.assertEqual(len(handler.calls), 1)
-        self.assertIsNone(handler.calls[0][2])
+        context = handler.calls[0][2]
+        self.assertIsInstance(context, ExecutionContext)
+        self.assertNotIsInstance(context, ZapWorkerContext)
 
     def test_unresolvable_type_fails_without_claiming_a_worker(self):
         registry = ZapOperationRegistry()  # nothing registered
@@ -194,6 +206,47 @@ class DispatcherGenericRoutingTests(unittest.TestCase):
 
         self.assertEqual(pool.assign_calls, [])
         self.assertEqual(len(op_service.failed), 1)
+
+    def test_foreign_operation_type_is_ignored_not_failed(self):
+        # ADR-0010 §4.12: an operation whose type is outside the ZAP supported
+        # set belongs to another engine — it is left QUEUED, never failed.
+        handler = _RecordingHandler()
+        registry = ZapOperationRegistry()
+        registry.register(
+            _operation(ZapOperationType.API_SCAN, ExecutionStrategy.SEQUENTIAL, handler)
+        )
+        pool = _FakePoolManager(worker=_FakeWorker())
+        op_service = _FakeOperationService()
+
+        dispatcher = _dispatcher(registry, pool, op_service, _InlineExecutor())
+        dispatcher._dispatch_one(
+            _record(
+                ZapOperationType.API_SCAN,
+                {"operation_type": "performance_test", "request": {"value": "z"}},
+            )
+        )
+
+        self.assertEqual(pool.assign_calls, [])  # not assigned
+        self.assertEqual(op_service.failed, [])  # and NOT failed (byte-for-byte: was fail; now ignore)
+        self.assertEqual(len(handler.calls), 0)
+
+    def test_legacy_operation_without_type_is_still_dispatched(self):
+        # A missing operation_type is a legacy ZAP row (registry defaults to
+        # API_SCAN); the §4.12 filter must not drop it.
+        handler = _RecordingHandler()
+        registry = ZapOperationRegistry()
+        registry.register(
+            _operation(ZapOperationType.API_SCAN, ExecutionStrategy.SEQUENTIAL, handler)
+        )
+        pool = _FakePoolManager(worker=_FakeWorker())
+
+        dispatcher = _dispatcher(registry, pool, _FakeOperationService(), _InlineExecutor())
+        dispatcher._dispatch_one(
+            _record(ZapOperationType.API_SCAN, {"request": {"value": "y"}})  # no operation_type
+        )
+
+        self.assertEqual(pool.assign_calls, ["op-1"])
+        self.assertEqual(len(handler.calls), 1)
 
 
 if __name__ == "__main__":
