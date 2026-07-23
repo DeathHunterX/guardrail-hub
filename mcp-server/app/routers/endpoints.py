@@ -36,6 +36,7 @@ MCP_OPERATIONS: list[str] = [
 
     # Performance
     "generate_performance_plan",
+    "execute_performance_test",
 
     # History
     "get_result",

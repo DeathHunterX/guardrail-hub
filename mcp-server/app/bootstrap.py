@@ -514,6 +514,7 @@ def build_operation_notification_flow_from_settings(
 
 _performance_pool_manager = None  # process-wide singleton (built once)
 _performance_plan_service = None  # process-wide singleton (built once)
+_performance_execute_service = None  # process-wide singleton (built once)
 
 
 def get_performance_pool_manager(*, config=None):
@@ -649,3 +650,27 @@ def build_performance_plan_service():
             plan_store=FilesystemPlanStore(Path("data/jmeter/plans")),
         )
     return _performance_plan_service
+
+
+def build_performance_execute_service():
+    """Return the process-wide ``execute_performance_test`` service (built once).
+
+    Injects the read side of the plan store (same ``data/jmeter/plans`` base the
+    coordinator and the generate tool use, so a stored plan resolves by
+    operation_id at pull time) and a persist-only ``OperationService`` over the
+    shared Operations DAO — the queue the running dispatcher polls. This is the
+    only construction site (Gates C/E); the tool enqueues, it never executes.
+    """
+    global _performance_execute_service
+    if _performance_execute_service is None:
+        from pathlib import Path  # noqa: PLC0415
+
+        from app.dao.operation_dao import get_operation_dao  # noqa: PLC0415
+        from app.services.performance.execute_tool import PerformanceExecuteService  # noqa: PLC0415
+        from app.services.performance.stores import FilesystemPlanStore  # noqa: PLC0415
+
+        _performance_execute_service = PerformanceExecuteService(
+            plan_store=FilesystemPlanStore(Path("data/jmeter/plans")),
+            operation_service=build_performance_operation_service(get_operation_dao()),
+        )
+    return _performance_execute_service

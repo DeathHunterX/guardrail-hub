@@ -13,7 +13,10 @@ anything, invoke the dispatcher, or involve any LLM / analysis.
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.integrations.jmeter.jmx_validator import JmxValidationError
+from app.schemas.performance.execute_tool import ExecutePerformanceTestRequest
 from app.schemas.performance.plan_tool import GeneratePerformancePlanRequest
+from app.services.performance.execute_tool import PlanAlreadyExecutedError
+from app.services.performance.worker_api import PlanNotFoundError
 
 performance_router = APIRouter(prefix="/performance", tags=["Performance"])
 
@@ -23,6 +26,13 @@ def get_performance_plan_service():
     from app.bootstrap import build_performance_plan_service  # noqa: PLC0415
 
     return build_performance_plan_service()
+
+
+def get_performance_execute_service():
+    """Provide the composition-root execute service (overridable in tests)."""
+    from app.bootstrap import build_performance_execute_service  # noqa: PLC0415
+
+    return build_performance_execute_service()
 
 
 @performance_router.post(
@@ -62,4 +72,47 @@ def generate_performance_plan(
         raise HTTPException(
             status_code=500,
             detail=f"Error generating performance plan: \n{str(e)}",
+        ) from e
+
+
+@performance_router.post(
+    "/execute_test",
+    operation_id="execute_performance_test",
+    summary="Enqueue a JMeter performance test for a stored plan",
+)
+def execute_performance_test(
+    request: ExecutePerformanceTestRequest,
+    service=Depends(get_performance_execute_service),
+):
+    """Enqueue an execution of a previously generated plan and return its operation id.
+
+    Pass the `plan_id` returned by `generate_performance_plan`. The stored,
+    already-validated plan is enqueued as a QUEUED Performance operation; the
+    background dispatcher assigns it to a worker, which pulls and runs it. This
+    tool does not execute anything itself — poll the returned `operation_id` for
+    status and the report. A plan can be executed once (its reference becomes the
+    operation id); an unknown plan is a 404 and an already-executed plan a 409.
+    """
+    try:
+        operation_id = service.execute(request.plan_id)
+        return {
+            "result": {
+                "operation_id": operation_id,
+                "status": "queued",
+                "message": (
+                    f"Performance test queued with operation_id: {operation_id}. "
+                    "It will start as soon as a worker is available."
+                ),
+            }
+        }
+    except PlanNotFoundError as e:
+        raise HTTPException(
+            status_code=404, detail=f"No stored plan for plan_id: {request.plan_id}"
+        ) from e
+    except PlanAlreadyExecutedError as e:
+        raise HTTPException(status_code=409, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error queuing performance test: \n{str(e)}",
         ) from e
