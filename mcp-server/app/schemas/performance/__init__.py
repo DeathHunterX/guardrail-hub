@@ -1,5 +1,6 @@
 """Engine-neutral performance schemas (worker protocol, health, report, …)."""
 
+from app.schemas.performance.operation_type import PerformanceOperationType
 from app.schemas.performance.report import ArtifactPayload, OperationReport
 from app.schemas.performance.worker import (
     PerformanceWorkerHeartbeatRequest,
@@ -15,6 +16,7 @@ from app.schemas.performance.worker import (
 __all__ = [
     "ArtifactPayload",
     "OperationReport",
+    "PerformanceOperationType",
     "PerformanceWorkerHeartbeatRequest",
     "PerformanceWorkerHeartbeatResponse",
     "PerformanceWorkerInfo",

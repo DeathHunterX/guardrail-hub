@@ -21,6 +21,7 @@ from app.core.config._database import DatabaseMixin
 from app.core.config._security import SecurityMixin
 from app.core.config._server import ServerMixin
 from app.core.config._slack import SlackMixin
+from app.core.config.tools._performance import PerformanceMixin
 from app.core.config.tools._zap import ZapMixin
 
 
@@ -31,6 +32,7 @@ class Settings(
     SecurityMixin,
     ServerMixin,
     ZapMixin,
+    PerformanceMixin,
     SlackMixin,
     BaseSettings,  # BaseSettings must be last in MRO
 ):
