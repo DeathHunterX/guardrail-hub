@@ -5,7 +5,6 @@ Owner: Loi Phan
 Date: 2026-07-22
 Relates to: [Decision 0009](0009-execution-capability.md) (this ADR is the reopening its §6 revisit-trigger named), [Decision 0007](0007-domain-layer-justification.md) (the "earn your existence" evidentiary standard), [Decision 0008](0008-domain-ubiquitous-language.md) §2.3 (rejected *Execution* as domain vocabulary), [backend-layering](../standards/architecture/backend-layering.md), [service-package-design](../standards/architecture/service-package-design.md), [domain-layer](../standards/architecture/domain-layer.md). Supersedes nothing. The JMeter Docker infrastructure landed 2026-07-22 as scaffolding; this ADR governs the runtime it will host.
 Revision: **R1 (2026-07-22)** — resolves the ten decision gaps raised by the Architecture Readiness Evaluation ("READY WITH MAJOR CHANGES"). The revision **adds** contract-level detail (new §4.2–§4.11) and two closing sections (§11 Architecture Delta, §12 Implementation Readiness Assessment); it **changes no accepted decision** from the original draft. Every §1–§3, §5–§10 conclusion stands. See §11 for the precise delta.
-Revision: **R3 (2026-07-23) — PROPOSED, awaiting backend-owner ratification.** Promotes P2AR finding AD-1 from architectural debt to an invariant: **INV14 — eventual terminal state** for an assigned operation, enforced by a report-or-relinquish worker contract (§4.13). Documentation only; the worker-loop change that satisfies INV14 is a separate, scheduled implementation and is **not** implemented by this amendment or by Phase 3 wiring.
 Revision: **R2 (2026-07-23)** — resolves a shared-queue coexistence conflict found while implementing the Performance dispatcher (Phase 2): the existing ZAP dispatcher marks any queued operation whose type it does not recognise as FAILED, so it would fail Performance operations sharing the queue. Adds **§4.12** (per-engine scoped queue reads) and reconciles D1 (shared queue — stands) with D4 (ZAP receives one bounded, behaviour-preserving scoping change — it no longer fails foreign operations). Recorded in the amendment log (§13). No other decision changes. *Refined 2026-07-23 (clarification only): §4.12 uses "supported operation type set" / dispatcher-scope wording instead of "owner" (queue scoping is an orchestration concern, not an engine concern); adds **INV13** (operation engine ownership is immutable). No redesign, no new abstraction, no scope change.*
 
 ---
@@ -257,7 +256,6 @@ These hold for every Performance operation and are the acceptance backbone for i
 - **INV11** A worker below `min_compatible_version` is **never assigned** an operation.
 - **INV12** *(R2)* Every dispatcher declares a **supported operation type set** and retrieves/processes only operations within it. An operation is dispatched by **exactly one** dispatcher — the one whose supported set includes its type. A dispatcher MUST ignore (leave QUEUED), never fail, operations outside its supported set.
 - **INV13** *(R2)* **Operation engine ownership is immutable.** The engine assigned to an operation is fixed at creation and MUST NOT change during the operation's lifecycle — retry, resume, recovery, cancellation, reporting, and terminal transitions all preserve the original engine identity. No dispatcher may migrate an operation to another engine. (This protects future replay/recovery logic and keeps dispatching deterministic.)
-- **INV14** *(R3 — proposed, awaiting ratification)* **Eventual terminal state.** Once assigned to a worker, an operation reaches a terminal phase (COMPLETED / FAILED / CANCELLED) in bounded time; it never remains RUNNING indefinitely. A worker that cannot complete an operation MUST either **report** a terminal outcome (while the report channel is reachable) or **relinquish** it by ceasing heartbeats, so the heartbeat-timeout sweep reclaims and fails it. A worker MUST NOT locally abandon an operation while remaining server-side "busy". (See §4.13.)
 
 ### 4.12 Shared-Queue Coexistence — Per-Engine Scoped Reads (R2 amendment)
 
@@ -273,17 +271,6 @@ These hold for every Performance operation and are the acceptance backbone for i
 **What D4 concedes.** "ZAP is untouched" becomes "ZAP's dispatcher receives one scoping change (Q2/Q3)." This is unavoidable the moment a second engine shares the queue, and is strictly smaller than any alternative (a parallel queue would contradict D1; leaving the ZAP dispatcher as-is would corrupt Performance operations). The change touches only the dispatcher's queue read and unknown-type branch — no ZAP scan behaviour, no ZAP schema.
 
 This §4.12 is a **prerequisite for the Performance dispatcher** (the last Phase 2 component): that component is not implemented until this amendment is ratified.
-
-### 4.13 Eventual Terminal State — Report-or-Relinquish (R3 amendment — proposed, awaiting ratification)
-
-**Why (P2AR finding AD-1).** `PerformanceRuntime.execute` *raises* in two cases that occur **before or instead of** a terminal report reaches the server: a worker-side plan rejection, and a report-**delivery** failure (`ReportSendError`). On a raise the worker frees itself *locally* but sends **no report**, so the operation stays `RUNNING` and the worker stays server-side "busy" (its `op_id` remains bound). The only server-side recovery is the heartbeat-timeout sweep — which does **not** fire for a still-heart-beating worker. Engine failures/timeouts/cancellations are unaffected (they return a result and *are* reported).
-
-**Decision — the pull model guarantees eventual terminal state (INV14).** Every assigned operation must end in a terminal phase in bounded time, enforced by a two-part, engine-neutral contract:
-
-- **Report when you can.** On a worker-side runtime failure with the report channel reachable, the worker reports a **FAILED** outcome for the operation; the server transitions it and releases the worker (the normal terminal path).
-- **Relinquish when you cannot.** If the worker cannot reach the server at all, it MUST stop heart-beating (self-quarantine / deregister) so the **heartbeat-timeout sweep** — the server-side backstop — marks the worker Offline and fails the operation (at-most-once, no auto-retry, consistent with §4.6).
-
-**Scope.** The invariant and this report-or-relinquish contract are architectural and engine-neutral (any engine's worker inherits them). The *fine mechanics* — retry counts, the precise quarantine/deregister procedure — are implementation guidance, not fixed here. This closes the gap between §4.6's "if persistence fails, the operation is FAILED" and the mechanism that makes it true. **Implementation of INV14 is a separate, scheduled change (a worker-loop addition), not part of Phase 3 composition wiring.**
 
 ---
 
@@ -389,8 +376,6 @@ No accepted decision changed; this revision only removed ambiguity. Contingent o
 ---
 
 ## 13. Amendment Log
-
-**R3 (2026-07-23) — eventual terminal state (PROPOSED, awaiting ratification).** The Phase 2 Architecture Review (P2AR) found AD-1: a worker-side runtime failure that *raises* (plan rejected at the worker, or report-delivery failure) sends no report, leaving the operation stuck RUNNING and the worker server-side "busy" with no recovery for a live worker. Re-evaluated as architectural (a cross-engine liveness property of the pull model, not JMeter-specific): promoted to **INV14 — eventual terminal state**, enforced by the report-or-relinquish contract in **§4.13**. Documentation only; the worker-loop implementation that satisfies INV14 is a separate scheduled change, explicitly **not** folded into Phase 3 composition wiring.
 
 **R2 (2026-07-23) — shared-queue coexistence.** Surfaced during Phase 2 while implementing the Performance dispatcher: the shared Operations queue (D1) cannot be polled by both the ZAP and Performance dispatchers as-is, because the ZAP dispatcher fails any operation type it does not recognise (verified in `OwaspZapDispatcher._dispatch_one` + `get_queued_operations`). Resolved by **§4.12** (per-engine scoped queue reads + ignore-not-fail for out-of-set operations + INV12/INV13). Reconciles D1 (stands — one shared queue) with D4 (amended: ZAP's dispatcher gets one bounded, behaviour-preserving scoping change). Chosen over a separate Performance queue (which would have reversed D1) and over leaving ZAP as-is (which would corrupt Performance operations). Implementation of the Performance dispatcher is gated on ratification of this amendment; the ZAP dispatcher change is gated like Phase 0 (full ZAP suite + `aios check`, behaviour-preserving).
 
