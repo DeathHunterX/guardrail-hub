@@ -34,10 +34,6 @@ MCP_OPERATIONS: list[str] = [
     "zap_scan_api_scenario",
     "zap_scan_api_suite",
 
-    # Performance
-    "generate_performance_plan",
-    "execute_performance_test",
-    
     # History
     "get_result",
     "list_ids_by_type",
