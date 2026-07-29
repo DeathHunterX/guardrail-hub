@@ -292,19 +292,12 @@ class DynamoDBOperationDAO(DynamoDBDAO, BaseOperationDAO):
             )
             raise
 
-    def get_queued_operations(self) -> list[OperationRecord]:
-        """
-        Return every ``QUEUED`` operation, oldest first — the Pool Manager's queue.
-
-        DynamoDB scans have no native ordering, so results are sorted by
-        ``created_at`` in Python after the (filtered) scan completes.
-
-        Returns:
-            A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
-            oldest first.
-        """
-        records = self.get_by_status(OperationPhase.QUEUED)
-        return sorted(records, key=lambda r: r.created_at)
+    # get_queued_operations() is inherited from BaseOperationDAO: a status-filtered
+    # scan, then lane filtering and created_at ordering in Python. DynamoDB scans
+    # have no native ordering, so the base implementation is exactly what this
+    # backend would have written. Pushing batch_type into the scan's
+    # FilterExpression would cut items transferred, not capacity consumed — do it
+    # if queue depth ever makes that visible.
 
     def initialize_schema(self) -> None:
         """

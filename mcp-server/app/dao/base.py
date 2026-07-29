@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Optional
+from typing import Any, Collection, Optional
 
 from app.dao.operation_record import OperationRecord
 
@@ -124,25 +124,41 @@ class BaseOperationDAO(ABC):
 
     # ── Queue (the Operations table *is* the queue — no in-memory queue) ──────
 
-    def get_queued_operations(self) -> list[OperationRecord]:
+    def get_queued_operations(
+        self, batch_types: Collection[str]
+    ) -> list[OperationRecord]:
         """
-        Return every ``QUEUED`` operation, oldest first (FIFO by ``created_at``).
+        Return the ``QUEUED`` operations in *batch_types*, oldest first (FIFO).
 
-        This is what the Pool Manager polls instead of maintaining an
-        in-memory waiting queue — queued operations, and therefore pending
-        requests, survive a server restart because they live here.
+        This is what a dispatcher polls instead of maintaining an in-memory
+        waiting queue — queued operations, and therefore pending requests,
+        survive a server restart because they live here.
+
+        ``batch_types`` is the caller's **queue lane**: the set of batch types
+        that dispatcher owns (e.g. ``BatchType.ALL_SCAN_TYPES`` for ZAP,
+        ``BatchType.ALL_JMETER_TYPES`` for JMeter). It is required and has no
+        "everything" default on purpose — an unfiltered read makes one engine's
+        dispatcher consume, and fail, another engine's rows (ADR-0011).
 
         The default implementation is a correct but not necessarily
         efficient fallback built on :meth:`get_by_status`; backends should
         override it with a native ordered query (e.g. ``ORDER BY created_at
         ASC`` in PostgreSQL) when that's cheaper than sorting in Python.
 
+        Args:
+            batch_types: The batch types this caller consumes.
+
         Raises:
             Exception: Any driver-level error from the underlying backend.
         """
         from app.domain.lifecycle import OperationPhase  # noqa: PLC0415
 
-        records = self.get_by_status(OperationPhase.QUEUED)
+        lane = frozenset(batch_types)
+        records = [
+            record
+            for record in self.get_by_status(OperationPhase.QUEUED)
+            if record.batch_type in lane
+        ]
         return sorted(records, key=lambda r: r.created_at)
 
     # ── Startup schema readiness ────────────────────────────────────────────
