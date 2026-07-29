@@ -15,8 +15,9 @@ This is the authoritative endpoint list — do not assume an endpoint exists bec
 
 | Group | Prefix | Router file | MCP-exposed? |
 |---|---|---|---|
-| Public | — / `/health*` / `/tools/history/*` / `/workers*` | `app/routers/public/` | No |
+| Public | — / `/health*` / `/tools/history/*` / `/workers*` / `/jmeter-workers*` | `app/routers/public/` | No |
 | MCP Tools | `/tools/zap/*` | `app/routers/mcp/owasp_zap_router.py` | Yes (partially — one operation) |
+| MCP Tools | `/tools/jmeter/*` | `app/routers/mcp/jmeter_router.py` | Yes (both operations) |
 | Internal | `/internal/*` (planned) | `app/routers/internal/token_router.py` | No — file is empty, not wired up |
 
 ### Endpoints
@@ -28,6 +29,8 @@ This is the authoritative endpoint list — do not assume an endpoint exists bec
 | `GET /health/live` | `public/health_router.py` | Liveness probe (used by Docker Compose healthcheck) | — | None |
 | `GET /health/ready` | `public/health_router.py` | Readiness probe | — | None |
 | `POST /tools/zap/scan_api` | `mcp/owasp_zap_router.py` | Queue a ZAP API scan (`status=QUEUED`; does not wait for a worker) | `zap_scan_api` | None enforced |
+| `POST /tools/jmeter/run_test` | `mcp/jmeter_router.py` | Queue a JMeter load test (`status=QUEUED`; does not wait for a worker). Runs to completion and persists artifacts; `summary`/`metrics` arrive in Phase 4 | `run_jmeter` | None enforced |
+| `POST /tools/jmeter/analyze_result` | `mcp/jmeter_router.py` | Interpret a completed JMeter result. **Not implemented yet** (Phase 3) | `analyze_jmeter_result` | None enforced |
 | `GET /tools/history/get-result` | `public/history_router.py` | Fetch a specific scan result | `get_result` | None enforced |
 | `GET /tools/history/ids/{batch_type}` | `public/history_router.py` | List operation IDs by batch type | `list_ids_by_type` | None enforced |
 | `GET /tools/history/list` | `public/history_router.py` | List operations | `list_operations` | None enforced |
@@ -38,7 +41,13 @@ This is the authoritative endpoint list — do not assume an endpoint exists bec
 | `DELETE /workers/{worker_id}` | `public/zap_worker_router.py` | Hard-remove a worker (manual/scale-down cleanup); fails its in-flight operation, if any | — (not MCP-exposed) | None enforced |
 | `/mcp` (mount) | `main.py` (`FastApiMCP`) | MCP protocol entry point | exposes `MCP_OPERATIONS` whitelist | None enforced |
 
-`/workers/*` is deliberately excluded from `MCP_OPERATIONS` (`app/routers/endpoints.py`) — it's infrastructure plumbing called by ZAP worker containers, not a tool an LLM client should invoke.
+| `POST /jmeter-workers/register` | `public/jmeter_worker_router.py` | JMeter worker self-registration | — (not MCP-exposed) | None enforced |
+| `POST /jmeter-workers/heartbeat` | `public/jmeter_worker_router.py` | JMeter worker heartbeat; 404 if unknown (worker should re-register) | — (not MCP-exposed) | None enforced |
+| `GET /jmeter-workers` | `public/jmeter_worker_router.py` | List every registered JMeter worker (observability) | — (not MCP-exposed) | None enforced |
+| `POST /jmeter-workers/{worker_id}/drain` | `public/jmeter_worker_router.py` | Begin graceful maintenance (Active → Draining) | — (not MCP-exposed) | None enforced |
+| `DELETE /jmeter-workers/{worker_id}` | `public/jmeter_worker_router.py` | Hard-remove a JMeter worker; fails its in-flight operation, if any | — (not MCP-exposed) | None enforced |
+
+`/workers/*` and `/jmeter-workers/*` are deliberately excluded from `MCP_OPERATIONS` (`app/routers/endpoints.py`) — infrastructure plumbing called by worker containers, not tools an LLM client should invoke. The two pools have separate path prefixes so a worker cannot cross-register into the wrong engine's registry even by misconfiguration.
 
 Schemas exist for website scan and interactive scan (`app/schemas/tools/owasp_zap/website_scan.py`, `interactive_website_scan.py`) but **no router currently exposes them** — only the API-batch-scan path (`zap_scan_api`) is wired into `endpoints.py`.
 

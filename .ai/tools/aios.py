@@ -538,17 +538,76 @@ def check_domain_boundaries(repo_root):
     return violations
 
 
+# ---------------------------------------------------------------------------
+# Runtime boundary enforcement (standards/architecture/runtime-boundary RB3/RB6)
+# ---------------------------------------------------------------------------
+
+# Where independently deployed processes live, relative to the repository root.
+RUNTIME_ROOTS = ['mcp-server/app/runtime']
+
+# RB3 — a runtime process may not reach the MCP server's persistence,
+# orchestration or HTTP surface. Everything else under app/ stays available:
+# a runtime legitimately composes integrations/, schemas/, core/ and constants/.
+FORBIDDEN_RUNTIME_MODULES = {
+    'app.dao': 'persistence (a runtime never reads or writes the operations store)',
+    'app.services': 'application services (orchestration belongs to the server)',
+    'app.routers': "the MCP server's HTTP surface",
+    'app.bootstrap': 'the server composition root',
+}
+
+
+def check_runtime_boundaries(repo_root):
+    """Return a list of (file, rule, message) violations of RB3/RB6.
+
+    Mechanical enforcement of the runtime isolation rules. The equivalent of
+    the Domain scan below, for the opposite reason: Domain may depend on
+    nothing, while a runtime may depend on plenty — just never on the parts of
+    the server that own decisions ([Decision 0012](../decisions/0012-runtime-boundary.md)).
+
+    This checks the *source tree*. A runtime's Dockerfile is expected to copy
+    only what its entry point imports (RB5), and the runtime's own test asserts
+    the transitive closure; this catches the direct import at review time.
+    """
+    violations = []
+    for runtime_rel in RUNTIME_ROOTS:
+        runtime_dir = repo_root / runtime_rel
+        if not runtime_dir.is_dir():
+            continue
+        for py in sorted(runtime_dir.rglob('*.py')):
+            if '__pycache__' in py.parts:
+                continue
+            rel = py.relative_to(repo_root).as_posix()
+
+            # RB6 — the word "runtime" already means two other things here.
+            if py.name == 'runtime.py':
+                violations.append((rel, 'RB6', "must not be named 'runtime.py' inside app/runtime/"))
+
+            text = py.read_text(encoding='utf-8')
+            for m in _APP_IMPORT.finditer(text):
+                module = m.group(1)
+                for forbidden, why in FORBIDDEN_RUNTIME_MODULES.items():
+                    if module == forbidden or module.startswith(forbidden + '.'):
+                        violations.append((rel, 'RB3', "imports '%s' — %s" % (module, why)))
+    return violations
+
+
 def cmd_arch(root, verbose=True):
-    """Enforce the Domain layer's purity and dependency rules (D2/D3)."""
+    """Enforce Domain purity (D2/D3) and runtime isolation (RB3/RB6)."""
     repo_root = root.parent
-    violations = check_domain_boundaries(repo_root)
-    scanned = sum(
-        len([p for p in (repo_root / d).rglob('*.py') if '__pycache__' not in p.parts])
-        for d in DOMAIN_ROOTS if (repo_root / d).is_dir()
-    )
+    domain_violations = check_domain_boundaries(repo_root)
+    runtime_violations = check_runtime_boundaries(repo_root)
+    violations = domain_violations + runtime_violations
+
+    def _count(roots):
+        return sum(
+            len([p for p in (repo_root / d).rglob('*.py') if '__pycache__' not in p.parts])
+            for d in roots if (repo_root / d).is_dir()
+        )
+
     for rel, rule, msg in violations:
         print("  %s VIOLATION %s: %s" % (rule, rel, msg))
-    print("arch: %d domain file(s) scanned, %d boundary violation(s)" % (scanned, len(violations)))
+    print("arch: %d domain file(s) + %d runtime file(s) scanned, %d boundary violation(s)"
+          % (_count(DOMAIN_ROOTS), _count(RUNTIME_ROOTS), len(violations)))
     return 1 if violations else 0
 
 
