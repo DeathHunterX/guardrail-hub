@@ -38,16 +38,19 @@ class StartupError(RuntimeError):
 class StartupResult:
     """Handles the app lifespan needs after startup.
 
-    ``dispatcher`` is the running queue dispatcher (stopped on shutdown);
-    ``notifier`` (optional) owns the elapsed-time refresh ticker; and
-    ``operation_service``/``dao`` let the shutdown path fail any operation still
-    RUNNING at teardown. All are process-scoped singletons assembled once here.
+    ``dispatcher`` is the running ZAP queue dispatcher and ``jmeter_dispatcher``
+    the JMeter one — one per engine, since each owns its own queue lane and
+    worker pool; both are stopped on shutdown. ``notifier`` (optional) owns the
+    elapsed-time refresh ticker; and ``operation_service``/``dao`` let the
+    shutdown path fail any operation still RUNNING at teardown. All are
+    process-scoped singletons assembled once here.
     """
 
     dispatcher: object
     operation_service: object
     dao: object
     notifier: object = None
+    jmeter_dispatcher: object = None
 
 
 def recover_interrupted_operations(
@@ -56,7 +59,7 @@ def recover_interrupted_operations(
     reason: str,
     logger=None,
     *,
-    registry=None,
+    registries=(),
 ) -> int:
     """Force every still-RUNNING operation to FAILED with *reason*.
 
@@ -67,6 +70,11 @@ def recover_interrupted_operations(
     lifecycle event fires and the user is notified — and best-effort releases any
     worker still bound to it (returning that worker to IDLE). Never raises: a
     recovery failure must not block startup or shutdown.
+
+    Args:
+        registries: Every engine's worker registry (ZAP's, JMeter's). Recovery
+            spans all tools because the RUNNING rows do, so each registry gets
+            the same best-effort release pass. Empty means "release nothing".
 
     Returns the number of operations recovered.
     """
@@ -94,13 +102,14 @@ def recover_interrupted_operations(
     # Clear any worker ownership so a bound worker returns to IDLE. Normally a
     # no-op at startup (the in-memory registry is rebuilt empty on restart);
     # meaningful at graceful shutdown, where workers may still hold an op_id.
-    if registry is not None and recovered_ids:
-        try:
-            for worker in registry.list_all():
-                if worker.op_id in recovered_ids:
-                    registry.release(worker.worker_id, worker.op_id)
-        except Exception as exc:  # pylint: disable=broad-except
-            logger.error("Recovery: could not release worker ownership: %s", exc)
+    if recovered_ids:
+        for registry in registries:
+            try:
+                for worker in registry.list_all():
+                    if worker.op_id in recovered_ids:
+                        registry.release(worker.worker_id, worker.op_id)
+            except Exception as exc:  # pylint: disable=broad-except
+                logger.error("Recovery: could not release worker ownership: %s", exc)
 
     if recovered_ids:
         logger.warning(
@@ -153,6 +162,7 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
     #    onto that single bus. No scan component knows any transport, and there
     #    is no second subscription.
     from app.bootstrap import (  # noqa: PLC0415
+        build_jmeter_dispatcher,
         build_operation_notification_flow_from_settings,
         build_zap_dispatcher,
     )
@@ -163,6 +173,7 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
     # RUNNING by a previous crash/restart can never resume (their in-memory
     # execution is gone), so fail them now: FAILED + lifecycle event + user
     # notification, and release any worker still bound to them.
+    from app.integrations.jmeter.runtime import registry as jmeter_registry  # noqa: PLC0415
     from app.integrations.owasp_zap.runtime import registry  # noqa: PLC0415
 
     recover_interrupted_operations(
@@ -170,13 +181,20 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
         dao,
         RESTART_FAILURE_REASON,
         logger,
-        registry=registry,
+        registries=(registry, jmeter_registry),
     )
 
     dispatcher = build_zap_dispatcher(
         dao=dao, operation_service=flow.operation_service, config=settings
     )
     dispatcher.start()
+
+    # One dispatcher per engine: each polls only its own queue lane, so they
+    # never see each other's operations (ADR-0011).
+    jmeter_dispatcher = build_jmeter_dispatcher(
+        dao=dao, operation_service=flow.operation_service, config=settings
+    )
+    jmeter_dispatcher.start()
 
     # Keep RUNNING notifications' elapsed clock advancing between progress
     # events (edits the existing message only). Started here, stopped by the
@@ -186,7 +204,7 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
 
     logger.info(
         "Startup sequence complete — database ready, notification pipeline wired "
-        "(%d channel(s)), ZAP queue dispatcher running",
+        "(%d channel(s)), ZAP and JMeter queue dispatchers running",
         len(flow.notification_service.channels),
     )
     return StartupResult(
@@ -194,4 +212,5 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
         operation_service=flow.operation_service,
         dao=dao,
         notifier=flow.notifier,
+        jmeter_dispatcher=jmeter_dispatcher,
     )

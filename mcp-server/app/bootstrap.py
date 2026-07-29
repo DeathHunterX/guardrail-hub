@@ -121,6 +121,7 @@ OPERATION_TITLES = {
     BatchType.INTERACTIVE_SCAN: "Interactive Website Scan",
     BatchType.BATCH_SCAN: "Scenario Security Scan",
     BatchType.SUITE_SCAN: "Application Security Scan",
+    BatchType.JMETER_TEST: "JMeter Load Test",
 }
 
 
@@ -374,6 +375,52 @@ def build_zap_dispatcher(*, dao: BaseOperationDAO, operation_service, config=Non
         queue_poll_interval_seconds=config.zap_queue_poll_interval_seconds,
         heartbeat_sweep_interval_seconds=config.zap_worker_heartbeat_sweep_interval_seconds,
         heartbeat_timeout_seconds=config.zap_worker_heartbeat_timeout_seconds,
+    )
+
+
+def build_jmeter_dispatcher(*, dao: BaseOperationDAO, operation_service, config=None):
+    """Assemble the JMeter queue dispatcher (background worker-pool dispatch).
+
+    Wires the process-wide JMeter pool singletons
+    (``app.integrations.jmeter.runtime``) to *dao* and a ``JMeterRuntime``. The
+    returned dispatcher is not started — ``app/core/startup.py`` owns
+    ``.start()``/``.stop()`` as part of the app lifespan, matching this module's
+    "assemble here, run there" split.
+
+    Separate from :func:`build_zap_dispatcher` on purpose: the two engines have
+    their own pools, their own queue lanes and their own intervals, and share
+    only the Operations table and the lifecycle service (ADR-0011).
+
+    Args:
+        dao: The persistence backend for operations — required, since a
+            dispatcher with nowhere to read the queue from cannot do anything.
+        operation_service: The shared lifecycle service, so this dispatcher's
+            FAILED transitions publish onto the same event bus the notifier
+            subscribes to.
+        config: Settings object; defaults to ``app.core.config.settings``.
+
+    Returns:
+        A ready, unstarted ``JMeterDispatcher``.
+    """
+    if config is None:
+        from app.core.config import settings as config  # noqa: PLC0415
+
+    from app.integrations.jmeter.runtime import pool_manager  # noqa: PLC0415
+    from app.services.tools.jmeter.execution.dispatcher import (  # noqa: PLC0415
+        JMeterDispatcher,
+    )
+    from app.services.tools.jmeter.execution.runtime import JMeterRuntime  # noqa: PLC0415
+
+    return JMeterDispatcher(
+        operation_dao=dao,
+        operation_service=operation_service,
+        pool_manager=pool_manager,
+        runtime=JMeterRuntime(operation_service),
+        queue_poll_interval_seconds=config.jmeter_queue_poll_interval_seconds,
+        heartbeat_sweep_interval_seconds=(
+            config.jmeter_worker_heartbeat_sweep_interval_seconds
+        ),
+        heartbeat_timeout_seconds=config.jmeter_worker_heartbeat_timeout_seconds,
     )
 
 

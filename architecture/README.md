@@ -14,5 +14,6 @@ No placeholder folders are created ahead of need — per the repo's existing ant
 |---|---|---|
 | [`chatops/`](chatops/README.md) | Design (not yet built) | [`chatops/README.md`](chatops/README.md) — related: [ADR 0004](../.ai/decisions/0004-chatops-platform-architecture.md) |
 | [`zap-worker-pool/`](zap-worker-pool/README.md) | Implemented | [`zap-worker-pool/README.md`](zap-worker-pool/README.md) |
+| [`jmeter-engine/`](jmeter-engine/README.md) | Design finalized (not yet built) | [`jmeter-engine/README.md`](jmeter-engine/README.md) — related: [ADR 0010](../.ai/decisions/0010-jmeter-result-contract.md), [ADR 0011](../.ai/decisions/0011-tool-scoped-queue-consumption.md) |
 
 Planned future entries (not yet created): `mcp/`, `platform/`, `security/`, `integrations/` — add a subfolder here as each subsystem's architecture is actually designed.

@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.core.logging_config import configure_access_logging
 from app.routers.endpoints import MCP_OPERATIONS, tools_router
 from app.routers.public.health_router import health_router
+from app.routers.public.jmeter_worker_router import jmeter_worker_router
 from app.routers.public.zap_worker_router import zap_worker_router
 
 # Suppress the high-frequency worker-heartbeat access log while keeping access
@@ -103,10 +104,14 @@ async def lifespan(_app):
 
     if startup is not None:
         # 1) Stop assigning new work so no operation starts mid-teardown.
-        try:
-            startup.dispatcher.stop()
-        except Exception:  # noqa: BLE001 - shutdown must never crash teardown
-            pass
+        #    Both engines' dispatchers, each stopped independently so one
+        #    failing to stop cannot leave the other running.
+        for _dispatcher in (startup.dispatcher, startup.jmeter_dispatcher):
+            try:
+                if _dispatcher is not None:
+                    _dispatcher.stop()
+            except Exception:  # noqa: BLE001 - shutdown must never crash teardown
+                pass
 
         # 2) Fail any operation still RUNNING at shutdown so it never hangs in a
         #    non-terminal state; the user is notified via the existing pipeline
@@ -116,13 +121,14 @@ async def lifespan(_app):
                 SHUTDOWN_FAILURE_REASON,
                 recover_interrupted_operations,
             )
+            from app.integrations.jmeter.runtime import registry as jmeter_registry
             from app.integrations.owasp_zap.runtime import registry
 
             recover_interrupted_operations(
                 startup.operation_service,
                 startup.dao,
                 SHUTDOWN_FAILURE_REASON,
-                registry=registry,
+                registries=(registry, jmeter_registry),
             )
         except Exception:  # noqa: BLE001 - shutdown recovery must never crash teardown
             pass
@@ -163,6 +169,7 @@ if settings.cors_enabled:
 # Routers
 app.include_router(health_router)
 app.include_router(zap_worker_router)
+app.include_router(jmeter_worker_router)
 app.include_router(tools_router)
 
 # Static files — generic public asset server (reports, future tools UI, etc.)
