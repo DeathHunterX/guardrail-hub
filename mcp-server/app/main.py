@@ -18,7 +18,11 @@ from app.core.logging_config import configure_access_logging
 from app.routers.endpoints import MCP_OPERATIONS, tools_router
 from app.routers.public.health_router import health_router
 from app.routers.public.jmeter_worker_router import jmeter_worker_router
-from app.routers.public.zap_worker_router import zap_worker_router
+from app.routers.public.worker_directory_router import worker_directory_router
+from app.routers.public.zap_worker_router import (
+    zap_worker_legacy_router,
+    zap_worker_router,
+)
 
 # Suppress the high-frequency worker-heartbeat access log while keeping access
 # logging enabled for every other endpoint. Done at import time so the filter
@@ -168,7 +172,11 @@ if settings.cors_enabled:
 
 # Routers
 app.include_router(health_router)
+# The cross-engine view owns GET /workers and is registered before the legacy
+# ZAP prefix so the intent is visible in the file, not just in path matching.
+app.include_router(worker_directory_router)
 app.include_router(zap_worker_router)
+app.include_router(zap_worker_legacy_router)
 app.include_router(jmeter_worker_router)
 app.include_router(tools_router)
 
