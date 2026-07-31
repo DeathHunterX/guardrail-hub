@@ -30,7 +30,7 @@ This is the authoritative endpoint list — do not assume an endpoint exists bec
 | `GET /health/ready` | `public/health_router.py` | Readiness probe | — | None |
 | `POST /tools/zap/scan_api` | `mcp/owasp_zap_router.py` | Queue a ZAP API scan (`status=QUEUED`; does not wait for a worker) | `zap_scan_api` | None enforced |
 | `POST /tools/jmeter/run_test` | `mcp/jmeter_router.py` | Queue a JMeter load test (`status=QUEUED`; does not wait for a worker). Runs to completion and persists artifacts; `summary`/`metrics` arrive in Phase 4 | `run_jmeter` | None enforced |
-| `POST /tools/jmeter/analyze_result` | `mcp/jmeter_router.py` | Interpret a completed JMeter result. **Not implemented yet** (Phase 3) | `analyze_jmeter_result` | None enforced |
+| `POST /tools/jmeter/analyze_result` | `mcp/jmeter_router.py` | Interpret a completed JMeter result, read-only, from the persisted record alone. 404 for an unknown operation or one belonging to another tool | `analyze_jmeter_result` | None enforced |
 | `GET /tools/history/get-result` | `public/history_router.py` | Fetch a specific scan result | `get_result` | None enforced |
 | `GET /tools/history/ids/{batch_type}` | `public/history_router.py` | List operation IDs by batch type | `list_ids_by_type` | None enforced |
 | `GET /tools/history/list` | `public/history_router.py` | List operations | `list_operations` | None enforced |

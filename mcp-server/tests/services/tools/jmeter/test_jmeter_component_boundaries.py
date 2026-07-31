@@ -92,9 +92,27 @@ class WorkerBoundaryTests(unittest.TestCase):
 class ParserBoundaryTests(unittest.TestCase):
     """JMeterParser is a pure file-to-numbers step."""
 
-    def test_parse_takes_only_a_path(self):
+    def test_parse_takes_a_results_path_and_the_target_it_describes(self):
+        """Plain data in, numbers out — no operation, no DAO, no pool.
+
+        Phase 1 guessed this signature as ``(jtl_path)`` alone. Implementing the
+        parser added ``target_url``, because ``JMeterExecutionSummary.target_url``
+        is the one field in the contract a JTL cannot supply: a JTL records
+        sampler labels, not the request that authorized them. That is still a
+        value the caller passes, not a dependency the parser reaches for, so the
+        boundary in ``runtime-responsibility.md`` §5 is unchanged — which is
+        what the assertions below now check directly.
+        """
         params = list(inspect.signature(JMeterParser.parse).parameters)
-        self.assertEqual(["self", "jtl_path"], params)
+        self.assertEqual(["self", "jtl_path", "target_url"], params)
+
+    def test_the_parser_takes_no_persistence_or_infrastructure_dependencies(self):
+        params = set(inspect.signature(JMeterParser.__init__).parameters)
+        self.assertEqual(
+            set(),
+            params
+            & {"operation_service", "operation_dao", "dao", "pool_manager", "client"},
+        )
 
 
 class AnalyzerBoundaryTests(unittest.TestCase):
