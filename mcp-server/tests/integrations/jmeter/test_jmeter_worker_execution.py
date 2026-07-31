@@ -260,6 +260,60 @@ class ProcessRunnerTests(unittest.TestCase):
         self.assertFalse(outcome.succeeded)
         self.assertNotEqual(0, outcome.exit_code)
 
+    def test_a_relative_workspace_still_produces_paths_jmeter_can_open(self):
+        """Regression: a relative workspace made JMeter exit 1 before sampling.
+
+        ``run()`` launches JMeter with ``cwd`` set to the workspace *and* names
+        the same workspace in argv. When the workspace is relative — which is
+        exactly what the real ``jmeter_workspace_dir``
+        ("./public/report/jmeter/detail-report") is — JMeter resolved those argv
+        paths a second time against that cwd and looked for
+        ``<workspace>/<workspace>/plan.jmx``.
+
+        Every other test here builds its workspace with ``tempfile.mkdtemp()``,
+        which is absolute, so the whole suite passed while no real run could
+        ever work. This one reproduces the production shape deliberately.
+        """
+        recorder = os.path.join(self.workspace_root, "record-argv")
+        argv_dump = os.path.join(self.workspace_root, "argv.txt")
+        with open(recorder, "w", encoding="utf-8") as handle:
+            handle.write(f'#!/bin/sh\nprintf "%s\\n" "$@" > {argv_dump}\n')
+        os.chmod(recorder, 0o755)
+
+        relative_workspace = "./public/report/jmeter/detail-report/op-1"
+        previous_cwd = os.getcwd()
+        os.chdir(self.workspace_root)
+        try:
+            outcome = JMeterProcessRunner(binary=recorder).run(
+                "op-1", relative_workspace, _PLAN, timeout_seconds=10
+            )
+        finally:
+            os.chdir(previous_cwd)
+
+        with open(argv_dump, encoding="utf-8") as handle:
+            argv = [line.strip() for line in handle if line.strip()]
+
+        # Every path handed to JMeter must be absolute; a relative one is what
+        # gets resolved twice.
+        path_args = [arg for arg in argv if "/" in arg]
+        self.assertTrue(path_args, f"no path arguments were recorded: {argv}")
+        for arg in path_args:
+            self.assertTrue(
+                os.path.isabs(arg), f"JMeter was given a relative path: {arg!r}"
+            )
+
+        # The plan JMeter was told to open must actually be there.
+        plan_arg = argv[argv.index("-t") + 1]
+        self.assertTrue(
+            os.path.exists(plan_arg), f"plan does not exist at {plan_arg!r}"
+        )
+
+        # And no duplicated tree may appear inside the workspace.
+        self.assertFalse(
+            os.path.exists(os.path.join(outcome.workspace, "public")),
+            "the workspace path was resolved twice and nested itself",
+        )
+
     def test_a_missing_binary_raises_rather_than_reporting_a_run(self):
         with self.assertRaises(JMeterProcessError):
             JMeterProcessRunner(binary="definitely-not-a-real-binary").run(

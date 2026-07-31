@@ -7,7 +7,7 @@ Operation is, and never touches the database.
 
 The command is always JMeter's non-GUI form::
 
-    jmeter -n -t <plan.jmx> -l <results.jtl> -e -o <report/> -j <jmeter.log>
+    jmeter -n -t <test-plan.jmx> -l <test-results.jtl> -e -o <html-report/> -j <engine.log>
 
 Which JMeter that resolves to is the worker image's business, not a setting —
 see ``docker/jmeter/Dockerfile``.
@@ -54,10 +54,17 @@ class JMeterProcessRunner:
     #: Fixed filenames inside a run workspace. The Runtime builds public URLs
     #: from these, so they are part of the contract between the two and are
     #: deliberately not configurable.
-    PLAN_FILE = "plan.jmx"
-    RESULTS_FILE = "results.jtl"
-    REPORT_DIR = "report"
-    ENGINE_LOG = "jmeter.log"
+    #:
+    #: The names describe the *content*, not the tool, because a run package is
+    #: downloaded, attached to tickets and archived — read months later, by
+    #: someone who did not run it. "results.jtl" and "report/" mean nothing out
+    #: of context; "test-results.jtl" and "html-report/" survive the trip.
+    #: These are physical names only: the ``JMeterArtifacts`` JSON keys they are
+    #: reported under are unchanged.
+    PLAN_FILE = "test-plan.jmx"
+    RESULTS_FILE = "test-results.jtl"
+    REPORT_DIR = "html-report"
+    ENGINE_LOG = "engine.log"
 
     def __init__(
         self,
@@ -198,8 +205,18 @@ class JMeterProcessRunner:
         os.killpg(os.getpgid(process.pid), send_signal)
 
     def _prepare_workspace(self, workspace: str, jmx_xml: str) -> Path:
-        """Create a clean workspace containing the plan to execute."""
-        path = Path(workspace)
+        """Create a clean workspace containing the plan to execute.
+
+        The path is resolved to an absolute one **before** anything else uses
+        it, and that is load-bearing rather than tidiness: :meth:`run` launches
+        JMeter with ``cwd`` set to this directory while passing the same path in
+        argv. A relative workspace — which is what ``jmeter_workspace_dir``
+        ("./public/report/jmeter/detail-report") produces — would then be
+        resolved a second time against that cwd, so JMeter looks for
+        ``<workspace>/<workspace>/plan.jmx`` and exits 1 before running a single
+        sample. Resolving once here fixes it for every argument at the source.
+        """
+        path = Path(workspace).resolve()
         try:
             # JMeter refuses to write its HTML dashboard into a non-empty
             # directory, so a re-run of the same operation starts clean.
