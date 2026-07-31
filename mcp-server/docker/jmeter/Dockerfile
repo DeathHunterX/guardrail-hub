@@ -14,6 +14,24 @@ FROM eclipse-temurin:21-jre-jammy
 
 ARG JMETER_VERSION=5.6.3
 
+# Where to fetch the distribution from. These say *where*, never *which* —
+# JMETER_VERSION above remains the single source of truth for the version.
+#
+# `dlcdn.apache.org` is Apache's CDN and is tried first: it is globally mirrored
+# and built for automated traffic. `archive.apache.org` is a single origin that
+# throttles aggressively, but it keeps every release forever — so it is the
+# fallback, and it is what keeps this build working after 5.6.3 is superseded
+# and the CDN drops it.
+#
+# On a network that does not allow direct egress to Apache, point the first one
+# at an internal mirror instead; nothing else needs to change:
+#
+#   docker compose build \
+#     --build-arg JMETER_DIST_BASE_URL=https://nexus.internal/repo/apache-jmeter \
+#     jmeter-worker
+ARG JMETER_DIST_BASE_URL=https://dlcdn.apache.org/jmeter/binaries
+ARG JMETER_DIST_FALLBACK_URL=https://archive.apache.org/dist/jmeter/binaries
+
 WORKDIR /app
 
 COPY --from=uv_bin /uv /usr/local/bin/uv
@@ -26,13 +44,44 @@ RUN apt-get update \
 # Apache JMeter, verified against the published SHA-512 checksum. An unverified
 # download of something this image then executes would be an obvious supply
 # chain hole.
+#
+# The curl flags each fix a distinct way this step failed or can fail:
+#   -4                  force IPv4. A build network that advertises IPv6 without
+#                       a working route makes curl try AAAA first and report a
+#                       refused connection, while the same URL works from the
+#                       host. This is the single most common cause of that
+#                       "works outside Docker" symptom.
+#   --retry-all-errors  archive.apache.org throttles and returns transient 5xx
+#                       under automated load; a single attempt turns that into a
+#                       failed build.
+#   --connect-timeout   fail over to the next mirror promptly instead of hanging.
+#
+# The three ARGs above are still in scope here (an ARG lives to the end of its
+# build stage), so they are deliberately not re-declared — re-declaring one
+# without its default is how a working default silently becomes an empty string.
 RUN set -eux; \
     cd /opt; \
-    curl -fsSL -O "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz"; \
-    curl -fsSL -O "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz.sha512"; \
-    sha512sum -c "apache-jmeter-${JMETER_VERSION}.tgz.sha512"; \
-    tar -xzf "apache-jmeter-${JMETER_VERSION}.tgz"; \
-    rm "apache-jmeter-${JMETER_VERSION}.tgz" "apache-jmeter-${JMETER_VERSION}.tgz.sha512"; \
+    tarball="apache-jmeter-${JMETER_VERSION}.tgz"; \
+    downloaded=""; \
+    for base in "${JMETER_DIST_BASE_URL}" "${JMETER_DIST_FALLBACK_URL}"; do \
+        echo "Fetching ${tarball} from ${base}"; \
+        if curl -4 -fsSL --retry 5 --retry-all-errors --connect-timeout 15 \
+                -O "${base}/${tarball}" \
+                -O "${base}/${tarball}.sha512"; then \
+            downloaded="${base}"; \
+            break; \
+        fi; \
+        echo "Could not fetch JMeter from ${base}"; \
+    done; \
+    if [ -z "${downloaded}" ]; then \
+        echo "ERROR: JMeter ${JMETER_VERSION} could not be downloaded from any"; \
+        echo "configured source. If this network has no direct egress to Apache,"; \
+        echo "rebuild with --build-arg JMETER_DIST_BASE_URL=<internal mirror>."; \
+        exit 1; \
+    fi; \
+    sha512sum -c "${tarball}.sha512"; \
+    tar -xzf "${tarball}"; \
+    rm "${tarball}" "${tarball}.sha512"; \
     ln -s "/opt/apache-jmeter-${JMETER_VERSION}/bin/jmeter" /usr/local/bin/jmeter
 
 COPY pyproject.toml uv.lock ./
