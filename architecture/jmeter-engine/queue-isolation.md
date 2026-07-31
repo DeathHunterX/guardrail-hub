@@ -1,7 +1,7 @@
 # JMeter Engine — Queue Isolation (Final Design)
 
 Status: **Final** — decided 2026-07-28. Governed by [ADR-0011](../../.ai/decisions/0011-tool-scoped-queue-consumption.md).
-Resolves: conflict **C1** and adjustment **A1** of the [architecture validation report](../../jmeter-engine-architecture-review.md).
+Resolves: conflict **C1** and adjustment **A1** of the [architecture validation report](architecture-review.md).
 
 ---
 

@@ -1,16 +1,20 @@
 # JMeter Engine — Architecture
 
-Status: **Phase 3 complete (2026-07-29) — load tests execute end to end.** Next milestone: Phase 4 — Result Parsing & Analysis.
+Status: **Phase 4 complete (2026-07-29) — the JMeter engine is functionally complete.** Both MCP tools are implemented end to end.
 
 | Phase | State |
 |---|---|
 | Design + governance | Done — ADR-0010, ADR-0011 Accepted |
 | Phase 1 — Skeleton | Done — queue lane, result contract, submission, component interfaces |
 | Phase 2 — Execution infrastructure | Done — dispatcher loops, worker registry/heartbeat, scheduler, pool, worker transport, router registration |
-| Phase 3 — Runtime orchestration | Done — plan generation + validation, worker agent, JMeter subprocess, artifact persistence, Docker image |
-| Phase 4 — Parsing & analysis | Not started — JTL parsing, metric extraction, `analyze_jmeter_result` |
+| Phase 3 — Runtime execution pipeline | Done — plan generation + validation, worker agent, JMeter subprocess, artifact collection, JTL parsing, result persistence, Docker image |
+| Phase 4 — Result analysis | Done — `analyze_jmeter_result`, reading only the persisted result |
 
-A submitted load test now runs to completion and persists its artifacts. What it does **not** yet carry is `summary` and `metrics` — every field in both comes from parsing the JTL, which is Phase 4. Until then a completed result links to the report, the raw JTL, the executed plan and the engine log, and records who ran it, when, and under what load profile.
+A submitted load test runs to completion, and its result carries `summary` and `metrics` parsed from the JTL — sample counts, error rate, latency distribution, throughput and the per-label breakdown — alongside links to the HTML dashboard, the raw JTL, the executed plan and the engine log. `analyze_jmeter_result` then reads that stored record and describes it in plain language.
+
+Both derived sections remain **optional in the contract**, for one reachable case: a run whose results file cannot be read back. That is a degraded result, not a failed test — the target really was loaded — so the run is completed with the sections absent rather than zero-filled, and the analyzer reports that state as its own distinct outcome. See [result-contract.md](result-contract.md) §1.
+
+**Where the engine stops, deliberately.** It reports measurements and the arithmetic relationships between them. It states no verdict: no pass/fail, no SLA, no thresholds, no recommendations, no comparison against previous runs. That is `Policy` and trend analysis, both deferred with their reasoning on the record ([ADR-0008](../../.ai/decisions/0008-domain-ubiquitous-language.md) §6, [result-contract.md](result-contract.md) §4) — neither trigger has fired.
 
 **Deployment note.** The worker writes its artifacts into the same `./public` tree the server serves from (a shared volume in `docker-compose.yml`), so there is no upload step — and, today, workers must run on the same host as the server. Replacing that with an artifact upload is a deployment change, not a contract change.
 
@@ -29,8 +33,9 @@ This folder holds the architectural decisions that had to be settled **before** 
 | [runtime-responsibility.md](runtime-responsibility.md) | Runtime vs. Worker vs. Parser vs. Analyzer ownership; package layout; naming |
 | [cleanup.md](cleanup.md) | Revert remnants removed, and what is recommended but not executed |
 | [governance-report.md](governance-report.md) | ADR review, ratification, cross-reference validation, readiness checklist |
+| [architecture-review.md](architecture-review.md) | The pre-implementation validation of the plan against the repo as it stood — the conflicts (**C1–C4**) and adjustments (**A1–A8**) every document above resolves |
 
-Input to this work: [jmeter-engine-architecture-review.md](../../jmeter-engine-architecture-review.md) (validation verdict: *READY WITH MINOR CHANGES*).
+`architecture-review.md` is the **input** to this work rather than an output of it: verdict *READY WITH MINOR CHANGES*, dated 2026-07-28, written against `762e1c5`. It is a point-in-time record and is not updated as the engine evolves — read it for *why the design was changed before it was built*, not for the current state.
 
 ## 2. The decisions in one page
 
