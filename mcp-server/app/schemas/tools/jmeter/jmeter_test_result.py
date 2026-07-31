@@ -19,12 +19,17 @@ Deliberately absent, each for a recorded reason:
 This is persisted data: adding a field is safe, removing or renaming one breaks
 stored results and requires an ADR superseding ADR-0010.
 
-**Amended 2026-07-29 (Phase 3).** ``summary`` and ``metrics`` are now optional.
-Every field in both is derived from the JTL results file, and parsing is Phase
-4 — so the execution phase can persist a truthful record (what ran, where its
-artifacts are, when and on which worker) without inventing sample counts it has
-not measured. A fully-populated result still validates unchanged; this is a
-relaxation, not a removal. It diverges from ADR-0010 §2 and is recorded in
+**Amended 2026-07-29 (Phase 3).** ``summary`` and ``metrics`` are optional.
+Both are now populated by ``JMeterParser`` on the normal path — but they stay
+optional, and the reason has changed since the relaxation was first made.
+
+Originally they were optional because parsing was unimplemented. Now they are
+optional because parsing is the one pipeline phase whose failure must not fail
+the operation: a run that executed and wrote artifacts is a real result even
+when its results file cannot be read back. Recording the run with both sections
+absent is truthful; zero-filling them would assert measurements nobody took.
+So the relaxation outlived the milestone that motivated it, on a different and
+narrower justification. It diverges from ADR-0010 §2 and is recorded in
 ``architecture/jmeter-engine/result-contract.md`` §1.
 """
 
@@ -98,8 +103,20 @@ class JMeterArtifacts(BaseModel):
     Served by the existing ``/public/**`` static mount from
     ``ReportPaths.JMETER_DETAIL_DIR/{operation_id}/``. There is no artifact
     store component — this follows the same mechanism ZAP reports use.
+
+    Every field here is a **link**; the sibling ``JMeterTestResult.summary`` is
+    **measurements**. ``summary_page`` carries the ``_page`` suffix so that
+    distinction survives being read aloud, quoted in a log line, or skimmed in
+    API docs — nesting alone disambiguated the payload but not the prose.
     """
 
+    summary_page: Optional[str] = Field(
+        None,
+        description=(
+            "The run's entry page: what ran, against what, with the headline "
+            "numbers and links to everything else. Start here."
+        ),
+    )
     view_report: Optional[str] = Field(
         None, description="Open this link in your browser to view the HTML dashboard."
     )
@@ -150,15 +167,15 @@ class JMeterTestResult(BaseModel):
     summary: Optional[JMeterExecutionSummary] = Field(
         None,
         description=(
-            "Sample counts and error rate. Absent until the results file has "
-            "been parsed — every field in it is derived from the JTL."
+            "Sample counts and error rate, read from the JTL. Absent only when "
+            "the run's results file could not be read back."
         ),
     )
     metrics: Optional[JMeterMetrics] = Field(
         None,
         description=(
-            "Latency, throughput and the per-label breakdown. Absent until the "
-            "results file has been parsed."
+            "Latency, throughput and the per-label breakdown, read from the "
+            "JTL. Absent only when the results file could not be read back."
         ),
     )
     artifacts: JMeterArtifacts

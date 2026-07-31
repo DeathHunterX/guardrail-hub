@@ -1,7 +1,7 @@
 # JMeter Engine — Runtime Responsibility Boundaries (Final)
 
 Status: **Final** — decided 2026-07-28.
-Resolves: adjustment **A4** (and, for target authorization, **A8**) of the [architecture validation report](../../jmeter-engine-architecture-review.md).
+Resolves: adjustment **A4** (and, for target authorization, **A8**) of the [architecture validation report](architecture-review.md).
 
 ---
 
@@ -62,9 +62,9 @@ Read this as: **every row's "Owns" appears in exactly one row.**
   1. **Generate** — calls the plan generator to produce a JMX from the validated request.
   2. **Validate** — request validity **and** target authorization (Guardrail G4, see §4) **before** anything executes; also that the generated JMX is well-formed.
   3. **Execute** — hands the JMX to the assigned worker and waits, translating worker progress into `operation_service.report_progress(...)`.
-  4. **Parse** — hands the produced artifact paths to `JMeterParser` and receives metrics back.
+  4. **Parse** — hands the run's results file to `JMeterParser` and receives metrics back. **The only phase whose failure does not fail the operation:** every phase before it decides *whether the test may run*, while this one reads back what a run that already happened produced. An unreadable JTL therefore degrades the result (both derived sections absent) instead of discarding a load test that really did execute — see [result-contract](result-contract.md) §1.
   5. **Persist** — assembles `JMeterTestResult`, calls `operation_service.start / complete / fail`, and releases the worker in a `finally` (ZAP's `zap_scan_worker` is the precedent for the try/except/finally shape).
-- **Also owns:** placing artifacts under `ReportPaths.JMETER_DETAIL_DIR/{operation_id}/` and turning those paths into the public URLs in `JMeterArtifacts`.
+- **Also owns:** placing artifacts under `ReportPaths.JMETER_DETAIL_DIR/{operation_id}/` and turning those paths into the public URLs in `JMeterArtifacts`; and, at Persist, calling `execution/artifact_package.py` to write the package's `summary.html` and `execution.json`. That call sits here because this is the only point where the request, the worker and both timestamps are simultaneously in hand — see [result-contract](result-contract.md) §7 for the layout and the reasoning.
 - **Never:** spawns or signals an OS process itself; parses a JTL row; decides whether the numbers are good; picks which worker runs the job.
 - **Sole caller of `OperationService`** for JMeter operations — with one deliberate exception: the dispatcher's own `fail()` for an operation it could not hand off at all (unresolvable metadata, dead worker). That mirrors ZAP exactly.
 
@@ -78,13 +78,20 @@ Read this as: **every row's "Owns" appears in exactly one row.**
 ### `JMeterParser` — *what the numbers are*
 
 - **Owns:** reading a JTL file and producing `JMeterMetrics` + the numeric parts of `JMeterExecutionSummary` — aggregation, percentiles, error rate, throughput, per-label breakdown.
-- **Never:** does I/O beyond reading the files it is handed; touches the DB, the operation, the pool, or the network; makes a judgment about the values.
-- **Property this buys:** the parser is a pure function of file → numbers. It is unit-testable against a fixture JTL with no JMeter, no worker, and no database — which is where the arithmetic bugs will actually be caught.
+- **Never:** does I/O beyond reading the file it is handed; touches the DB, the operation, the pool, or the network; makes a judgment about the values — no SLA, no threshold, no recommendation.
+- **Property this buys:** the parser is a pure function of file → numbers. It is unit-testable against a fixture JTL with no JMeter, no worker, and no database — which is where the arithmetic bugs will actually be caught, and where they are in fact caught (`tests/integrations/jmeter/test_jmeter_parser.py`).
+- **Two decisions worth recording**, since both are visible in stored results and neither is forced:
+  - **Percentiles are nearest-rank**, not interpolated. Every figure reported is a response time that was actually measured, so a p99 names a request that really took that long. It differs from JMeter's own dashboard by at most one adjacent sample.
+  - **Durations come from the samples**, not the Runtime's clock: the window runs from the first request starting to the last one finishing, which excludes JVM startup and HTML dashboard generation and so measures the load rather than the job.
+- **`target_url` is passed in, not parsed.** It is the one field of `JMeterExecutionSummary` a JTL cannot supply — a JTL records sampler labels, not the request that authorized them. Passing it as a value keeps the parser free of any dependency on the request pipeline.
 
 ### `JMeterAnalyzer` — *what the numbers mean*
 
 - **Owns:** backing the `analyze_jmeter_result` MCP tool. Loads the persisted record (DAO / `HistoryService.get_result`), verifies `record.batch_type in BatchType.ALL_JMETER_TYPES`, handles the FAILED case from `record.status` / `record.error`, and turns the stored `JMeterTestResult` into a human-readable interpretation.
-- **Never:** re-opens the JTL or the HTML report, recomputes any metric, re-runs anything, or touches the worker pool. Its **only** input is `operation.result`.
+- **Never:** re-opens the JTL or the HTML report, recomputes any metric, re-runs anything, or touches the worker pool. Its **only** input is `operation.result`, reached through a single read-only `get_operation` call.
+- **Reports four outcomes distinctly**, because conflating any two of them misleads the reader: *not finished* (queued/running), *execution failed* (terminal, non-completed — the record's own `error` is quoted, never reinterpreted), *parser degradation* (completed, but `summary`/`metrics` absent — the run happened and the target was loaded, so metadata and artifacts are still returned), and *parsed* (the full reading). The third is the one worth naming explicitly: absent measurements must never read as "no load was generated".
+- **Describes, never judges.** It reports measured values and arithmetic relationships between them ("p95 is 4.2x the median"). It emits no verdict, threshold, SLA or recommendation — that is `Policy` ([ADR-0008](../../.ai/decisions/0008-domain-ubiquitous-language.md) §6), whose trigger has not fired. The one place wording varies with the data is the sentence describing distribution shape; both branches report identical numbers, and the ratio behind the choice is a descriptive cut, not a threshold anything passes or fails.
+- **Deterministic:** the same stored record always yields the same words. No clock, no randomness, no model call.
 - **Consequence, on the record:** if the analyzer needs a number, that number must be added to the result contract and produced by the parser. "The analyzer will just read the JTL" is the boundary violation this rule exists to prevent.
 
 ## 4. Guardrail G4 — where target authorization lives

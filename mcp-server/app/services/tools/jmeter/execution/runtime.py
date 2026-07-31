@@ -26,10 +26,11 @@ not skippable either way** — a supplied plan is checked by the same validator 
 a generated one, because validation is where target authorization (Guardrail G4)
 is enforced and a caller-supplied plan is exactly the case that needs it most.
 
-Parse is a no-op today: the parser lands in Phase 4. Persist therefore records
-what execution actually knows — where the artifacts are, which worker ran it,
-when, under what load profile — and leaves ``summary``/``metrics`` unset rather
-than fabricating sample counts nobody measured.
+Parse reads the JTL the run wrote and fills in ``summary``/``metrics``. It is
+the one phase allowed to fail *without* failing the operation: a run that
+executed and produced artifacts is a real result even when its numbers could
+not be read back, so an unreadable JTL degrades the result rather than
+discarding it. The contract makes both sections optional for exactly this case.
 """
 
 import time
@@ -37,6 +38,7 @@ from datetime import datetime, timezone
 from typing import Optional, Tuple
 
 from app.core.mcp_logger import MCPLogger
+from app.integrations.jmeter.parser import JMeterParser, JMeterResultsFileError
 from app.integrations.jmeter.process import JMeterProcessRunner
 from app.integrations.jmeter.worker_client import JMeterWorkerCommunicationError
 from app.schemas.tools.jmeter.jmeter_test_result import (
@@ -51,6 +53,10 @@ from app.schemas.tools.jmeter.worker_assignment import (
     JMeterExecutionState,
 )
 from app.services.operations.operation_service import OperationService
+from app.services.tools.jmeter.execution.artifact_package import (
+    SUMMARY_PAGE_FILE,
+    JMeterArtifactPackageWriter,
+)
 from app.services.tools.jmeter.plan import (
     JMeterPlanGenerator,
     JMeterPlanValidationError,
@@ -67,6 +73,8 @@ class JMeterRuntime:
         pool_manager=None,
         generator: Optional[JMeterPlanGenerator] = None,
         validator: Optional[JMeterPlanValidator] = None,
+        parser: Optional[JMeterParser] = None,
+        package_writer: Optional[JMeterArtifactPackageWriter] = None,
         config=None,
         logger: Optional[MCPLogger] = None,
     ) -> None:
@@ -78,6 +86,9 @@ class JMeterRuntime:
                 JMeter pool.
             generator: JMX builder; injectable for tests.
             validator: Plan validator; injectable for tests.
+            parser: JTL reader; injectable for tests.
+            package_writer: Writes the run package's ``execution.json`` and
+                ``summary.html``; injectable for tests.
             config: Settings object; defaults to ``app.core.config.settings``.
             logger: Optional logger; one is created if omitted.
         """
@@ -94,6 +105,8 @@ class JMeterRuntime:
         self._pool_manager = pool_manager
         self._generator = generator or JMeterPlanGenerator()
         self._validator = validator or JMeterPlanValidator()
+        self._parser = parser or JMeterParser()
+        self._package_writer = package_writer or JMeterArtifactPackageWriter()
         self._config = config
         self._logger = logger or MCPLogger("JMeterRuntime")
 
@@ -120,7 +133,7 @@ class JMeterRuntime:
             self._validate_plan(jmx_plan, request)
 
             workspace = self._execute_on_worker(operation_id, request, jmx_plan, worker)
-            summary, metrics = self._parse_results(workspace)
+            summary, metrics = self._parse_results(operation_id, request, workspace)
 
             self._persist_result(
                 operation_id=operation_id,
@@ -262,16 +275,34 @@ class JMeterRuntime:
             "the runtime deadline."
         )
 
-    @staticmethod
-    def _parse_results(workspace: str) -> Tuple[None, None]:
+    def _parse_results(
+        self, operation_id: str, request: JMeterTestRequest, workspace: str
+    ) -> Tuple[Optional[object], Optional[object]]:
         """Phase 4 — turn the JTL into numbers.
 
-        Not implemented: the parser is the next milestone. Returning ``None`` for
-        both sections is deliberate and honest — the result contract makes them
-        optional precisely so this phase can persist what it knows without
-        inventing sample counts it never measured.
+        The worker and the server share the report volume (docker-compose.yml),
+        so the results file the worker wrote is readable here by path; there is
+        no fetch step.
+
+        **The only pipeline phase whose failure does not fail the operation.**
+        Everything before it decides *whether the test may run*; this one reads
+        back what a run that already happened produced. Losing the numbers is a
+        degraded result, not a failed test — the target really was loaded, and
+        the HTML dashboard and raw JTL are still linked from the artifacts. The
+        contract makes both sections optional precisely so this case has a
+        truthful representation instead of a fabricated one.
         """
-        return None, None
+        jtl_path = f"{workspace.rstrip('/')}/{JMeterProcessRunner.RESULTS_FILE}"
+        try:
+            return self._parser.parse(jtl_path, request.target_url)
+        except JMeterResultsFileError as exc:
+            self._logger.error(
+                "Operation '%s' ran but its results file could not be read (%s) — "
+                "persisting artifacts without metrics",
+                operation_id,
+                exc,
+            )
+            return None, None
 
     def _persist_result(
         self,
@@ -289,7 +320,38 @@ class JMeterRuntime:
         No ``findings=`` is passed to ``complete()``: a load test has no
         severity breakdown (ADR-0010), and the notification layer already
         handles its absence.
+
+        The run package's ``execution.json`` and ``summary.html`` are written
+        here, from the same values that go into the result, because this is the
+        only point at which the request, the worker and both timestamps are all
+        in hand. It happens *before* ``complete()`` so an operation is never
+        reported finished while its package is still half-written.
         """
+        finished_at = datetime.now(timezone.utc)
+        # Best-effort, and guarded *here* rather than trusting the writer to
+        # catch everything: this method decides whether the operation completes,
+        # so this is where the guarantee has to hold. The package is a
+        # convenience layered on a run that already succeeded — no failure in it
+        # may discard a real load test whose measurements are already safe.
+        try:
+            self._package_writer.write(
+                workspace=workspace,
+                operation_id=operation_id,
+                request=request,
+                worker=worker,
+                started_at=started_at,
+                finished_at=finished_at,
+                summary=summary,
+                metrics=metrics,
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            self._logger.error(
+                "Could not write the run package for operation '%s' (the run "
+                "itself is unaffected): %s",
+                operation_id,
+                exc,
+            )
+
         result = JMeterTestResult(
             operation_id=operation_id,
             summary=summary,
@@ -298,7 +360,7 @@ class JMeterRuntime:
             metadata=JMeterExecutionMetadata(
                 worker_id=worker.worker_id,
                 started_at=started_at,
-                finished_at=datetime.now(timezone.utc),
+                finished_at=finished_at,
                 thread_count=request.thread_count,
                 ramp_up_seconds=request.ramp_up_seconds,
                 hold_seconds=request.hold_seconds,
@@ -311,24 +373,34 @@ class JMeterRuntime:
 
     # ── Artifacts ────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _artifacts_for(workspace: str) -> JMeterArtifacts:
+    def _artifacts_for(self, workspace: str) -> JMeterArtifacts:
         """Map a run workspace onto the public URLs its files are served at.
 
         The worker writes into the same ``./public/report/jmeter/detail-report``
         tree the server serves from, so there is no upload step — see
         docker-compose.yml.
 
+        **These are absolute URLs, not server-relative paths.** Everything that
+        consumes them — an MCP client, a Slack card, a browser — receives the
+        result detached from the HTTP request that produced it, and so has
+        nothing to resolve a leading ``/`` against. The host comes from
+        ``mcp_server_public_url``, which is exactly what
+        ``OwaspZapHelpers.save_reports`` uses for ZAP's report links; both tools
+        therefore answer in the same form.
+
         ponytail: shared-volume artifact handoff, which ties worker and server
         to one filesystem. If workers ever run off-host, replace this with an
         artifact upload from the worker; the result contract does not change.
         """
-        base = "/public" + workspace.split("/public", 1)[-1] if "/public" in workspace else None
-        if base is None:
+        if "/public" not in workspace:
             # Workspace outside the served tree (a test, or a misconfigured
             # deployment): record no links rather than fabricate broken ones.
             return JMeterArtifacts()
+
+        served_path = "/public" + workspace.split("/public", 1)[-1]
+        base = self._config.mcp_server_public_url.rstrip("/") + served_path
         return JMeterArtifacts(
+            summary_page=f"{base}/{SUMMARY_PAGE_FILE}",
             view_report=f"{base}/{JMeterProcessRunner.REPORT_DIR}/index.html",
             results_data=f"{base}/{JMeterProcessRunner.RESULTS_FILE}",
             test_plan=f"{base}/{JMeterProcessRunner.PLAN_FILE}",
