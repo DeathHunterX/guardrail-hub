@@ -83,11 +83,16 @@ def _operation_context_resolver(dao: BaseOperationDAO):
         # A completed operation's persisted result carries the report link; it is
         # absent earlier in the lifecycle (the resolver simply returns None then).
         result = record.result if isinstance(record.result, dict) else {}
-        reports = result.get("reports") if isinstance(result.get("reports"), dict) else {}
+        # ZAP files its links under "reports", JMeter under "artifacts" (each is
+        # that tool's own wire format — ADR-0010). ZAP's key is read first and is
+        # unchanged; without the second, every JMeter notification rendered with
+        # no report link at all, which is required by result-contract.md §5.
+        links = result.get("reports") or result.get("artifacts") or {}
+        links = links if isinstance(links, dict) else {}
         return {
             "target": _format_scan_target(record.metadata),
             "title": OPERATION_TITLES.get(record.batch_type),
-            "report_link": reports.get("view_report"),
+            "report_link": links.get("view_report"),
         }
 
     return resolve
