@@ -124,14 +124,33 @@ services:
       - app-network
       - shared-network
 
-  jmeter:
+  # Named `jmeter-worker`, not `jmeter`, and deliberately *not* symmetrically
+  # with the `zap` service above — the asymmetry in the names records a real
+  # asymmetry in what the two containers are:
+  #
+  #   zap           = the ZAP daemon (a third-party tool) plus a registration
+  #                   sidecar. The container really is "ZAP".
+  #   jmeter-worker = our own FastAPI worker agent, which embeds the JMeter
+  #                   CLI. It owns assignment intake, the run subprocess, its
+  #                   local execution state, and its own registration and
+  #                   heartbeat. Calling it "jmeter" names the least
+  #                   interesting thing inside it.
+  #
+  # This is the same distinction ADR-0012 drew when it gave JMeter a runtime
+  # boundary (app/runtime/jmeter/) and gave ZAP none: ZAP ships a daemon we
+  # talk to, JMeter ships a CLI we host. Renaming `zap` to match would assert a
+  # symmetry that does not exist.
+  jmeter-worker:
     build:
       context: .
       dockerfile: docker/jmeter/Dockerfile
     # No container_name, for the same reason as the zap service: a fixed name
-    # blocks `docker compose up --scale jmeter=N`. Each replica self-registers
-    # under its own Docker-assigned hostname — see
+    # blocks `docker compose up --scale jmeter-worker=N`. Each replica
+    # self-registers under its own Docker-assigned hostname — see
     # docker/jmeter/register-worker.sh.
+    # The profile stays `jmeter`: a profile names the capability an operator is
+    # switching on, not the container that provides it, and it stays parallel
+    # to the `zap` profile.
     profiles:
       - jmeter
     depends_on:

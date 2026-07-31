@@ -7,7 +7,7 @@
 #   2. register-worker.sh — waits for the agent to be healthy, then registers
 #      and heartbeats.
 #
-# This is what makes `docker compose up --scale jmeter=N` work with no
+# This is what makes `docker compose up --scale jmeter-worker=N` work with no
 # application config change: every replica runs this entrypoint, reads its own
 # HOSTNAME, and announces itself.
 set -euo pipefail
