@@ -6,9 +6,43 @@ here preserves the one-directional dependency rule: ``core/`` never imports
 from a higher layer.
 """
 
+from urllib.parse import urlsplit, urlunsplit
+
 
 class LoggerUtils:
     """Static helpers for emitting structured ``extra`` fields to plain-text logs."""
+
+    @staticmethod
+    def redact_url_credentials(url: str) -> str:
+        """Return *url* with any embedded ``user:password@`` removed.
+
+        Guardrail G1 forbids a credential reaching a log line, and userinfo is
+        the one place a URL structurally holds one — so it is the one part
+        stripped. The scheme, host, path and query are kept deliberately: they
+        are what make the line answer "which endpoint was this", and a URL
+        redacted down to its host identifies nothing.
+
+        Lives here rather than beside either caller because two of them exist
+        (the JMeter worker's pre-launch line and the server's dispatch line),
+        they sit in different layers, and a second copy is how the two would
+        drift into redacting different things.
+
+        Args:
+            url (str): The URL about to be logged.
+
+        Returns:
+            str: The same URL when it carries no userinfo; otherwise the URL
+            with the userinfo component dropped.
+        """
+        parsed = urlsplit(url)
+        if parsed.username is None and parsed.password is None:
+            return url
+        netloc = parsed.hostname or ""
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        return urlunsplit(
+            (parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment)
+        )
 
     @staticmethod
     def log_with_extra(msg, *args, logger, extra=None, **kwargs):

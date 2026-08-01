@@ -12,10 +12,11 @@ One agent today. Additional Backend agents (e.g. a dedicated Data agent) registe
 
 ## Task-Subtype → Resources
 
-Always loaded for any Backend task: `guardrails/core.md` (Tier G, already resident) + the Backend Agent contract.
+Always loaded for any Backend task: `guardrails/core.md` (Tier G, already resident) + the Backend Agent contract + [knowledge/concept/engineering-philosophy](../../knowledge/concept/engineering-philosophy.md) (the default lean between options the Standards leave open; ranks below every rule per [AGENTS.md](../../../AGENTS.md) conflict order).
 
 | Backend task subtype | Standards to load | Also consult |
 |---|---|---|
+| **More than one valid implementation approach exists** (which option is preferred, and when to escalate instead of implement) | [core/](../../standards/core/INDEX.md) (**decision-policy**) | [Decision 0007](../../decisions/0007-domain-layer-justification.md) (worked L4 precedent) |
 | Add/modify an MCP tool integration | [architecture/](../../standards/architecture/INDEX.md) (backend-layering, **domain-layer**, service-package-design, persistence-dao), [coding/](../../standards/coding/INDEX.md) (backend-naming), [operational/](../../standards/operational/INDEX.md) (logging) | `intelligence/module-map.md`, `intelligence/api-map.md`, [Decision 0008](../../decisions/0008-domain-ubiquitous-language.md) |
 | Add/modify an endpoint or router | [architecture/](../../standards/architecture/INDEX.md) (backend-layering), [coding/](../../standards/coding/INDEX.md) (backend-naming) | `intelligence/api-map.md` |
 | Add/modify a service, or add any file to a `services/` package | [architecture/](../../standards/architecture/INDEX.md) (service-package-design, backend-layering) | `intelligence/module-map.md` |

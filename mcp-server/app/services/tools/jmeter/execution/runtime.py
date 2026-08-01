@@ -37,6 +37,7 @@ import time
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
+from app.core.logger_utils import LoggerUtils
 from app.core.mcp_logger import MCPLogger
 from app.integrations.jmeter.parser import JMeterParser, JMeterResultsFileError
 from app.integrations.jmeter.process import JMeterProcessRunner
@@ -151,7 +152,17 @@ class JMeterRuntime:
             )
             self._operation_service.fail(operation_id, str(exc))
         except Exception as exc:  # pylint: disable=broad-except
-            self._logger.error("Operation '%s' failed: %s", operation_id, exc)
+            # exc_info keeps the traceback: the persisted error is str(exc),
+            # which names *what* went wrong, and this is the only record of
+            # *where*. Without it an unexpected failure in any of five phases
+            # reads identically in the log.
+            self._logger.error(
+                "Operation '%s' failed after %.1fs: %s",
+                operation_id,
+                (datetime.now(timezone.utc) - started_at).total_seconds(),
+                exc,
+                exc_info=True,
+            )
             self._operation_service.fail(operation_id, str(exc))
         finally:
             self._pool_manager.release_worker(worker.worker_id, operation_id)
@@ -210,6 +221,27 @@ class JMeterRuntime:
         Raises:
             RuntimeError: The worker declined, lost the run, or reported failure.
         """
+        # The server's own record of the hand-off. It deliberately overlaps the
+        # worker's pre-launch line: the two are written by different processes
+        # into different log files, and when a worker container is gone — the
+        # common case for a failure worth investigating — this is the only side
+        # left. operation_id is the key that joins them.
+        self._logger.info(
+            "Dispatching JMeter execution to worker",
+            extra={
+                "event": "jmeter_dispatch",
+                "operation_id": operation_id,
+                "worker_id": worker.worker_id,
+                "target_url": LoggerUtils.redact_url_credentials(request.target_url),
+                "execution_mode": (
+                    "uploaded_jmx" if request.jmx_plan is not None else "generated_jmx"
+                ),
+                "thread_count": request.thread_count,
+                "ramp_up_seconds": request.ramp_up_seconds,
+                "hold_seconds": request.hold_seconds,
+            },
+        )
+
         client = self._pool_manager.get_client(worker)
         ack = client.send_assignment(
             JMeterAssignmentRequest(
@@ -369,7 +401,17 @@ class JMeterRuntime:
         self._operation_service.complete(
             operation_id, result=result.model_dump(mode="json", by_alias=True)
         )
-        self._logger.info("Operation '%s' completed", operation_id)
+        # Wall-clock for the whole pipeline, which is not the same number as
+        # either the declared load window or the parser's measured window — it
+        # includes plan generation, JVM startup and dashboard generation. The
+        # gap between it and the declared duration is what says whether a run
+        # is spending its time generating load or waiting on overhead.
+        self._logger.info(
+            "Operation '%s' completed in %.1fs (worker '%s')",
+            operation_id,
+            (finished_at - started_at).total_seconds(),
+            worker.worker_id,
+        )
 
     # ── Artifacts ────────────────────────────────────────────────────────
 

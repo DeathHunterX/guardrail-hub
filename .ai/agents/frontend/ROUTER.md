@@ -10,7 +10,7 @@
 
 ## Task-Subtype → Resources
 
-Always loaded for any Frontend task: `guardrails/core.md` (Tier G) + the Frontend Agent contract + `web/AGENTS.md` (Next.js version caveat).
+Always loaded for any Frontend task: `guardrails/core.md` (Tier G) + the Frontend Agent contract + `web/AGENTS.md` (Next.js version caveat) + [knowledge/concept/engineering-philosophy](../../knowledge/concept/engineering-philosophy.md) (the default lean between options the Standards leave open; ranks below every rule per [AGENTS.md](../../../AGENTS.md) conflict order).
 
 | Frontend task subtype | Standards to load | Also consult |
 |---|---|---|
@@ -18,6 +18,7 @@ Always loaded for any Frontend task: `guardrails/core.md` (Tier G) + the Fronten
 | Add/modify a page or route | [architecture/](../../standards/architecture/INDEX.md) (frontend-component-layering, frontend-config-content) | `intelligence/module-map.md` |
 | Add/modify a hook | [coding/](../../standards/coding/INDEX.md) (frontend-hooks-location) | — |
 | Site metadata / copy change | [architecture/](../../standards/architecture/INDEX.md) (frontend-config-content) | — |
+| **More than one valid implementation approach exists** (which option is preferred, and when to escalate instead of implement) | [core/](../../standards/core/INDEX.md) (**decision-policy**) | — |
 
 The category indexes ([architecture/](../../standards/architecture/INDEX.md), [coding/](../../standards/coding/INDEX.md)) list standards from **all** domains; the Frontend Agent's `standards_enforced` selects the `web/`-scoped ones. This is the concern-category / path-scope design working across domains — the same indexes serve Backend and Frontend without duplication.
 

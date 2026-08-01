@@ -42,6 +42,10 @@ announces itself — see ``docker/jmeter/register-worker.sh``.
 """
 
 import os
+import re
+import socket
+import subprocess
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
@@ -76,6 +80,69 @@ def build_worker() -> JMeterWorker:
     )
 
 
+#: Matches the first ``1.2`` / ``1.2.3`` / ``21.0.5+11`` looking token in a
+#: tool's own ``--version`` output. Both tools wrap their version in prose that
+#: differs between releases (JMeter prints an ASCII banner and a copyright line
+#: first, Java writes to stderr), so the token is extracted rather than the
+#: output being parsed positionally — a layout change then costs a wrong-looking
+#: log line, not a crashed boot.
+_VERSION_TOKEN = re.compile(r"\d+\.\d+(?:\.\d+)?(?:[._+-][\w.]+)?")
+
+
+def _tool_version(command: list) -> str:
+    """Ask *command* what version it is, and never let the answer break boot.
+
+    Every failure degrades to a string rather than an exception: a worker that
+    refused to start because it could not read a version number would trade a
+    real capability for a diagnostic one.
+    """
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            command,
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"unavailable ({exc})"
+
+    match = _VERSION_TOKEN.search(f"{completed.stdout}\n{completed.stderr}")
+    return match.group(0) if match else "unknown"
+
+
+def _log_startup_diagnostics(jmeter_worker: JMeterWorker) -> None:
+    """State what this worker actually *is*, once, at boot.
+
+    Everything here is fixed for the process's whole life, which is why it is
+    logged once and not per run. It is also the set of facts that is hardest to
+    recover after the fact: the JMeter and Java versions are baked into the
+    image and recorded nowhere in the application (deliberately — the image is
+    their single source of truth, see ``docker/jmeter/Dockerfile``), so without
+    this line the only way to answer "which engine produced this result" is to
+    go and inspect a container that may no longer exist.
+
+    ``report_root`` is the workspace root resolved to an absolute path. It is
+    worth logging next to the configured value because they differ: the
+    configured path is relative, and a relative path resolved against the wrong
+    working directory is exactly how a run's artifacts end up somewhere the
+    server does not serve from.
+    """
+    workspace_root = settings.jmeter_workspace_dir
+    logger.info(
+        "JMeter worker agent starting",
+        extra={
+            "event": "jmeter_worker_startup",
+            "worker_id": jmeter_worker.worker_id,
+            "hostname": socket.gethostname(),
+            "jmeter_version": _tool_version([settings.jmeter_binary, "--version"]),
+            "java_version": _tool_version(["java", "-version"]),
+            "workspace_root": workspace_root,
+            "report_root": str(Path(workspace_root).resolve()),
+        },
+    )
+
+
 app = FastAPI(
     title="Guardrail Hub — JMeter Worker Agent",
     description="Executes JMeter test plans assigned by the mcp-server.",
@@ -83,6 +150,7 @@ app = FastAPI(
 )
 
 worker = build_worker()
+_log_startup_diagnostics(worker)
 
 
 @app.get("/health/live")
