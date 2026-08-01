@@ -32,6 +32,7 @@ import time
 from concurrent.futures import Executor, ThreadPoolExecutor
 from typing import Optional
 
+from app.constants.batch import BatchType
 from app.core.mcp_logger import MCPLogger
 from app.dao.base import BaseOperationDAO
 from app.integrations.owasp_zap.pool import OwaspZapPoolManager
@@ -141,7 +142,10 @@ class OwaspZapDispatcher:
             self._stop_event.wait(self._queue_poll_interval)
 
     def _dispatch_queued_operations(self) -> None:
-        queued = self._operation_dao.get_queued_operations()
+        # Poll only the ZAP lane. Without this filter the loop below would pick up
+        # another engine's rows, fail to resolve them against the ZAP registry, and
+        # mark them FAILED — see ADR-0011.
+        queued = self._operation_dao.get_queued_operations(BatchType.ALL_SCAN_TYPES)
 
         # Every poll is DEBUG-only so it never floods production logs.
         self._logger.debug("Polling queued operations (found %d)", len(queued))

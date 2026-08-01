@@ -24,7 +24,7 @@ non-zero exit code rather than serving requests against a missing schema.
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Collection, Optional
 
 from app.core.mcp_logger import MCPLogger
 from app.dao.base import BaseOperationDAO
@@ -299,17 +299,24 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
         finally:
             conn.close()
 
-    def get_queued_operations(self) -> list[OperationRecord]:
+    def get_queued_operations(
+        self, batch_types: Collection[str]
+    ) -> list[OperationRecord]:
         """
-        Return every ``QUEUED`` operation, oldest first — the Pool Manager's queue.
+        Return the ``QUEUED`` operations in *batch_types*, oldest first.
 
         Uses ``ORDER BY created_at ASC`` directly (backed by
         ``idx_operations_status_created_at``) instead of the base class's
-        fetch-then-sort fallback.
+        fetch-then-sort fallback. ``batch_type`` is a residual filter over the
+        already-small ``QUEUED`` set, so no additional index is needed.
+
+        Args:
+            batch_types: The queue lane this caller consumes (see
+                :meth:`app.dao.base.BaseOperationDAO.get_queued_operations`).
 
         Returns:
-            A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects,
-            oldest first.
+            A (possibly empty) list of ``QUEUED`` :class:`OperationRecord` objects
+            in the given lane, oldest first.
         """
         # High-frequency dispatcher poll: DEBUG so production logs stay clean.
         # The dispatcher emits INFO only when the queue depth actually changes.
@@ -320,8 +327,12 @@ class PostgresOperationDAO(PostgresDAO, BaseOperationDAO):
             with conn.cursor() as cur:
                 cur.execute(
                     f"SELECT {_LIST_COLUMNS} FROM operations "
-                    "WHERE status = %(status)s ORDER BY created_at ASC",
-                    {"status": OperationPhase.QUEUED},
+                    "WHERE status = %(status)s AND batch_type = ANY(%(batch_types)s) "
+                    "ORDER BY created_at ASC",
+                    {
+                        "status": OperationPhase.QUEUED,
+                        "batch_types": list(batch_types),
+                    },
                 )
                 rows = cur.fetchall()
                 columns = [d[0] for d in cur.description]
