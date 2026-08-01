@@ -201,6 +201,23 @@ class ExecutionOutcomeTests(unittest.TestCase):
         report = _await_state(worker, "op-1", JMeterExecutionState.FAILED)
         self.assertIn("jmeter not found", report.message)
 
+    def test_a_clean_exit_with_a_missing_artifact_reports_failure(self):
+        # JMeter can exit 0 having written no dashboard. Reporting that as
+        # success hands the Runtime a workspace whose files it will not find.
+        worker = self._worker_with(missing_artifacts=("html-report/index.html",))
+        worker.accept(_assignment())
+        report = _await_state(worker, "op-1", JMeterExecutionState.FAILED)
+        self.assertIn("html-report/index.html", report.message)
+
+    def test_a_missing_artifact_is_named_rather_than_counted(self):
+        worker = self._worker_with(
+            missing_artifacts=("test-results.jtl", "html-report/index.html")
+        )
+        worker.accept(_assignment())
+        report = _await_state(worker, "op-1", JMeterExecutionState.FAILED)
+        self.assertIn("test-results.jtl", report.message)
+        self.assertIn("html-report/index.html", report.message)
+
     def test_an_unexpected_worker_failure_is_still_reported(self):
         # A background thread dying silently would leave the Runtime polling a
         # state that never advances.
@@ -210,6 +227,86 @@ class ExecutionOutcomeTests(unittest.TestCase):
         worker.accept(_assignment())
         report = _await_state(worker, "op-1", JMeterExecutionState.FAILED)
         self.assertIn("boom", report.message)
+
+
+class ExecutionContextLoggingTests(unittest.TestCase):
+    """The pre-launch context line, and the one thing it must never contain.
+
+    Guardrail G1 is asserted at the point of use rather than only on the helper:
+    what matters is that the value the worker actually puts in a log line has
+    been through the redaction, not that a redaction function exists.
+    """
+
+    class _CapturingLogger:
+        def __init__(self):
+            self.records = []
+
+        def _record(self, msg, *args, extra=None, **kwargs):
+            self.records.append((msg, extra or {}))
+
+        info = warning = error = debug = critical = _record
+
+    def _context_for(self, target_url):
+        logger = self._CapturingLogger()
+        worker = JMeterWorker(
+            "jmeter-1", "/tmp/ws", runner=_FakeRunner(), logger=logger
+        )
+        worker.accept(_assignment(target_url=target_url))
+        _await_state(worker, "op-1", JMeterExecutionState.SUCCEEDED)
+        return next(
+            extra
+            for _, extra in logger.records
+            if extra.get("event") == "jmeter_execution_start"
+        )
+
+    def test_the_context_carries_every_field_needed_to_identify_the_run(self):
+        context = self._context_for("https://api.example.com/v1/orders")
+
+        self.assertEqual("op-1", context["operation_id"])
+        self.assertEqual("jmeter-1", context["worker_id"])
+        self.assertEqual("/tmp/ws/op-1", context["workspace"])
+        self.assertEqual("generated_jmx", context["execution_mode"])
+        self.assertEqual(5, context["thread_count"])
+        self.assertEqual(1, context["ramp_up_seconds"])
+        self.assertEqual(1, context["hold_seconds"])
+
+    def test_a_credential_in_the_target_url_is_never_logged(self):
+        context = self._context_for("https://svc:s3cr3t@api.example.com/v1/orders")
+
+        self.assertNotIn("s3cr3t", context["target_url"])
+        self.assertNotIn("svc", context["target_url"])
+        # Redacted, not discarded: the endpoint must still be identifiable.
+        self.assertEqual("https://api.example.com/v1/orders", context["target_url"])
+
+    def test_a_supplied_plan_is_reported_as_an_uploaded_execution(self):
+        logger = self._CapturingLogger()
+        worker = JMeterWorker(
+            "jmeter-1", "/tmp/ws", runner=_FakeRunner(), logger=logger
+        )
+        worker.accept(_assignment(jmx_plan=_PLAN))
+        _await_state(worker, "op-1", JMeterExecutionState.SUCCEEDED)
+
+        context = next(
+            extra
+            for _, extra in logger.records
+            if extra.get("event") == "jmeter_execution_start"
+        )
+        self.assertEqual("uploaded_jmx", context["execution_mode"])
+
+    def test_the_plan_xml_itself_is_never_logged(self):
+        # A plan can carry headers and request bodies; the context line
+        # describes the run, it does not reproduce its payload.
+        logger = self._CapturingLogger()
+        worker = JMeterWorker(
+            "jmeter-1", "/tmp/ws", runner=_FakeRunner(), logger=logger
+        )
+        worker.accept(_assignment())
+        _await_state(worker, "op-1", JMeterExecutionState.SUCCEEDED)
+
+        logged = " ".join(
+            f"{msg} {extra}" for msg, extra in logger.records
+        )
+        self.assertNotIn("jmeterTestPlan", logged)
 
 
 class ProcessRunnerTests(unittest.TestCase):
@@ -359,6 +456,54 @@ class ProcessRunnerTests(unittest.TestCase):
     def test_cancelling_an_unknown_run_is_not_an_error(self):
         # Cancellation racing with completion is normal, not exceptional.
         self.assertFalse(JMeterProcessRunner().cancel("never-started"))
+
+    def test_a_clean_exit_that_wrote_nothing_names_every_missing_artifact(self):
+        # `true` exits 0 and writes no files at all, which is the shape of a
+        # JMeter that dies after argument parsing. Only the plan — written by
+        # the runner itself before launch — should be found.
+        outcome = JMeterProcessRunner(binary="true").run(
+            "op-1", self._workspace(), _PLAN, timeout_seconds=10
+        )
+
+        self.assertEqual(
+            (
+                JMeterProcessRunner.RESULTS_FILE,
+                JMeterProcessRunner.ENGINE_LOG,
+                f"{JMeterProcessRunner.REPORT_DIR}/index.html",
+            ),
+            outcome.missing_artifacts,
+        )
+
+    def test_a_complete_workspace_reports_nothing_missing(self):
+        """A stand-in that writes exactly the files a real run leaves behind."""
+        producer = os.path.join(self.workspace_root, "artifact-producer")
+        with open(producer, "w", encoding="utf-8") as handle:
+            handle.write(
+                "#!/bin/sh\n"
+                f"touch {JMeterProcessRunner.RESULTS_FILE} "
+                f"{JMeterProcessRunner.ENGINE_LOG}\n"
+                f"mkdir -p {JMeterProcessRunner.REPORT_DIR}\n"
+                f"touch {JMeterProcessRunner.REPORT_DIR}/index.html\n"
+            )
+        os.chmod(producer, 0o755)
+
+        outcome = JMeterProcessRunner(binary=producer).run(
+            "op-1", self._workspace(), _PLAN, timeout_seconds=10
+        )
+
+        self.assertEqual((), outcome.missing_artifacts)
+        self.assertTrue(outcome.succeeded)
+
+    def test_a_terminated_run_is_not_reported_as_missing_artifacts(self):
+        # A timed-out run legitimately has no dashboard; naming those files
+        # would report a second, misleading failure alongside the real one.
+        runner = JMeterProcessRunner(
+            binary=self._long_running_binary(), terminate_grace_seconds=1.0
+        )
+        outcome = runner.run("op-1", self._workspace(), _PLAN, timeout_seconds=0.3)
+
+        self.assertTrue(outcome.timed_out)
+        self.assertEqual((), outcome.missing_artifacts)
 
     def test_a_rerun_starts_from_a_clean_workspace(self):
         runner = JMeterProcessRunner(binary="true")

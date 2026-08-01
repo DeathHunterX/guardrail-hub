@@ -31,6 +31,7 @@ either — they are the container's sidecar script, exactly as for a ZAP worker.
 import threading
 from typing import Dict, Optional
 
+from app.core.logger_utils import LoggerUtils
 from app.core.mcp_logger import MCPLogger
 from app.integrations.jmeter.process import (
     JMeterProcessError,
@@ -151,6 +152,7 @@ class JMeterWorker:
         workspace = f"{self._workspace_root}/{operation_id}"
         timeout = self._timeout_for(assignment)
 
+        self._log_execution_context(assignment, workspace, timeout)
         self._set_report(
             operation_id, JMeterExecutionState.RUNNING, "JMeter is running."
         )
@@ -183,6 +185,47 @@ class JMeterWorker:
             with self._lock:
                 if self._current_operation_id == operation_id:
                     self._current_operation_id = None
+
+    def _log_execution_context(
+        self,
+        assignment: JMeterAssignmentRequest,
+        workspace: str,
+        timeout: float,
+    ) -> None:
+        """Record what is about to be run, before it is run.
+
+        Everything here is known *before* launch on purpose: if the JVM never
+        comes up, this line is the only description of what was attempted, and
+        a post-hoc log would not exist. The nine fields are the ones needed to
+        answer "was this the run I think it was" without opening the JMX.
+
+        No secret is logged. The target is stripped of any embedded credential
+        (:meth:`LoggerUtils.redact_url_credentials`), the plan XML itself is
+        never logged — it can carry headers and body payloads — and the load
+        profile is plain integers the caller already supplied.
+        """
+        request = assignment.request
+        self._logger.info(
+            "Starting JMeter execution",
+            extra={
+                "event": "jmeter_execution_start",
+                "operation_id": assignment.operation_id,
+                "worker_id": self._worker_id,
+                "workspace": workspace,
+                "target_url": LoggerUtils.redact_url_credentials(request.target_url),
+                # The distinction that matters most when a run misbehaves: a
+                # generated plan is ours and reproducible from the profile
+                # below, an uploaded one is the caller's and the profile fields
+                # are recorded but not applied to it.
+                "execution_mode": (
+                    "uploaded_jmx" if request.jmx_plan is not None else "generated_jmx"
+                ),
+                "thread_count": request.thread_count,
+                "ramp_up_seconds": request.ramp_up_seconds,
+                "hold_seconds": request.hold_seconds,
+                "timeout_seconds": f"{timeout:.0f}",
+            },
+        )
 
     def _timeout_for(self, assignment: JMeterAssignmentRequest) -> float:
         """Derive this run's timeout from the declared load profile.
@@ -220,6 +263,17 @@ class JMeterWorker:
             return (
                 JMeterExecutionState.FAILED,
                 f"JMeter exited with code {outcome.exit_code}.",
+            )
+        if outcome.missing_artifacts:
+            # A zero exit with an incomplete workspace is the failure mode this
+            # branch exists for: reporting it as success hands the Runtime a
+            # workspace whose files it will read and not find, which surfaces
+            # three phases later as an unreadable JTL or a dead report link.
+            # Naming the files means the reply says what to go and look at.
+            return (
+                JMeterExecutionState.FAILED,
+                "JMeter exited cleanly but did not produce "
+                f"{', '.join(outcome.missing_artifacts)} in its workspace.",
             )
         return (JMeterExecutionState.SUCCEEDED, "JMeter completed.")
 

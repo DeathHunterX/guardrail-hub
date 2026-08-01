@@ -84,6 +84,33 @@ RUN set -eux; \
     rm "${tarball}" "${tarball}.sha512"; \
     ln -s "/opt/apache-jmeter-${JMETER_VERSION}/bin/jmeter" /usr/local/bin/jmeter
 
+# JVM heap for the JMeter process, pinned here because the image is the single
+# source of truth for everything about the engine — the same rule that governs
+# JMETER_VERSION above. There is deliberately no setting for this: heap is a
+# property of the host the load is generated from, not of the test being run,
+# and a caller who could raise it could OOM the worker for every other caller.
+#
+# `bin/jmeter` reads $HEAP and falls back to its own default when unset. These
+# are exactly that default's values as shipped in 5.6.3, so **nothing about this
+# run changes** — what changes is where the number comes from:
+#
+#   * Today the effective heap is whatever the bundled shell script happens to
+#     default to, which is invisible from this repository and can move under a
+#     JMeter upgrade. Pinning it makes a heap change a reviewed edit to this
+#     file instead of a side effect of bumping JMETER_VERSION.
+#   * -Xms == -Xmx is the predictability part. An expanding heap makes the JVM
+#     resize mid-run, and those pauses land inside the measurement window — a
+#     load generator that stalls reports latency the target never caused.
+#     Committing the full heap up front also fails at startup, loudly, if the
+#     container's memory limit cannot cover it, rather than 20 minutes into a
+#     run.
+#   * MaxMetaspaceSize bounds class metadata separately; it is unrelated to
+#     sample volume and does not need to grow with load.
+#
+# Raising this is a legitimate change for a worker driving very high thread
+# counts — edit it here, and give the container a memory limit above it.
+ENV HEAP="-Xms1g -Xmx1g -XX:MaxMetaspaceSize=256m"
+
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
