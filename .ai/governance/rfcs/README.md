@@ -18,3 +18,6 @@ Append-only, like Decisions. An RFC is `Proposed → Merged` or `Proposed → Re
 |---|---|---|---|
 | [0001](0001-acceptance-criteria.md) | Introduce Acceptance Criteria | Merged | 2026-07-06 |
 | [0002](0002-activate-core-guardrails.md) | Activate Core Guardrails | Merged | 2026-07-06 |
+| [0003](0003-change-governance.md) | Change Governance: Authority to Modify Architecture | Proposed | 2026-08-01 |
+| [0004](0004-confidence-policy.md) | Confidence-Based Decision Making | Proposed | 2026-08-01 |
+| [0005](0005-improvement-discovery.md) | Improvement Discovery | Proposed | 2026-08-01 |
