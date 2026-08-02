@@ -15,6 +15,18 @@ failing an operation orphaned by a removed worker) lives in
 owns the Worker Registry and the Operations DAO. The router only maps
 requests/responses and translates domain errors to HTTP status codes — it
 never touches the registry or the DAO directly.
+
+**Two prefixes, one implementation.** ``/zap-workers`` is the canonical surface
+and matches ``/jmeter-workers``; ``/workers`` is kept because that is what every
+running ZAP worker's sidecar already calls, and breaking it would strand live
+containers. Both serve the same handlers, so there is no second behaviour to
+keep in step.
+
+The one endpoint *not* re-registered on the legacy prefix is the worker list:
+``GET /workers`` now returns **every** engine's workers
+(``worker_directory_router``). ZAP's own list lives at ``GET /zap-workers``.
+That is the single deliberate change to this router's public surface, and it is
+the reason the canonical prefix exists at all.
 """
 
 from fastapi import APIRouter, HTTPException
@@ -29,11 +41,17 @@ from app.schemas.tools.owasp_zap.worker import (
 )
 from app.services.tools.owasp_zap.worker_service import ZapWorkerService
 
-zap_worker_router = APIRouter(prefix="/workers", tags=["OWASP ZAP Workers"])
+zap_worker_router = APIRouter(prefix="/zap-workers", tags=["OWASP ZAP Workers"])
+
+#: The prefix ZAP shipped with. Carries every endpoint below except the list,
+#: whose path is now the cross-engine view.
+zap_worker_legacy_router = APIRouter(prefix="/workers", tags=["OWASP ZAP Workers"])
+
 _service = ZapWorkerService()
 
 
 @zap_worker_router.post("/register", response_model=ZapWorkerRegisterResponse)
+@zap_worker_legacy_router.post("/register", response_model=ZapWorkerRegisterResponse)
 def register_worker(request: ZapWorkerRegisterRequest) -> ZapWorkerRegisterResponse:
     """Register a ZAP worker (called once by the worker at startup, safe to repeat)."""
     info = _service.register(
@@ -53,6 +71,7 @@ def register_worker(request: ZapWorkerRegisterRequest) -> ZapWorkerRegisterRespo
 
 
 @zap_worker_router.post("/heartbeat", response_model=ZapWorkerHeartbeatResponse)
+@zap_worker_legacy_router.post("/heartbeat", response_model=ZapWorkerHeartbeatResponse)
 def worker_heartbeat(request: ZapWorkerHeartbeatRequest) -> ZapWorkerHeartbeatResponse:
     """Record a heartbeat for a previously-registered worker.
 
@@ -76,11 +95,16 @@ def worker_heartbeat(request: ZapWorkerHeartbeatRequest) -> ZapWorkerHeartbeatRe
 
 @zap_worker_router.get("", response_model=list[ZapWorkerInfo])
 def list_workers() -> list[ZapWorkerInfo]:
-    """List every registered worker (observability / debugging only)."""
+    """List every registered ZAP worker (observability / debugging only).
+
+    Deliberately **not** mirrored onto ``/workers``: that path now answers with
+    every engine's workers. This one stays ZAP-only and ZAP-shaped.
+    """
     return _service.list_workers()
 
 
 @zap_worker_router.post("/{worker_id}/drain", response_model=ZapWorkerInfo)
+@zap_worker_legacy_router.post("/{worker_id}/drain", response_model=ZapWorkerInfo)
 def drain_worker(worker_id: str) -> ZapWorkerInfo:
     """Begin graceful maintenance: Active -> Draining.
 
@@ -94,6 +118,7 @@ def drain_worker(worker_id: str) -> ZapWorkerInfo:
 
 
 @zap_worker_router.delete("/{worker_id}")
+@zap_worker_legacy_router.delete("/{worker_id}")
 def remove_worker(worker_id: str) -> dict:
     """Hard-remove a worker from the registry (manual / scale-down cleanup).
 

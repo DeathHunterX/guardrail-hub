@@ -1,7 +1,7 @@
 ---
 id: agents/backend/backend-agent
 title: Backend Agent
-version: 1.2.0
+version: 1.3.0
 status: Active
 owner: backend-owner
 category: backend
@@ -9,11 +9,11 @@ domain: Backend
 decision_authority: [mcp-server/**]
 knowledge_sources: []
 skills_used: []
-standards_enforced: [standards/architecture/backend-layering@^1.1, standards/architecture/domain-layer@^1.0, standards/architecture/service-package-design@^1.0, standards/architecture/persistence-dao@^1.0, standards/coding/backend-naming@^1.0, standards/operational/logging@^1.0]
+standards_enforced: [standards/architecture/backend-layering@^1.2, standards/architecture/runtime-boundary@^1.0, standards/architecture/domain-layer@^1.0, standards/architecture/service-package-design@^1.0, standards/architecture/persistence-dao@^1.0, standards/coding/backend-naming@^1.0, standards/operational/logging@^1.0]
 workflows_used: []
 templates_used: []
 depends_on: []
-validated_against: [standards/architecture/backend-layering@1.1.0, standards/architecture/domain-layer@1.0.0, standards/architecture/service-package-design@1.0.0, standards/architecture/persistence-dao@1.0.1, standards/coding/backend-naming@1.0.0, standards/operational/logging@1.0.0]
+validated_against: [standards/architecture/backend-layering@1.2.0, standards/architecture/runtime-boundary@1.0.0, standards/architecture/domain-layer@1.0.0, standards/architecture/service-package-design@1.0.0, standards/architecture/persistence-dao@1.0.1, standards/coding/backend-naming@1.0.0, standards/operational/logging@1.0.0]
 ---
 
 # Backend Agent
@@ -30,7 +30,7 @@ validated_against: [standards/architecture/backend-layering@1.1.0, standards/arc
 | **Dependencies** | None on other agents yet (Frontend/Security/Infra agents not instantiated). |
 | **Knowledge Sources** | None as `knowledge/` units yet; grounds itself in `intelligence/` (system-overview, module-map, api-map, database-map) until Knowledge units exist. |
 | **Skills Used** | None as `skills/` units yet. |
-| **Standards Enforced** | `backend-layering`, `domain-layer`, `service-package-design`, `persistence-dao`, `backend-naming`, `logging` (pinned in frontmatter). `domain-layer` D2/D3 are additionally machine-checked by `aios arch`. |
+| **Standards Enforced** | `backend-layering`, `runtime-boundary`, `domain-layer`, `service-package-design`, `persistence-dao`, `backend-naming`, `logging` (pinned in frontmatter). `domain-layer` D2/D3 **and** `runtime-boundary` RB3/RB6 are additionally machine-checked by `aios arch`. |
 | **Workflows Used** | None yet (Workflow units not authored). |
 | **Templates Used** | None yet (Template units not authored). |
 | **Decision Authority** | May decide, unilaterally, backend implementation within `mcp-server/**` that conforms to the enforced Standards. |

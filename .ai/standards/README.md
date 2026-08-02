@@ -135,4 +135,4 @@ Per [RFC-0001](../governance/rfcs/0001-acceptance-criteria.md), a Standard that 
 
 ## Index
 
-Per-category unit lists are **generated** into each category's `INDEX.md` by `aios index` — that is the single source of truth, not a hand-maintained table here. Categories with units: [architecture/](architecture/INDEX.md), [coding/](coding/INDEX.md), [operational/](operational/INDEX.md). Categories `core`, `infrastructure`, `security`, `testing`, `documentation` have no units yet (their `INDEX.md` is generated when they gain their first).
+Per-category unit lists are **generated** into each category's `INDEX.md` by `aios index` — that is the single source of truth, not a hand-maintained table here. Categories with units: [core/](core/INDEX.md), [architecture/](architecture/INDEX.md), [coding/](coding/INDEX.md), [operational/](operational/INDEX.md). Categories `infrastructure`, `security`, `testing`, `documentation` have no units yet (their `INDEX.md` is generated when they gain their first).

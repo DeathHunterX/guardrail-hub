@@ -21,6 +21,50 @@ The Kernel, Router, and — per [Decision 0001](../decisions/0001-aios-bootstrap
 
 Every unit already names an Owner in its own contract (Knowledge, Skills, Standards, Workflows, Templates, Agents, Blueprints, Decisions all have this field). Governance adds one rule on top: only the named Owner — or [Review](../review/README.md), acting on the Owner's behalf for mechanical checks — may move a unit to `Active`. A contributor who isn't the Owner may propose a change (Draft), but Approval authority stays with Ownership, matching Phase 0's "human authority is final" principle scoped down to module level.
 
+That rule governs the lifecycle of *AIOS units*. The same principle applied to *product-code* changes — who may modify architecture, and under what bound — is [Change Governance](#change-governance) below.
+
+---
+
+## Change Governance
+
+Introduced by [RFC-0003](rfcs/0003-change-governance.md); specified in full in [change-authority.md](change-authority.md). It closes the question the rest of this framework left open: the AIOS could say whether a change was *correct* ([Standards](../standards/README.md)) and which correct option was *preferred* ([decision-policy](../standards/core/decision-policy.md)), but not whether the Agent proposing it was *authorized* to make it — leaving an Agent's technical capability as the effective limit on its authority.
+
+Seven concepts, each binding to something that already exists rather than standing alone:
+
+| Concept | What it adds | Binds to |
+|---|---|---|
+| **Repository Owner Authority** | Delegation table: Repository Owner → Module Owner → Capability Agent, each with an explicit bound | [Ownership & Contribution Model](#ownership--contribution-model); `aios validate` H2 (no overlapping Agent authority) |
+| **Architecture Change Classification** | An authority requirement per level — L1–L3 Agent-authorized, L4/L5 Owner-ratified | [decision-policy](../standards/core/decision-policy.md) D1, referenced not restated |
+| **Architecture Impact Analysis** | Classification + blast radius + reversibility for a *product-code* change, required at L3+ | Distinct from [Impact Analysis](#impact-analysis), which walks *unit* version dependencies |
+| **Branch Contract** | The unit of authorization: intent, allowed paths, classification ceiling, budget, who signed, expiry | The Agent's `decision_authority` glob |
+| **Scope Budget** | Declared tripwires (paths, level, new directories, contract changes, dependencies) | [backend-layering](../standards/architecture/backend-layering.md) R1 for the new-role case |
+| **Scope Drift Detection** | Diff-vs-contract comparison; drift returns to the Authority Check rather than failing | The [maintenance plan](../architecture/maintenance/architecture-maintenance-plan.md)'s 🔴/🟡/👤 tiering |
+| **Escalation Policy** | One consolidated list of when to escalate, to whom, and with what payload | [decision-policy](../standards/core/decision-policy.md) D2 + each Agent's Escalation Rules |
+
+The **Authority Check** gate consumes them, separating *can I technically perform this change* from *am I authorized to perform this change* — capability is never evidence of authority.
+
+**Workflow impact: none to the state machine.** The [Workflow framework](../workflows/README.md#workflow-state-machine)'s order is unchanged; Change Governance specialises the `Design` state into Impact Analysis → Authority Check, leaving Implementation, Validation, and Review with their existing owners. This framework's other gates — RFC, Impact Analysis, Acceptance, Review — are likewise unchanged; Change Governance names when an Agent must reach for them, and adds no third quality gate (see [Quality Control](#quality-control)).
+
+### Confidence-Based Decision Making
+
+Introduced by [RFC-0004](rfcs/0004-confidence-policy.md); specified in [confidence-policy.md](confidence-policy.md). Where Change Governance asks *am I authorized*, this asks **do I understand this well enough to act without checking** — the second, independent pass over the same [Authority Check](change-authority.md#authority-check).
+
+Four bands, recognised by description rather than by any numeric threshold: **High** proceeds; **Medium** proceeds with its assumptions written down; **Low** asks once, batched and decidable; **Very Low** recommends a planning discussion instead of opening an implementation. Five factors move the band — ambiguity, architectural impact, repository conventions, missing information, implementation risk — and the **weakest factor sets it rather than an average**, so one unknown in a high-impact area is not diluted by four things that were never in doubt.
+
+It targets two failure modes at once, because optimising against either alone produces the other: clarification requested for what the repository already answers, and fluent implementations of the wrong thing. Two rules carry most of that weight — uncertainty removable by *reading* `intelligence/` or the code is unread context, not low confidence; and architectural impact caps the band, so L4/L5 never reads High however familiar the pattern feels.
+
+**Nothing in the Kernel changes.** [Kernel](../kernel/README.md#when-to-stop-loading-context) and [Recovery](../kernel/recovery/README.md) already decide clarification-vs-assumption in binary and stay authoritative; the bands sit inside that binary and supply the *payload* it leaves open. [G5](../guardrails/core.md) already makes labelling an inference mandatory, which is what keeps the Medium band honest — this policy specifies the content of the label, never the obligation. [Review](../review/README.md)'s 12-dimension checklist is likewise untouched: confidence is an input to existing dimensions, and calibration evidence accumulates through [Memory](../memory/README.md)'s existing Session → Persistent path rather than a new metrics apparatus.
+
+### Improvement Discovery
+
+Introduced by [RFC-0005](rfcs/0005-improvement-discovery.md); specified in [improvement-discovery.md](improvement-discovery.md), with records in [`discoveries/`](discoveries/README.md). It closes a gap the two rules above left open: [Scope Budget](change-authority.md#scope-budget) sets bundled incidental refactors to zero and [decision-policy](../standards/core/decision-policy.md) names the opportunistic refactor an anti-pattern, but neither said where a discovery should *go*. Without a fourth exit, insight found at the moment the code is best understood is implemented anyway, forgotten, or written into a chat that ends.
+
+**Execution Commitment** is the governing idea: an approved plan is a commitment, and discovering a better solution does not retroactively change what was authorized. Three questions can override it — is the discovery required for **correctness**, for **safety**, or for **architecture integrity**? Each routes to a mechanism that already exists ([Validation](../kernel/validation/README.md), [guardrails/core.md](../guardrails/core.md), [decision-policy](../standards/core/decision-policy.md)). If none applies, the discovery is recorded and implementation continues. Five [stopping criteria](improvement-discovery.md#stopping-criteria) suspend work, and they re-enter the **existing** `Implementation → Authority Check` drift path — no new gate, no new state.
+
+**It is not a backlog, structurally rather than by assertion:** a record carries no assignee, no priority, no effort estimate, no due date, and no `Open`/`Done`. Its lifecycle mirrors [Memory](../memory/README.md)'s — `Recorded → Promoted | Superseded | Declined` — so an entry left at `Recorded` is a fact that stays true, not a ticket going stale, and `Declined` carries its reason so the same discovery is not re-argued yearly.
+
+For **Review**, implementation quality and discovery quality are evaluated independently: an implementation is *not* incomplete for having declined a discovered improvement — judging it so would re-create through review pressure the very scope creep the Scope Budget forbids. The [12-dimension checklist](../review/README.md#what-every-review-evaluates) is untouched. The value beneath all of it lives in [engineering-philosophy](../knowledge/concept/engineering-philosophy.md) P9, and the intended long-run output is [decision-policy](../standards/core/decision-policy.md) D3 evidence assembling itself — several records converging on one component is how a ratified L4 should be reached.
+
 ---
 
 ## RFC Process

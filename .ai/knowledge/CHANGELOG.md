@@ -1,0 +1,9 @@
+# Changelog — knowledge
+
+Per-module changelog, per [governance/README.md](../governance/README.md#changelog-release-notes-migration-guides). One entry per version bump / status transition. Newest first.
+
+| Date | Unit | Change | Reason / Ref |
+|---|---|---|---|
+| 2026-08-01 | concept/engineering-philosophy | 1.0.0 authored; status **Review** | First unit in this module. Declares the repository's default engineering tendencies (P1–P8) so preferences previously re-supplied in each prompt become versioned, discoverable context. Filed as Knowledge rather than a Standard so it states a *preference*, not a rule — and so [AGENTS.md](../../AGENTS.md)'s conflict order already ranks it below every Guardrail and Standard without any edit to that order. Overlapping content is linked, not restated: P1–P3 and P8 point at [decision-policy](../standards/core/decision-policy.md) D1/D3 and [change-authority](../governance/change-authority.md) for the mechanism. Additive unit in an approved module — [Impact Analysis](../governance/README.md#impact-analysis), no [RFC](../governance/README.md#rfc-process). |
+| 2026-08-01 | concept/engineering-philosophy | **P9** added — *prefer disciplined execution over continuous optimization* | Supplies the value beneath [improvement-discovery](../governance/improvement-discovery.md), so that capability references a why rather than arguing one. Additive; would be a Minor bump if released, but the unit is still at `Review`, so the version is unchanged. Kept to 6 lines — this unit is always-loaded on the Product Lane. [RFC-0005](../governance/rfcs/0005-improvement-discovery.md). |
+| | (routing) | Both Domain Routers' always-loaded set gains this unit | A philosophy that is not reached on ordinary tasks cannot become default behaviour. Tier 1 addition only; `guardrails/core.md` (Tier G) and `router/MANIFEST.md` (Tier 0) are untouched, so no session's always-resident budget changes. |

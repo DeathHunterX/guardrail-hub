@@ -123,7 +123,70 @@ services:
     networks:
       - app-network
       - shared-network
-      
+
+  # Named `jmeter-worker`, not `jmeter`, and deliberately *not* symmetrically
+  # with the `zap` service above — the asymmetry in the names records a real
+  # asymmetry in what the two containers are:
+  #
+  #   zap           = the ZAP daemon (a third-party tool) plus a registration
+  #                   sidecar. The container really is "ZAP".
+  #   jmeter-worker = our own FastAPI worker agent, which embeds the JMeter
+  #                   CLI. It owns assignment intake, the run subprocess, its
+  #                   local execution state, and its own registration and
+  #                   heartbeat. Calling it "jmeter" names the least
+  #                   interesting thing inside it.
+  #
+  # This is the same distinction ADR-0012 drew when it gave JMeter a runtime
+  # boundary (app/runtime/jmeter/) and gave ZAP none: ZAP ships a daemon we
+  # talk to, JMeter ships a CLI we host. Renaming `zap` to match would assert a
+  # symmetry that does not exist.
+  jmeter-worker:
+    build:
+      context: .
+      dockerfile: docker/jmeter/Dockerfile
+    # No container_name, for the same reason as the zap service: a fixed name
+    # blocks `docker compose up --scale jmeter-worker=N`. Each replica
+    # self-registers under its own Docker-assigned hostname — see
+    # docker/jmeter/register-worker.sh.
+    # The profile stays `jmeter`: a profile names the capability an operator is
+    # switching on, not the container that provides it, and it stays parallel
+    # to the `zap` profile.
+    profiles:
+      - jmeter
+    depends_on:
+      mcp-server:
+        condition: service_started
+    environment:
+      MCP_SERVER_INTERNAL_URL: "http://mcp-server:${MCP_SERVER_PORT:-8787}"
+      JMETER_AGENT_PORT: "8090"
+      JMETER_WORKER_HEARTBEAT_INTERVAL_SECONDS: "${JMETER_WORKER_HEARTBEAT_INTERVAL_SECONDS:-30}"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+      # No JMeter version variable, deliberately: the version is pinned in
+      # docker/jmeter/Dockerfile and that image is the only source of truth
+      # for it.
+    expose:
+      - "8090"
+    volumes:
+      # Shared with mcp-server on purpose: the worker writes each run's report
+      # directly into the tree the server serves at /public/**, so there is no
+      # artifact upload step. This is what ties a worker to the same host as
+      # the server today — see JMeterRuntime._artifacts_for for the note on
+      # replacing it with an upload if workers ever run elsewhere.
+      - ./public:/app/public
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - curl -fsS -m 3 http://127.0.0.1:8090/health/live || exit 1
+      interval: 300s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+    networks:
+      - app-network
+      - shared-network
+
 
 networks:
   app-network:

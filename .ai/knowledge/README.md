@@ -115,7 +115,7 @@ Follows the general unit lifecycle from [Architecture](../foundation/architectur
 
 ## Index
 
-No knowledge units exist yet in this module's per-category addressable-unit form. Categories above are reserved addresses, ready for the first unit.
+Per-category unit lists are **generated** into each category's `INDEX.md` by `aios index` — that is the single source of truth, not the table below, which records only which categories have been opened.
 
 | Category | Units | Status |
 |---|---|---|
@@ -126,6 +126,8 @@ No knowledge units exist yet in this module's per-category addressable-unit form
 | security | 0 | — |
 | platform | 0 | — |
 | integration | 0 | — |
-| concept | 0 | — |
+| concept | 1 | [INDEX](concept/INDEX.md) — `engineering-philosophy` (Review) |
+
+The first unit is [concept/engineering-philosophy](concept/engineering-philosophy.md): the repository's default engineering tendencies. It is a deliberate test of the boundary this module's opening line draws — it states neither a repo fact (that would belong in [`intelligence/`](../intelligence/README.md)) nor a rule (that would belong in [`standards/`](../standards/README.md)), but a **declared team convention**, the third epistemic status [foundation/vision.md](../foundation/vision.md#4-principles-that-must-never-be-violated) names alongside declared fact and inference. Values rank below Standards in [AGENTS.md](../../AGENTS.md)'s conflict order, which is what keeps a preference from ever reading as a mandate.
 
 **Concrete facts about the current Guardrail Hub repository already exist**, but live in [`.ai/intelligence/`](../intelligence/README.md) rather than here — that module uses a fixed, task-oriented document set (system overview, API map, database map, security map, etc.) instead of this module's per-category addressable-unit pattern. See [intelligence/README.md#relationship-to-the-aios](../intelligence/README.md#relationship-to-the-aios) for how the two are meant to coexist without duplicating each other. When the first true Knowledge unit is authored here, check `intelligence/` first — a Knowledge unit that just restates an `intelligence/` fact in the addressable-unit format would be exactly the duplication [Granularity](#granularity) above warns against; author a Knowledge unit here only when it needs something `intelligence/`'s document-level granularity can't give it (independent versioning, per-fact ownership, Router-level addressing at a narrower grain).

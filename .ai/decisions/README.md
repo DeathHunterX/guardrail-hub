@@ -42,3 +42,6 @@ Append-only. A later decision that changes course adds a new record marking the 
 | [0007 — Domain Layer Justification](0007-domain-layer-justification.md) | Accepted | 2026-07-20 |
 | [0008 — The Canonical Domain Language](0008-domain-ubiquitous-language.md) | Accepted | 2026-07-20 |
 | [0009 — Execution Capability](0009-execution-capability.md) | Proposed | 2026-07-20 |
+| [0010 — The JMeter Result Contract](0010-jmeter-result-contract.md) | Accepted | 2026-07-28 |
+| [0011 — Tool-Scoped Queue Consumption](0011-tool-scoped-queue-consumption.md) | Accepted | 2026-07-28 |
+| [0012 — Runtime Boundaries: a category, not a new backend role](0012-runtime-boundary.md) | Proposed | 2026-07-29 |

@@ -1,12 +1,12 @@
 ---
 id: evaluation/benchmarks/fix-bug
 title: Benchmark — Fix Bug
-version: 1.0.2
+version: 1.0.3
 status: Active
 owner: evaluation-owner
 category: benchmark
 depends_on: [agents/backend/backend-agent]
-validated_against: [agents/backend/backend-agent@1.2.0]
+validated_against: [agents/backend/backend-agent@1.3.0]
 ---
 
 # Benchmark — Fix Bug
@@ -44,3 +44,9 @@ Backend Agent bumped 1.0.0 → 1.1.0 (additive: `standards/architecture/service-
 Backend Agent bumped 1.1.0 → 1.2.0 (additive: `standards/architecture/domain-layer` added to `standards_enforced`, per [Decision 0007](../../decisions/0007-domain-layer-justification.md) / [0008](../../decisions/0008-domain-ubiquitous-language.md)). Checked against the contract: the routing path and success criteria are unchanged, and the Expected Context answer key still resolves to "the one relevant Standard" — fixing a localized bug in `ZapApiScanService` neither defines a business concept nor touches `domain/`, so `domain-layer` stays out of the minimal context. The benchmark's *purpose* (proving minimal-context routing) is unaffected by a Domain task-subtype existing in the Router, because this scenario does not match that row. Re-pinned to 1.2.0; no re-run required.
 
 > Coverage gap noted (not a regression): no benchmark exercises the Domain task subtype — a task that *should* load `domain-layer`. Worth adding a `add-business-concept` benchmark when the Evaluation module next gains units; recorded here so the gap is declared rather than silent.
+
+## Revalidation — 2026-07-29 (v1.0.3)
+
+Backend Agent bumped 1.2.0 → 1.3.0 (additive: `standards/architecture/runtime-boundary` added to `standards_enforced`, and `backend-layering` re-pinned to 1.2.0, per [Decision 0012](../../decisions/0012-runtime-boundary.md)). Checked against the contract: routing path, Expected Context answer key and success criteria are all unchanged. `ZapApiScanService` is a service in the MCP server, not an independently deployed process, so the new Router row (`app/runtime/`) does not match this scenario and `runtime-boundary` stays out of the minimal context. The `backend-layering` re-pin is likewise inert here: its carve-out removes `app/runtime/` from scope, and this task touches `services/`. Re-pinned to 1.3.0; no re-run required.
+
+> The same coverage gap now applies one more time: no benchmark exercises the runtime-boundary task subtype either. The two gaps share a cause — Evaluation has one backend benchmark, and it is deliberately the *minimal-context* one — so the fix is one new benchmark per task subtype, not a change here. Declared, not silent.
