@@ -18,6 +18,11 @@ export function useLocalStorage<T>(
   // though the write didn't stick.
   const overrideRef = useRef<{ key: string; value: T } | null>(null);
   const listenerRef = useRef<(() => void) | null>(null);
+  // Caches the parsed value against the raw string it came from, so
+  // getSnapshot returns the same reference when localStorage hasn't
+  // actually changed — JSON.parse builds a new object every call otherwise,
+  // and useSyncExternalStore treats that as an infinite loop.
+  const parsedRef = useRef<{ raw: string | null; value: T } | null>(null);
 
   const subscribe = useCallback((onChange: () => void) => {
     listenerRef.current = onChange;
@@ -30,12 +35,23 @@ export function useLocalStorage<T>(
     if (overrideRef.current?.key === key) {
       return overrideRef.current.value;
     }
+    let raw: string | null;
     try {
-      const stored = window.localStorage.getItem(key);
-      return stored !== null ? (JSON.parse(stored) as T) : initialValue;
+      raw = window.localStorage.getItem(key);
     } catch {
       return initialValue;
     }
+    if (parsedRef.current?.raw === raw) {
+      return parsedRef.current.value;
+    }
+    let value: T;
+    try {
+      value = raw !== null ? (JSON.parse(raw) as T) : initialValue;
+    } catch {
+      value = initialValue;
+    }
+    parsedRef.current = { raw, value };
+    return value;
   }, [key, initialValue]);
 
   const getServerSnapshot = useCallback(() => initialValue, [initialValue]);

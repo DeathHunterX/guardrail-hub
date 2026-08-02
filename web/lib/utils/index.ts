@@ -1,2 +1,10 @@
 export { cn } from "./cn";
-export { formatCompactNumber } from "./format";
+export { formatCompactNumber, formatRelativeTime, getInitials } from "./format";
+export {
+  getPasswordStrength,
+  isPasswordValid,
+  isValidEmail,
+  passwordRequirements,
+  type PasswordRequirement,
+  type PasswordStrength,
+} from "./validation";

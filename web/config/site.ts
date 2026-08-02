@@ -8,6 +8,9 @@ export const siteConfig = {
     signUp: "/signup",
     signIn: "/signin",
     bookDemo: "/demo",
+    forgotPassword: "/forgot-password",
+    dashboard: "/dashboard",
+    settings: "/settings/profile",
   },
 } as const;
 

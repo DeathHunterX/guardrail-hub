@@ -26,18 +26,28 @@ import {
 } from "@/components/ui/command";
 import { siteConfig } from "@/config/site";
 import { externalLinks } from "@/constants/external-links";
+import { appNavigation } from "@/content/app";
 import { navigation } from "@/content/site";
 
 interface CommandMenuProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /**
+   * "marketing" (default) navigates the public site; "app" navigates the
+   * authenticated shell's modules and drops the marketing-only groups.
+   */
+  scope?: "marketing" | "app";
 }
 
 /**
  * Global command palette (⌘K). Lazy-loaded by HeaderActions on first intent,
  * so cmdk never enters the initial bundle.
  */
-export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
+export function CommandMenu({
+  open,
+  onOpenChange,
+  scope = "marketing",
+}: CommandMenuProps) {
   const router = useRouter();
   const { setTheme } = useTheme();
 
@@ -55,18 +65,31 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
         <CommandGroup heading="Navigate">
-          {navigation.groups.flatMap((group) =>
-            group.items.map((item) => (
-              <CommandItem
-                key={item.href}
-                value={`${group.label} ${item.label}`}
-                onSelect={() => run(() => router.push(item.href))}
-              >
-                <item.icon aria-hidden />
-                {item.label}
-              </CommandItem>
-            )),
-          )}
+          {scope === "app"
+            ? appNavigation.flatMap((section) =>
+                section.items.map((item) => (
+                  <CommandItem
+                    key={item.href}
+                    value={`${section.label ?? ""} ${item.label}`}
+                    onSelect={() => run(() => router.push(item.href))}
+                  >
+                    <item.icon aria-hidden />
+                    {item.label}
+                  </CommandItem>
+                )),
+              )
+            : navigation.groups.flatMap((group) =>
+                group.items.map((item) => (
+                  <CommandItem
+                    key={item.href}
+                    value={`${group.label} ${item.label}`}
+                    onSelect={() => run(() => router.push(item.href))}
+                  >
+                    <item.icon aria-hidden />
+                    {item.label}
+                  </CommandItem>
+                )),
+              )}
         </CommandGroup>
         <CommandGroup heading="Resources">
           <CommandItem
@@ -79,9 +102,7 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
           </CommandItem>
           <CommandItem
             onSelect={() =>
-              run(() =>
-                window.open(externalLinks.github, "_blank", "noopener"),
-              )
+              run(() => window.open(externalLinks.github, "_blank", "noopener"))
             }
           >
             <Github aria-hidden />
@@ -102,24 +123,26 @@ export function CommandMenu({ open, onOpenChange }: CommandMenuProps) {
             Changelog
           </CommandItem>
         </CommandGroup>
-        <CommandGroup heading="Get started">
-          <CommandItem
-            onSelect={() => run(() => router.push(siteConfig.app.signUp))}
-          >
-            <ArrowRight aria-hidden />
-            Start Free
-          </CommandItem>
-          <CommandItem
-            onSelect={() => run(() => router.push(siteConfig.app.bookDemo))}
-          >
-            <CalendarClock aria-hidden />
-            Book Demo
-          </CommandItem>
-          <CommandItem onSelect={() => run(() => router.push("#agent"))}>
-            <Bot aria-hidden />
-            Meet the AI agent
-          </CommandItem>
-        </CommandGroup>
+        {scope === "app" ? null : (
+          <CommandGroup heading="Get started">
+            <CommandItem
+              onSelect={() => run(() => router.push(siteConfig.app.signUp))}
+            >
+              <ArrowRight aria-hidden />
+              Start Free
+            </CommandItem>
+            <CommandItem
+              onSelect={() => run(() => router.push(siteConfig.app.bookDemo))}
+            >
+              <CalendarClock aria-hidden />
+              Book Demo
+            </CommandItem>
+            <CommandItem onSelect={() => run(() => router.push("#agent"))}>
+              <Bot aria-hidden />
+              Meet the AI agent
+            </CommandItem>
+          </CommandGroup>
+        )}
         <CommandSeparator />
         <CommandGroup heading="Theme">
           <CommandItem onSelect={() => run(() => setTheme("light"))}>
