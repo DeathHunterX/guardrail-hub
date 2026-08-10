@@ -1,0 +1,27 @@
+# =============================================================================
+# Model Registry — Phase 2 placeholder
+# =============================================================================
+#
+# This file is intentionally EMPTY in Phase 2. The registry runtime loads
+# this file at startup; an empty file produces an empty model set, which
+# is the correct state for Phase 2 (no models registered yet).
+#
+# Schema (Phase 3+ will populate this):
+#
+#   models:
+#     - model_id: llama-3-8b                   # required, unique
+#       provider_id: ollama-local              # required, must resolve to a provider
+#       model_type: chat                       # required, enum
+#       deployment_name: llama3                # optional, provider-internal name
+#       context_window: 8192                   # optional, positive integer
+#       priority: 100                          # optional, default: 100, [0, 100]
+#       capabilities:                          # required, list of Capability
+#         - chat
+#       metadata:                              # optional, dict
+#         input_cost_per_1k: 0.0
+#         output_cost_per_1k: 0.0
+#
+# Reference: Decision 0014 §3, .ai/standards/architecture/model-registry.md,
+#            .ai/playbooks/intelligence/add-model.md
+#
+models: []

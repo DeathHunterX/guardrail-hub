@@ -16,6 +16,11 @@ until lifespan startup completes, and aborts the whole process (non-zero
 exit) if that phase raises — so "stop startup on migration failure, exit
 non-zero" falls directly out of raising here rather than being a convention
 someone has to remember to check.
+
+Phase 2 adds a pre-step (step 0): the Intelligence Registry Runtime is
+constructed and started before everything else. If the registry YAML is
+missing or invalid, the application refuses to boot — same fail-fast
+contract as the database schema check.
 """
 
 from dataclasses import dataclass
@@ -44,6 +49,10 @@ class StartupResult:
     elapsed-time refresh ticker; and ``operation_service``/``dao`` let the
     shutdown path fail any operation still RUNNING at teardown. All are
     process-scoped singletons assembled once here.
+
+    ``registry_runtime`` (Phase 2) is the Intelligence Layer's
+    :class:`RegistryRuntime` — it owns the in-memory catalog built from
+    ``providers.yaml`` / ``models.yaml``. Held for shutdown symmetry.
     """
 
     dispatcher: object
@@ -51,6 +60,7 @@ class StartupResult:
     dao: object
     notifier: object = None
     jmeter_dispatcher: object = None
+    registry_runtime: object = None
 
 
 def recover_interrupted_operations(
@@ -143,7 +153,38 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
             "queue dispatcher will not start. Endpoints that don't require "
             "persistence (health, etc.) are unaffected."
         )
-        return None
+
+    # 0. Intelligence Registry Runtime — built first so the catalog is
+    #    available before any consumer (Provider Manager, Health Monitor,
+    #    future routing layers) reads it. Fail-fast on registry errors
+    #    matches the database schema fail-fast contract below.
+    from app.bootstrap import build_registry_runtime  # noqa: PLC0415
+
+    registry_runtime = build_registry_runtime(config=settings)
+    try:
+        registry_runtime.start()
+    except FileNotFoundError as exc:
+        logger.error("Startup aborted — registry file missing: %s", exc)
+        raise StartupError(f"Intelligence registry file missing: {exc}") from exc
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Startup aborted — registry load/validation failed: %s", exc)
+        raise StartupError(f"Intelligence registry failed: {exc}") from exc
+
+    if settings.database_provider == "NONE":
+        logger.info(
+            "Startup sequence complete (minimal) — registry runtime built "
+            "(%d provider(s), %d model(s))",
+            len(registry_runtime.catalog.iter_providers()),
+            len(list(registry_runtime.catalog.iter_models())),
+        )
+        return StartupResult(
+            dispatcher=None,
+            operation_service=None,
+            dao=None,
+            notifier=None,
+            jmeter_dispatcher=None,
+            registry_runtime=registry_runtime,
+        )
 
     # 1. Database Ready / 2. Run Migrations / 3. Verify required tables
     from app.dao.operation_dao import get_operation_dao  # noqa: PLC0415
@@ -204,8 +245,11 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
 
     logger.info(
         "Startup sequence complete — database ready, notification pipeline wired "
-        "(%d channel(s)), ZAP and JMeter queue dispatchers running",
+        "(%d channel(s)), ZAP and JMeter queue dispatchers running; "
+        "intelligence registry: %d provider(s), %d model(s)",
         len(flow.notification_service.channels),
+        len(registry_runtime.catalog.iter_providers()),
+        len(list(registry_runtime.catalog.iter_models())),
     )
     return StartupResult(
         dispatcher=dispatcher,
@@ -213,4 +257,5 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
         dao=dao,
         notifier=flow.notifier,
         jmeter_dispatcher=jmeter_dispatcher,
+        registry_runtime=registry_runtime,
     )

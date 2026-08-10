@@ -15,6 +15,7 @@ with settings and the real DAO when one exists.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from app.constants.batch import BatchType
@@ -247,6 +248,36 @@ def build_zap_evaluation_service(operation_service, *, scan_runner=None):
 
         scan_runner = ZapScanRunner()
     return EvaluationService(operation_service, scan_runner)
+
+
+def build_registry_runtime(config=None):
+    """Construct the :class:`RegistryRuntime` from settings.
+
+    Phase 2: builds the runtime but does not call ``start()``. The bootstrap
+    layer (``app/core/startup.py``) calls ``start()`` so the catalog is
+    built before the HTTP server accepts traffic.
+
+    Args:
+        config: Settings object; defaults to ``app.core.config.settings``
+            (lazy import to keep this module light).
+
+    Returns:
+        A configured but unstarted :class:`RegistryRuntime`.
+    """
+    if config is None:
+        from app.core.config import settings as config
+
+    from app.intelligence.runtime import (
+        RegistryRuntime,
+        RegistryRuntimeSettings,
+    )
+
+    settings = RegistryRuntimeSettings(
+        providers_path=Path(config.registry_providers_path),
+        models_path=Path(config.registry_models_path),
+        require_files=bool(config.registry_require_files),
+    )
+    return RegistryRuntime(settings=settings)
 
 
 def build_notification_flow_from_settings(
