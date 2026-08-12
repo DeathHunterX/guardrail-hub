@@ -583,3 +583,75 @@ def build_operation_notification_flow_from_settings(
         dispatcher=dispatcher,
         notifier=notifier,
     )
+
+# ----------------------------------------------------------------------
+# Phase 5 — Conversation Context
+# ----------------------------------------------------------------------
+
+
+def build_conversation_service(
+    *,
+    registry_runtime,
+    event_dispatcher,
+    dao=None,
+):
+    """Build Phase 5 ConversationService and its ConversationStore adapter.
+
+    This function follows the same functional-assembly pattern as the rest of
+    bootstrap.py: it receives all its dependencies and returns a wiring graph.
+    It is testable with no mocks beyond injected fakes.
+
+    The store adapter is selected from the database provider:
+      - "POSTGRES"  -> PostgresConversationStore
+      - "NONE"      -> InMemoryConversationStore  (testing / no-persistence)
+
+    Args:
+        registry_runtime: The started RegistryRuntime (for future LLMService wiring
+            when provider_manager is needed).
+        event_dispatcher: An InProcessEventDispatcher (EventPublisher) for audit.
+        dao: Optional BaseOperationDAO. When None, InMemoryConversationStore is used
+            (useful for tests or DATABASE_PROVIDER=NONE).
+
+    Returns:
+        A tuple of (ConversationStore, ConversationService).
+    """
+    from app.core.config import settings
+    from app.core.events.dispatcher import InProcessEventDispatcher
+    from app.intelligence.conversation.infrastructure.in_memory_store import (
+        InMemoryConversationStore,
+    )
+    from app.intelligence.inference.services.llm_service import LLMService
+    from app.intelligence.providers.provider_manager import ProviderManager
+    from app.services.conversation.conversation_service import ConversationService
+
+    # Build LLMService from the already-started registry runtime.
+    # RegistryRuntime.start() must have been called before this function.
+    catalog = registry_runtime.catalog
+    provider_manager = ProviderManager(catalog)
+    # Note: provider_manager.start() must be called by the caller before
+    # the ConversationService is used for inference.  This function only
+    # assembles the wiring; lifecycle management is the caller's responsibility.
+    llm_service = LLMService(
+        provider_manager=provider_manager,
+        catalog=catalog,
+    )
+
+    # Select the ConversationStore adapter based on database provider.
+    if dao is not None:
+        # DAO is present; use the PostgresConversationStore adapter.
+        # (DAO is passed as a signal that a real DB is available.)
+        from app.intelligence.conversation.infrastructure.dao_store import (
+            PostgresConversationStore,
+        )
+        store: "ConversationStore" = PostgresConversationStore()
+    else:
+        # No DAO (DATABASE_PROVIDER=NONE or testing): use in-memory store.
+        store = InMemoryConversationStore()
+
+    conversation_service = ConversationService(
+        store=store,
+        llm_service=llm_service,
+        publisher=event_dispatcher,
+    )
+
+    return store, conversation_service

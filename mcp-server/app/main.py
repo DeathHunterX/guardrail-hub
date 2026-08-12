@@ -19,6 +19,7 @@ from app.routers.endpoints import MCP_OPERATIONS, tools_router
 from app.routers.public.health_router import health_router
 from app.routers.public.jmeter_worker_router import jmeter_worker_router
 from app.routers.public.worker_directory_router import worker_directory_router
+from app.routers.public.conversation_router import conversation_router
 from app.routers.public.zap_worker_router import (
     zap_worker_legacy_router,
     zap_worker_router,
@@ -63,6 +64,7 @@ async def lifespan(_app):
     from app.core.startup import run_startup_sequence
 
     startup = run_startup_sequence(settings)
+    _app.state.conversation_service = startup.conversation_service
 
     reporter = None
     try:
@@ -189,6 +191,7 @@ app.include_router(zap_worker_router)
 app.include_router(zap_worker_legacy_router)
 app.include_router(jmeter_worker_router)
 app.include_router(tools_router)
+app.include_router(conversation_router)
 
 # Static files — generic public asset server (reports, future tools UI, etc.)
 _public_dir = Path(ReportPaths.BASE_DIR)
