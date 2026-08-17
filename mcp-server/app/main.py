@@ -63,7 +63,7 @@ async def lifespan(_app):
     # happen — which, for uvicorn, is exactly "this lifespan startup returns".
     from app.core.startup import run_startup_sequence
 
-    startup = run_startup_sequence(settings)
+    startup = await run_startup_sequence(settings)
     _app.state.conversation_service = startup.conversation_service
 
     reporter = None
@@ -150,6 +150,14 @@ async def lifespan(_app):
     #    of DATABASE_PROVIDER so the registry is symmetric across modes.
     #    No-op today but kept for future phases (hot-reload, SDK lifetime).
     if startup is not None:
+        # Phase 7: stop all providers before shutting down the registry runtime.
+        # Preserves shutdown ordering: providers -> registry.
+        try:
+            if startup.provider_manager is not None:
+                await startup.provider_manager.stop()
+        except Exception:  # noqa: BLE001 - shutdown must never crash teardown
+            pass
+
         try:
             if startup.registry_runtime is not None:
                 startup.registry_runtime.stop()

@@ -151,10 +151,12 @@ class LLMService:
         model: Optional[str] = None,
         provider: Optional[str] = None,
         **options: Any,
-    ) -> AsyncIterator[str]:
+    ) -> tuple[str, AsyncIterator[str]]:
         """Generate a streaming chat completion.
 
-        Yields text chunks as they arrive from the provider.
+        Yields text chunks as they arrive from the provider. Returns the
+        resolved model ID alongside the chunk stream so callers can report
+        which model generated the response.
 
         Args:
             messages: Conversation history, oldest to newest.
@@ -162,8 +164,8 @@ class LLMService:
             provider: Specific provider_id. If None, the router selects.
             **options: Forwarded as ChatOptions fields.
 
-        Yields:
-            Text chunks of the response.
+        Returns:
+            A tuple of (resolved_model_id, AsyncIterator of text chunks).
 
         Raises:
             LLMModelNotFoundError: No capable model found.
@@ -172,7 +174,8 @@ class LLMService:
         """
         prov, model_id = self._resolve(Capability.CHAT, model, provider)
         opts = ChatOptions(model=model_id, **options)
-        return prov.chat_stream(messages, opts)  # type: ignore[return-value]
+        stream = prov.chat_stream(messages, opts)  # type: ignore[return-value]
+        return model_id, stream
 
     # ------------------------------------------------------------------
     # Embeddings

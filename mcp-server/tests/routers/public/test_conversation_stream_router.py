@@ -87,8 +87,9 @@ class FakeConversationService:
         )
 
         # Use override if set; otherwise yield a fixed 4-chunk sequence.
+        resolved_model = model or "default-model"
         if self._override_stream is not None:
-            return summary, self._override_stream
+            return summary, resolved_model, self._override_stream
 
         async def default_stream():
             if self._override_stream_exc is not None:
@@ -97,7 +98,7 @@ class FakeConversationService:
             for chunk in ["Hello", " ", "world", "!"]:
                 yield chunk
 
-        return summary, default_stream()
+        return summary, resolved_model, default_stream()
 
     def finalise_stream(
         self,
@@ -153,6 +154,7 @@ async def _sse_event(event_type: str, data: object) -> str:
 async def _event_generator_mirror(
     conversation_id: str,
     prior_summary,
+    resolved_model: str,
     chunk_stream: AsyncIterator[str],
     svc,
 ) -> AsyncIterator[str]:
@@ -161,7 +163,6 @@ async def _event_generator_mirror(
     Kept in sync with the production implementation in conversation_router.py.
     """
     accumulated: list[str] = []
-    resolved_model: str | None = None
     _finalised = False
 
     try:
@@ -222,7 +223,7 @@ async def _handle_turn_stream_local(conversation_id, body, svc):
     from app.intelligence.conversation.store import ConversationClosedError, ConversationNotFoundError
 
     try:
-        prior_summary, chunk_stream = await svc.handle_turn_stream(
+        prior_summary, resolved_model, chunk_stream = await svc.handle_turn_stream(
             conversation_id=conversation_id,
             user_content=body["user_content"],
             system_prompt=body.get("system_prompt"),
@@ -236,7 +237,7 @@ async def _handle_turn_stream_local(conversation_id, body, svc):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     return _event_generator_mirror(
-        conversation_id, prior_summary, chunk_stream, svc
+        conversation_id, prior_summary, resolved_model, chunk_stream, svc
     )
 
 

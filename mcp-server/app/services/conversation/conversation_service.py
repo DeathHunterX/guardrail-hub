@@ -296,7 +296,7 @@ class ConversationService:
         model: str | None = None,
         provider: str | None = None,
         user_metadata: dict[str, Any] | None = None,
-    ) -> tuple[ConversationSummary, AsyncIterator[str]]:
+    ) -> tuple[ConversationSummary, str, AsyncIterator[str]]:
         """Handle one streaming user turn.
 
         Like handle_turn but the LLM response is streamed.  The assistant
@@ -312,7 +312,8 @@ class ConversationService:
             user_metadata: Arbitrary metadata attached to the user Message.
 
         Returns:
-            A tuple of (updated ConversationSummary, AsyncIterator of text chunks).
+            A tuple of (updated ConversationSummary, resolved_model_id, AsyncIterator of text chunks).
+            The resolved_model_id is the actual model ID used to generate the response.
 
         Raises:
             ConversationNotFoundError: If the conversation does not exist.
@@ -360,14 +361,14 @@ class ConversationService:
 
         llm_messages = self._build_llm_messages(summary, system_prompt)
 
-        stream = self._llm.chat_stream(
+        resolved_model_id, stream = await self._llm.chat_stream(
             messages=llm_messages,
             model=model,
             provider=provider,
         )
 
         # Return summary so caller can call finalise_stream with it
-        return summary, stream
+        return summary, resolved_model_id, stream
 
     def finalise_stream(
         self,

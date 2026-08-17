@@ -60,6 +60,10 @@ class StartupResult:
     ``conversation_service`` (Phase 5) is the conversation orchestrator.
     It has no shutdown lifecycle; it is held here to be attached to the
     FastAPI app lifespan state for use by conversation routes.
+
+    ``provider_manager`` (Phase 7) owns provider singletons and their
+    lifecycle. Started during boot and stopped during shutdown, before
+    ``registry_runtime`` is stopped.
     """
 
     dispatcher: object
@@ -68,6 +72,7 @@ class StartupResult:
     notifier: object = None
     jmeter_dispatcher: object = None
     registry_runtime: object = None
+    provider_manager: object = None
     conversation_service: object = None
 
 
@@ -138,7 +143,7 @@ def recover_interrupted_operations(
     return len(recovered_ids)
 
 
-def run_startup_sequence(settings) -> Optional[StartupResult]:
+async def run_startup_sequence(settings) -> Optional[StartupResult]:
     """Run steps 1-4 of the startup sequence and start the ZAP queue dispatcher.
 
     Returns a :class:`StartupResult` (dispatcher + notifier + operation service +
@@ -182,11 +187,15 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
     # Uses InMemoryConversationStore when dao is None (minimal mode).
     from app.bootstrap import build_conversation_service  # noqa: PLC0415
 
-    conversation_service = _build_conversation_service(
+    provider_manager, conversation_service = _build_conversation_service(
         registry_runtime=registry_runtime,
         event_dispatcher=event_dispatcher,
         dao=None,
     )
+
+    # Phase 7: start all providers before any inference-capable work begins.
+    # Raise on failure — do not swallow or degrade gracefully.
+    await provider_manager.start()
 
     if settings.database_provider == "NONE":
         logger.info(
@@ -204,6 +213,7 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
             jmeter_dispatcher=None,
             registry_runtime=registry_runtime,
             conversation_service=conversation_service,
+            provider_manager=provider_manager,
         )
 
     # 1. Database Ready / 2. Run Migrations / 3. Verify required tables
@@ -217,11 +227,15 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
         raise StartupError(f"Database schema initialization failed: {exc}") from exc
 
     # Re-assemble ConversationService with the real DAO (PostgresConversationStore).
-    conversation_service = _build_conversation_service(
+    provider_manager, conversation_service = _build_conversation_service(
         registry_runtime=registry_runtime,
         event_dispatcher=event_dispatcher,
         dao=dao,
     )
+
+    # Phase 7: start all providers before any inference-capable work begins.
+    # Raise on failure — do not swallow or degrade gracefully.
+    await provider_manager.start()
 
     # 4. Initialize services. Assemble EXACTLY ONE notification pipeline (one
     #    event bus, one OperationService, one OperationNotifier subscribed only
@@ -288,6 +302,7 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
         jmeter_dispatcher=jmeter_dispatcher,
         registry_runtime=registry_runtime,
         conversation_service=conversation_service,
+        provider_manager=provider_manager,
     )
 
 
@@ -299,9 +314,9 @@ def _build_conversation_service(registry_runtime, event_dispatcher, dao):
     """
     from app.bootstrap import build_conversation_service as _factory
 
-    _, conversation_service = _factory(
+    _, conversation_service, provider_manager = _factory(
         registry_runtime=registry_runtime,
         event_dispatcher=event_dispatcher,
         dao=dao,
     )
-    return conversation_service
+    return provider_manager, conversation_service

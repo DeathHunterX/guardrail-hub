@@ -1280,12 +1280,13 @@ class TestStreamingVerification(_FakeModuleIsolationMixin, unittest.IsolatedAsyn
         await manager.start()
         try:
             llm = LLMService(manager, catalog)
-            # chat_stream() is async def; must await to get the AsyncIterator.
-            result = await llm.chat_stream(
+            # Phase 7: chat_stream() returns tuple[str, AsyncIterator[str]].
+            resolved_model, stream = await llm.chat_stream(
                 messages=[ChatMessage(role="user", content="hi")],
                 provider="ollama-local",
             )
-            self.assertTrue(hasattr(result, "__anext__"))
+            self.assertEqual(resolved_model, "llama3.1:8b")
+            self.assertTrue(hasattr(stream, "__anext__"))
         finally:
             await manager.stop()
 
