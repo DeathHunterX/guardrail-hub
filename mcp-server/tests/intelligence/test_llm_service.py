@@ -344,9 +344,9 @@ class TestLLMServiceChatStream(unittest.IsolatedAsyncioTestCase):
         mgr.get_provider.return_value = adapter
 
         svc = LLMService(mgr, cat, router=router)
-        # chat_stream() is async def: await first to get the AsyncIterator,
-        # then async-iterate over it.
-        stream = await svc.chat_stream([ChatMessage(role="user", content="hi")])
+        # Phase 7: chat_stream() returns tuple[str, AsyncIterator[str]].
+        resolved_model, stream = await svc.chat_stream([ChatMessage(role="user", content="hi")])
+        self.assertEqual(resolved_model, "m_chat")
         chunks = [c async for c in stream]
         self.assertEqual(chunks, ["hel", "lo"])
 

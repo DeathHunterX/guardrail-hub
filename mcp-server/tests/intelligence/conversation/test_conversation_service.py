@@ -66,8 +66,13 @@ class AsyncLLMFake:
         **opts,
     ):
         self.calls.append({"messages": messages, "model": model})
-        for chunk in self.response_content.split():
-            yield chunk
+        resolved_model = model or "default-model"
+
+        async def chunk_stream():
+            for chunk in self.response_content.split():
+                yield chunk
+
+        return resolved_model, chunk_stream()
 
 
 class FailingAsyncLLMFake:
@@ -83,7 +88,12 @@ class FailingAsyncLLMFake:
 
     async def chat_stream(self, messages, model=None, provider=None, **opts):
         self.calls.append({"messages": messages})
-        yield "partial"
+        resolved_model = model or "default-model"
+
+        async def chunk_stream():
+            yield "partial"
+
+        return resolved_model, chunk_stream()
 
 
 # ---------------------------------------------------------------------------
@@ -323,11 +333,12 @@ class TestConversationService(unittest.TestCase):
         svc.create_conversation("c1")
         llm.response_content = "Hello world"
 
-        summary, stream = asyncio.run(
+        summary, model_id, stream = asyncio.run(
             svc.handle_turn_stream("c1", user_content="Hi")
         )
 
         self.assertIsNotNone(summary)
+        self.assertIsNotNone(model_id)
         first_chunk = asyncio.run(stream.__anext__())
         self.assertIn("Hello", first_chunk)
 
@@ -337,7 +348,7 @@ class TestConversationService(unittest.TestCase):
         svc.create_conversation("c1")
         llm.response_content = "done"
 
-        summary, _ = asyncio.run(
+        summary, _, _ = asyncio.run(
             svc.handle_turn_stream("c1", user_content="Hi")
         )
 

@@ -40,6 +40,39 @@ from app.schemas.conversation.handle_turn import (
 )
 from app.schemas.conversation.stream_turn import HandleTurnStreamRequest
 
+# ---------------------------------------------------------------------------
+# LLM error → HTTP status mapping
+# ---------------------------------------------------------------------------
+
+def _map_llm_error(exc: LLMError) -> HTTPException:
+    """Map an LLM exception to an HTTP response.
+
+    Exception ordering respects the inheritance hierarchy:
+    - Specific subclasses are checked before generic base classes.
+    - LLMProviderError covers all provider-level errors.
+    - LLMError is the final fallback.
+    """
+    # LLMAuthenticationError is a subclass of LLMProviderError,
+    # so it must be checked before LLMProviderError.
+    if isinstance(exc, LLMAuthenticationError):
+        return HTTPException(status_code=401, detail=str(exc))
+    if isinstance(exc, LLMRateLimitedError):
+        return HTTPException(status_code=429, detail=str(exc))
+    if isinstance(exc, LLMTimeoutError):
+        return HTTPException(status_code=504, detail=str(exc))
+    if isinstance(exc, LLMUnavailableError):
+        return HTTPException(status_code=503, detail=str(exc))
+    if isinstance(exc, LLMModelNotFoundError):
+        return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, LLMValidationError):
+        return HTTPException(status_code=422, detail=str(exc))
+    if isinstance(exc, LLMProviderError):
+        return HTTPException(status_code=502, detail=str(exc))
+    # LLMConfigurationError and LLMError fallback
+    return HTTPException(status_code=500, detail=str(exc))
+
+
+
 conversation_router = APIRouter(prefix="/conversations", tags=["Conversations"])
 
 
@@ -229,6 +262,8 @@ async def handle_turn(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConversationClosedError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LLMError as exc:
+        raise _map_llm_error(exc) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -266,7 +301,7 @@ async def handle_turn_stream(
     finalise_stream() is called regardless of how the stream ends.
     """
     try:
-        prior_summary, chunk_stream = await svc.handle_turn_stream(
+        prior_summary, resolved_model, chunk_stream = await svc.handle_turn_stream(
             conversation_id=conversation_id,
             user_content=body.user_content,
             system_prompt=body.system_prompt,
@@ -278,9 +313,10 @@ async def handle_turn_stream(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ConversationClosedError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LLMError as exc:
+        raise _map_llm_error(exc) from exc
 
     accumulated: list[str] = []
-    resolved_model: str | None = None
 
     async def event_generator():
         """Async generator producing SSE events.
@@ -300,7 +336,7 @@ async def handle_turn_stream(
         Note: yielding from a finally block raises RuntimeError in Python 3.10,
         so the error event is yielded only in the except path.
         """
-        nonlocal accumulated, resolved_model
+        nonlocal accumulated
         _finalised = False  # guard against double-finalise if normal path succeeds
 
         try:

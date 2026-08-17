@@ -654,4 +654,4 @@ def build_conversation_service(
         publisher=event_dispatcher,
     )
 
-    return store, conversation_service
+    return store, conversation_service, provider_manager
