@@ -45,3 +45,4 @@ Append-only. A later decision that changes course adds a new record marking the 
 | [0010 — The JMeter Result Contract](0010-jmeter-result-contract.md) | Accepted | 2026-07-28 |
 | [0011 — Tool-Scoped Queue Consumption](0011-tool-scoped-queue-consumption.md) | Accepted | 2026-07-28 |
 | [0012 — Runtime Boundaries: a category, not a new backend role](0012-runtime-boundary.md) | Proposed | 2026-07-29 |
+| [0017 — Container & Orchestrated Credential Delivery](0017-container-and-orchestrated-credential-delivery.md) | Accepted | 2026-08-21 |
