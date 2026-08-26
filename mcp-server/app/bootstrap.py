@@ -253,9 +253,10 @@ def build_zap_evaluation_service(operation_service, *, scan_runner=None):
 def build_registry_runtime(config=None):
     """Construct the :class:`RegistryRuntime` from settings.
 
-    Phase 2: builds the runtime but does not call ``start()``. The bootstrap
-    layer (``app/core/startup.py``) calls ``start()`` so the catalog is
-    built before the HTTP server accepts traffic.
+    Builds the runtime from ``llm.yaml`` (the only canonical LLM configuration
+    source) and does not call ``start()``. The bootstrap layer
+    (``app/core/startup.py``) calls ``start()`` so the catalog is built before
+    the HTTP server accepts traffic.
 
     Args:
         config: Settings object; defaults to ``app.core.config.settings``
@@ -272,11 +273,10 @@ def build_registry_runtime(config=None):
         RegistryRuntimeSettings,
     )
 
-    settings = RegistryRuntimeSettings(
-        providers_path=Path(config.registry_providers_path),
-        models_path=Path(config.registry_models_path),
-        require_files=bool(config.registry_require_files),
-    )
+    settings = RegistryRuntimeSettings.from_mapping({
+        "registry_llm_config_path": getattr(config, "registry_llm_config_path", None),
+        "registry_require_files": getattr(config, "registry_require_files", True),
+    })
     return RegistryRuntime(settings=settings)
 
 

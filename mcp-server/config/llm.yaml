@@ -1,0 +1,175 @@
+# =============================================================================
+# LLM Provider & Model Registry — Unified Configuration
+# =============================================================================
+#
+# This is the SINGLE source of truth for all LLM provider and model configuration.
+# The old providers.yaml and models.yaml have been removed.
+#
+# Architecture:
+#   llm.yaml
+#       ↓
+#   LLmConfigLoader
+#       ↓
+#   validated ProviderRecord[] + ModelRecord[]
+#       ↓
+#   ProviderRegistry + ModelRegistry (separate runtime concepts)
+#       ↓
+#   ProviderFactory / ProviderManager
+#       ↓
+#   Router
+#       ↓
+#   LLM adapters
+#
+# SCHEMA
+# llm:
+#   providers:
+#     - id: provider-id            # unique logical identifier
+#       type: ollama|openai_compatible|bedrock|...
+#       deployment: cloud|self_hosted|local|proxy
+#       enabled: true
+#       connection:
+#         base_url: https://...    # provider-specific URL
+#         region: us-east-1        # AWS region (Bedrock only)
+#       auth:
+#         type: api_key|aws|none   # HOW the provider authenticates
+#         api_key_env: ENV_VAR     # env var name holding the API key (api_key type only)
+#         auth_header: X-API-Key   # optional custom header name
+#       models:
+#         - id: model-id           # Guardrail Hub logical identifier (model_id)
+#           type: chat|completion|embedding|...
+#           deployment_name: ...   # provider-facing identifier (may differ from id)
+#           context_window: 8192
+#           priority: 100           # lower = higher preference
+#           capabilities:
+#             - chat
+#
+# CRITICAL: model_id vs deployment_name
+#   model_id        = Guardrail Hub's logical identifier (used for routing)
+#   deployment_name = what the provider API actually expects
+#   Example: model_id=claude-sonnet, deployment_name=anthropic.claude-3-sonnet-20240229-v1:0
+#
+# AUTHENTICATION — secrets MUST NOT appear in this file
+#   auth.type declares HOW authentication works (api_key | aws | none).
+#   The actual secret value lives in an environment variable.
+#   For api_key: set the variable named in auth.api_key_env before starting the app.
+#   For aws: credentials come from the standard AWS SDK chain (env vars, config, IAM role).
+#   For none: no credential is required.
+#
+# Reference: Decision 0014, architectural review 2025
+# =============================================================================
+
+llm:
+  providers:
+
+    # -------------------------------------------------------------------------
+    # Ollama — self-hosted local inference (no auth by default)
+    # -------------------------------------------------------------------------
+    - id: ollama-local
+      type: ollama
+      deployment: self_hosted
+      enabled: true
+      # base_url resolves to http://localhost:11434 if not set
+      # Override via $OLLAMA_BASE_URL or set connection.base_url here
+      connection:
+        base_url: http://localhost:11434
+      # No authentication required for local Ollama by default.
+      # If your Ollama server has auth enabled, switch to api_key and set OLLAMA_API_KEY.
+      auth:
+        type: none
+      models:
+        - id: llama3
+          type: chat
+          deployment_name: llama3           # Ollama uses the model tag as-is
+          context_window: 8192
+          capabilities:
+            - chat
+
+        - id: llama3-70b
+          type: chat
+          deployment_name: llama3:70b
+          context_window: 32768
+          capabilities:
+            - chat
+
+        - id: nomic-embed-text
+          type: embedding
+          deployment_name: nomic-embed-text
+          capabilities:
+            - embedding
+
+    # -------------------------------------------------------------------------
+    # OpenAI-compatible — cloud providers (OpenAI, Groq, Cohere, LocalAI, etc.)
+    # -------------------------------------------------------------------------
+    - id: openai-cloud
+      type: openai_compatible
+      deployment: cloud
+      enabled: true
+      connection:
+        base_url: https://api.openai.com/v1
+      # Bearer token auth; key value lives in $OPENAI_API_KEY (never in this file).
+      auth:
+        type: api_key
+        api_key_env: OPENAI_API_KEY
+      models:
+        - id: gpt-4o
+          type: chat
+          deployment_name: gpt-4o
+          context_window: 128000
+          capabilities:
+            - chat
+
+        - id: gpt-4o-mini
+          type: chat
+          deployment_name: gpt-4o-mini
+          context_window: 128000
+          capabilities:
+            - chat
+
+        - id: text-embedding-3-small
+          type: embedding
+          deployment_name: text-embedding-3-small
+          capabilities:
+            - embedding
+
+    # -------------------------------------------------------------------------
+    # AWS Bedrock — Anthropic Claude via AWS
+    # -------------------------------------------------------------------------
+    - id: bedrock
+      type: bedrock
+      deployment: cloud
+      enabled: true
+      connection:
+        # region is resolved from $AWS_REGION or $AWS_DEFAULT_REGION at runtime
+        # (Bedrock does not use base_url; the adapter constructs it from region)
+        region: us-east-1
+      # AWS SDK credential chain: reads $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY,
+      # $AWS_SESSION_TOKEN, or uses IAM role / config file — never hard-coded here.
+      auth:
+        type: aws
+      models:
+        - id: claude-sonnet-4
+          type: chat
+          deployment_name: anthropic.claude-sonnet-4-20250514
+          context_window: 200000
+          capabilities:
+            - chat
+
+        - id: claude-opus-4
+          type: chat
+          deployment_name: anthropic.claude-opus-4-20250514
+          context_window: 200000
+          capabilities:
+            - chat
+
+        - id: claude-3-5-sonnet
+          type: chat
+          deployment_name: anthropic.claude-3-5-sonnet-20241022
+          context_window: 200000
+          capabilities:
+            - chat
+
+        - id: amazon-titan-embed
+          type: embedding
+          deployment_name: amazon.titan-embed-text-v2:0
+          capabilities:
+            - embedding

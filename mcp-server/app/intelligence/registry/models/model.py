@@ -4,8 +4,8 @@ Model Registry stores this; Catalog provides query capabilities.
 Model Registry MUST NOT duplicate provider connection configuration.
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Optional
 
 from app.intelligence.registry.types.capability import Capability
 from app.intelligence.registry.types.model import ModelType
@@ -23,11 +23,6 @@ class ModelRecord:
         context_window: Maximum context length in tokens. None if unknown.
         capabilities: What this model can do.
         priority: Default priority for routing (lower = higher priority).
-        metadata: Model-specific additional data.
-            - input_costs: Cost per 1M input tokens
-            - output_costs: Cost per 1M output tokens
-            - supported_formats: Output formats (json, markdown, etc.)
-            - max_output_tokens: Maximum generated tokens
     """
 
     model_id: str
@@ -37,8 +32,6 @@ class ModelRecord:
     context_window: Optional[int] = None  # Max tokens
     capabilities: frozenset[Capability] = frozenset()
     priority: int = 100
-    metadata: dict[str, Any] = field(default_factory=dict)
 
     # TODO(phase-2): Add validation for context_window > 0
     # TODO(phase-2): Add validation for model_id uniqueness per provider
-    # TODO(phase-2): Add pricing metadata validation

@@ -13,7 +13,11 @@ from typing import Iterator, Sequence
 
 from app.intelligence.registry.exceptions import ValidationIssue, ValidationReport
 from app.intelligence.registry.models.model import ModelRecord
-from app.intelligence.registry.models.provider import ProviderRecord
+from app.intelligence.registry.models.provider import (
+    AUTH_TYPE_DEFAULT_SENTINEL,
+    AuthType,
+    ProviderRecord,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,11 +62,16 @@ class RegistryValidator:
     Performs cross-reference validation between providers and models.
     Validation is separate from loading - load errors are syntax/type errors,
     validation errors are semantic/business rule errors.
-
-    TODO(phase-2): Add schema validation against JSON Schema
-    TODO(phase-2): Add custom validator plugin support
-    TODO(phase-2): Add validation for pricing/cost metadata
     """
+
+    def _is_auth_type_explicit(self, provider: ProviderRecord) -> bool:
+        """Return True when auth.type was explicitly declared in the YAML.
+
+        The loader sets auth.type to AUTH_TYPE_DEFAULT_SENTINEL when the
+        field is absent from the YAML (Phase 1 backward compatibility).
+        Providers that omit auth.type are exempt from api_key_env requirements.
+        """
+        return provider.auth.type is not AUTH_TYPE_DEFAULT_SENTINEL
 
     def validate_providers(
         self,
@@ -88,6 +97,45 @@ class RegistryValidator:
                 )
             seen_ids.add(provider.provider_id)
 
+            # Belt-and-suspenders auth.type validation.
+            # Skip when auth.type is the sentinel (field absent from YAML — handled
+            # by the loader). Only validate real AuthType values.
+            auth_type = provider.auth.type
+            if auth_type is not AUTH_TYPE_DEFAULT_SENTINEL:
+                if not isinstance(auth_type, AuthType):
+                    yield ValidationError(
+                        entity_type="provider",
+                        entity_id=provider.provider_id,
+                        field="auth.type",
+                        message=f"auth.type must be one of {[e.value for e in AuthType]}, "
+                        f"got '{auth_type}'",
+                    )
+                else:
+                    # api_key_env is required only when auth.type is explicitly api_key.
+                    # Phase 1 configs that omit auth.type entirely are exempt.
+                    if auth_type == AuthType.API_KEY and self._is_auth_type_explicit(provider):
+                        if not provider.auth.api_key_env:
+                            yield ValidationError(
+                                entity_type="provider",
+                                entity_id=provider.provider_id,
+                                field="auth.api_key_env",
+                                message="auth.api_key_env is required when auth.type is "
+                                "'api_key' (name the environment variable that holds the key)",
+                            )
+                        # api_key_env is expected and normal for api_key auth — no warning.
+
+                    # api_key_env is an error if declared alongside AWS or NONE auth.
+                    if auth_type in (AuthType.AWS, AuthType.NONE):
+                        if provider.auth.api_key_env:
+                            yield ValidationError(
+                                entity_type="provider",
+                                entity_id=provider.provider_id,
+                                field="auth.api_key_env",
+                                message=f"auth.api_key_env is not used when auth.type is "
+                                f"'{auth_type.value}' and will be ignored; "
+                                f"remove it for clarity",
+                            )
+
             # Validate priority
             if provider.priority < 0:
                 yield ValidationError(
@@ -97,24 +145,18 @@ class RegistryValidator:
                     message=f"priority must be non-negative, got {provider.priority}",
                 )
 
-            # Validate timeout
-            if provider.connection.timeout_seconds <= 0:
-                yield ValidationError(
-                    entity_type="provider",
-                    entity_id=provider.provider_id,
-                    field="connection.timeout_seconds",
-                    message=f"timeout must be positive, got {provider.connection.timeout_seconds}",
-                )
-
-            # Validate base_url format (basic check)
-            if not provider.connection.base_url:
+            # Validate base_url format (basic check).
+            # A provider must have either a base_url OR a region (Bedrock).
+            has_url = bool(provider.connection.base_url)
+            has_region = bool(provider.connection.region)
+            if not has_url and not has_region:
                 yield ValidationError(
                     entity_type="provider",
                     entity_id=provider.provider_id,
                     field="connection.base_url",
-                    message="base_url is required",
+                    message="connection.base_url or connection.region is required",
                 )
-            elif not (
+            elif has_url and not (
                 provider.connection.base_url.startswith("http://")
                 or provider.connection.base_url.startswith("https://")
             ):
@@ -235,18 +277,11 @@ class RegistryValidator:
         provider_ids = {p.provider_id for p in providers}
         model_provider_ids = {m.provider_id for m in models}
 
-        # Warn about providers with no models
+        # Warn about providers with no models (advisory only; empty provider list is valid).
         for provider in providers:
             if provider.provider_id not in model_provider_ids:
                 warnings.append(
                     f"provider '{provider.provider_id}' has no models registered"
-                )
-
-        # Warn about providers with no declared capabilities
-        for provider in providers:
-            if not provider.capabilities:
-                warnings.append(
-                    f"provider '{provider.provider_id}' has no declared capabilities"
                 )
 
         return RegistryValidationResult(

@@ -23,9 +23,8 @@ from app.intelligence.registry.exceptions import (
     ValidationReport,
 )
 from app.intelligence.registry.loaders import (
-    ModelLoader,
-    ProviderLoader,
-    RegistryLoader,
+    LLmConfigLoader,
+    LLmConfigLoadResult,
 )
 from app.intelligence.registry.models import ModelRecord, ProviderRecord
 from app.intelligence.registry.resolver import EnvironmentResolver, ResolvedString
@@ -51,9 +50,8 @@ __all__ = [
     # Catalog
     "ModelCatalog",
     # Loaders
-    "RegistryLoader",
-    "ProviderLoader",
-    "ModelLoader",
+    "LLmConfigLoader",
+    "LLmConfigLoadResult",
     # Builders
     "CatalogBuilder",
     # Validators
