@@ -4,7 +4,8 @@ Public API:
 
     CredentialStore(backend)      — thread-safe credential storage
     InMemoryCredentialBackend()   — in-process dict backend (tests/dev)
-    WindowsCredentialManagerBackend() — Windows Credential Manager (production)
+    EnvVarCredentialBackend()     — read-only environment-variable backend (prod Linux/env)
+    WindowsCredentialManagerBackend() — Windows Credential Manager (prod Windows)
 
 Exception hierarchy:
 
@@ -23,6 +24,7 @@ from app.intelligence.credentials.base import (
     CredentialStoreError,
     InMemoryCredentialBackend,
 )
+from app.intelligence.credentials.env_backend import EnvVarCredentialBackend
 
 __all__ = [
     "CredentialBackend",
@@ -30,5 +32,6 @@ __all__ = [
     "CredentialNotFoundError",
     "CredentialStore",
     "CredentialStoreError",
+    "EnvVarCredentialBackend",
     "InMemoryCredentialBackend",
 ]

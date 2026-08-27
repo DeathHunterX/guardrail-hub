@@ -25,12 +25,13 @@ No provider is constructed outside that path.
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from app.intelligence.exceptions import LLMConfigurationError
 from app.intelligence.ports.base import BaseProvider
 
 if TYPE_CHECKING:
+    from app.intelligence.providers.credential import ProviderCredential
     from app.intelligence.registry.models.provider import ProviderRecord
 
 
@@ -53,6 +54,14 @@ class BaseProviderRuntime(BaseProvider):
     # Flag set to True once start() has been called.
     _started: bool = False
 
+    # Runtime-only authentication material. Attached by the ProviderManager
+    # (via attach_credential) after construction and before initialize(), and
+    # ONLY for providers whose auth.type requires a resolved secret (api_key).
+    # It is None for providers that need no resolved credential (auth.type
+    # none or aws). This value never enters the catalog, records, routing, or
+    # chat options, and is never logged.
+    _credential: "Optional[ProviderCredential]" = None
+
     def __init__(self, record: ProviderRecord) -> None:
         """Initialize the adapter with its configuration record.
 
@@ -63,6 +72,27 @@ class BaseProviderRuntime(BaseProvider):
         """
         object.__setattr__(self, "_record", record)
         object.__setattr__(self, "_started", False)
+        object.__setattr__(self, "_credential", None)
+
+    # ------------------------------------------------------------------
+    # Runtime credential attachment
+    # ------------------------------------------------------------------
+
+    def attach_credential(self, credential: "ProviderCredential") -> None:
+        """Attach runtime-only authentication material resolved by the bootstrap.
+
+        Called by :class:`ProviderManager` after the adapter is constructed and
+        before ``initialize()`` runs — only for providers whose ``auth.type``
+        requires a resolved secret (``api_key``). The adapter reads the value
+        from ``self._credential`` when it builds its authenticated client.
+
+        The credential value is never logged; ``ProviderCredential`` masks its
+        own ``repr`` / ``str``.
+
+        Args:
+            credential: The resolved credential for this provider.
+        """
+        object.__setattr__(self, "_credential", credential)
 
     # ------------------------------------------------------------------
     # Lifecycle — called by ProviderManager

@@ -115,15 +115,18 @@ class OllamaAdapter(
 
         object.__setattr__(self, "_base_url", base_url)
 
-        api_key = (
-            os.environ.get("OLLAMA_API_KEY")
-            or (
-                self._record.auth.api_key
-                if self._record.auth.api_key
-                else None
-            )
+        # API key resolution.
+        # Ollama is typically unauthenticated (auth.type = none): no credential
+        # is attached and no Authorization header is sent. When the provider
+        # declares auth.type = api_key, the ProviderManager resolves the key
+        # from the CredentialStore and attaches it before initialize(); we use
+        # it here. The secret is never read from the registry configuration.
+        credential = self._credential
+        object.__setattr__(
+            self,
+            "_api_key",
+            credential.api_key if credential is not None else None,
         )
-        object.__setattr__(self, "_api_key", api_key)
 
     def validate_configuration(self) -> None:
         """Validate the Ollama provider configuration.

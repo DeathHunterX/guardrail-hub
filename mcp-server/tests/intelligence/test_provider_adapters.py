@@ -139,7 +139,8 @@ from app.intelligence.providers.adapters import (
     OpenAICompatibleAdapter,
 )
 from app.intelligence.providers.base_provider import BaseProviderRuntime
-from app.intelligence.registry.models.provider import AuthConfig, ConnectionConfig, ProviderRecord
+from app.intelligence.providers.credential import ProviderCredential
+from app.intelligence.registry.models.provider import AuthConfig, AuthType, ConnectionConfig, ProviderRecord
 from app.intelligence.registry.types.capability import Capability
 from app.intelligence.registry.types.deployment import DeploymentType
 from app.intelligence.registry.types.provider import ProviderType
@@ -155,20 +156,32 @@ def _record(
     provider_type: ProviderType = ProviderType.OLLAMA,
     deployment: DeploymentType = DeploymentType.SELF_HOSTED,
     base_url: str = "http://localhost:11434",
-    api_key: str | None = None,
-    api_key_env: str | None = None,
+    auth_type: AuthType | None = None,
     auth_header: str | None = None,
 ) -> ProviderRecord:
-    """Construct a ProviderRecord.
+    """Construct a ProviderRecord using Phase 5D auth configuration.
 
-    Provider-specific defaults are provided so that each adapter's happy-path
-    needs no arguments. Override any field by passing a keyword argument.
+    Auth type is derived from provider_type when not explicitly set:
+    - OPENAI_COMPATIBLE: AuthType.API_KEY
+    - BEDROCK: AuthType.AWS
+    - OLLAMA/LOCAL: AuthType.NONE
+
+    API keys are NOT stored in the record. They are resolved by ProviderManager
+    from the CredentialStore and attached to the adapter at runtime.
     """
+    if auth_type is None:
+        if provider_type == ProviderType.OPENAI_COMPATIBLE:
+            auth_type = AuthType.API_KEY
+        elif provider_type == ProviderType.BEDROCK:
+            auth_type = AuthType.AWS
+        else:
+            auth_type = AuthType.NONE
+
     return ProviderRecord(
         provider_id=provider_id,
         provider_type=provider_type,
         deployment=deployment,
-        auth=AuthConfig(api_key=api_key, api_key_env=api_key_env, auth_header=auth_header),
+        auth=AuthConfig(type=auth_type, auth_header=auth_header),
         connection=ConnectionConfig(base_url=base_url),
         capabilities=frozenset(),
     )
@@ -196,19 +209,19 @@ class TestBaseProviderContract(unittest.TestCase):
 
     def test_openai_provider_id(self):
         adapter = OpenAICompatibleAdapter(
-            _record(provider_type=ProviderType.OPENAI_COMPATIBLE, api_key="k")
+            _record(provider_type=ProviderType.OPENAI_COMPATIBLE)
         )
         self.assertEqual(adapter.provider_id, "test-provider")
 
     def test_openai_provider_type(self):
         adapter = OpenAICompatibleAdapter(
-            _record(provider_type=ProviderType.OPENAI_COMPATIBLE, api_key="k")
+            _record(provider_type=ProviderType.OPENAI_COMPATIBLE)
         )
         self.assertEqual(adapter.provider_type, "openai_compatible")
 
     def test_openai_capabilities(self):
         adapter = OpenAICompatibleAdapter(
-            _record(provider_type=ProviderType.OPENAI_COMPATIBLE, api_key="k")
+            _record(provider_type=ProviderType.OPENAI_COMPATIBLE)
         )
         self.assertIn(Capability.CHAT, adapter.capabilities)
         self.assertIn(Capability.EMBEDDING, adapter.capabilities)
@@ -237,10 +250,10 @@ class TestBaseProviderContract(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestOllamaAdapterInitialize(unittest.TestCase):
-    """initialize() resolves OLLAMA_BASE_URL and OLLAMA_API_KEY.
+    """initialize() uses the attached credential for API key.
 
-    Precedence: record.base_url > $OLLAMA_BASE_URL > http://localhost:11434
-    Precedence: $OLLAMA_API_KEY > record.auth.api_key
+    The API key comes from self._credential (attached by ProviderManager).
+    When no credential is attached, _api_key is None (Ollama is typically unauthenticated).
     """
 
     def setUp(self):
@@ -269,21 +282,16 @@ class TestOllamaAdapterInitialize(unittest.TestCase):
             adapter.initialize()
         self.assertIn("not a valid URL", str(ctx.exception))
 
-    def test_resolves_api_key_from_env(self):
-        os.environ["OLLAMA_API_KEY"] = "env-secret"
-        adapter = OllamaAdapter(_record(base_url="http://localhost:11434"))
+    def test_uses_attached_credential(self):
+        # API key comes from the attached credential (set by ProviderManager).
+        adapter = OllamaAdapter(_record(provider_type=ProviderType.OLLAMA, base_url="http://localhost:11434"))
+        adapter.attach_credential(ProviderCredential(api_key="attached-secret"))
         adapter.initialize()
-        self.assertEqual(adapter._api_key, "env-secret")
+        self.assertEqual(adapter._api_key, "attached-secret")
 
-    def test_resolves_api_key_from_record(self):
-        adapter = OllamaAdapter(
-            _record(base_url="http://localhost:11434", api_key="record-secret")
-        )
-        adapter.initialize()
-        self.assertEqual(adapter._api_key, "record-secret")
-
-    def test_api_key_none_when_neither_source_has_it(self):
-        adapter = OllamaAdapter(_record(base_url="http://localhost:11434"))
+    def test_api_key_none_without_credential(self):
+        # Ollama is typically unauthenticated: no credential attached means no API key.
+        adapter = OllamaAdapter(_record(provider_type=ProviderType.OLLAMA, base_url="http://localhost:11434"))
         adapter.initialize()
         self.assertIsNone(adapter._api_key)
 
@@ -369,10 +377,10 @@ class TestOllamaAdapterLifecycle(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestOpenAICompatibleAdapterInitialize(unittest.TestCase):
-    """initialize() resolves OPENAI_API_KEY and OPENAI_BASE_URL.
+    """initialize() uses the attached credential for API key.
 
-    Precedence: record.base_url > $OPENAI_BASE_URL > https://api.openai.com/v1
-    Precedence: $OPENAI_API_KEY > record.auth.api_key
+    A credential MUST be attached via attach_credential() before initialize().
+    The Authorization header value comes from auth.auth_header in the record.
     """
 
     def setUp(self):
@@ -384,13 +392,14 @@ class TestOpenAICompatibleAdapterInitialize(unittest.TestCase):
             provider_type=ProviderType.OPENAI_COMPATIBLE,
             deployment=DeploymentType.CLOUD,
             base_url="https://api.openai.com/v1",
-            api_key="record-key",
+            auth_type=AuthType.API_KEY,
         )
         defaults.update(kwargs)
         return _record(**defaults)
 
     def test_uses_record_base_url(self):
         adapter = OpenAICompatibleAdapter(self._make_openai_record())
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         self.assertEqual(adapter._base_url, "https://api.openai.com/v1")
 
@@ -400,6 +409,7 @@ class TestOpenAICompatibleAdapterInitialize(unittest.TestCase):
         adapter = OpenAICompatibleAdapter(
             self._make_openai_record(base_url="")
         )
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         self.assertEqual(adapter._base_url, "https://api.groq.com/v1")
 
@@ -409,35 +419,35 @@ class TestOpenAICompatibleAdapterInitialize(unittest.TestCase):
         adapter = OpenAICompatibleAdapter(
             self._make_openai_record(base_url="https://api.openai.com/v1")
         )
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         self.assertEqual(adapter._base_url, "https://api.openai.com/v1")
 
-    def test_raises_when_api_key_missing(self):
-        adapter = OpenAICompatibleAdapter(
-            self._make_openai_record(api_key=None)
-        )
-        os.environ.pop("OPENAI_API_KEY", None)
+    def test_raises_when_no_credential_attached(self):
+        # API-key providers require a credential to be attached before initialize().
+        adapter = OpenAICompatibleAdapter(self._make_openai_record())
         with self.assertRaises(LLMConfigurationError) as ctx:
             adapter.initialize()
-        self.assertIn("OPENAI_API_KEY", str(ctx.exception))
+        self.assertIn("API key credential", str(ctx.exception))
 
-    def test_uses_env_api_key_when_record_key_absent(self):
-        os.environ["OPENAI_API_KEY"] = "env-key"
-        adapter = OpenAICompatibleAdapter(
-            self._make_openai_record(api_key=None)
-        )
+    def test_uses_attached_credential(self):
+        # API key comes from the attached credential (set by ProviderManager).
+        adapter = OpenAICompatibleAdapter(self._make_openai_record())
+        adapter.attach_credential(ProviderCredential(api_key="attached-secret"))
         adapter.initialize()
-        self.assertEqual(adapter._api_key, "env-key")
+        self.assertEqual(adapter._api_key, "attached-secret")
 
     def test_stores_custom_auth_header(self):
         adapter = OpenAICompatibleAdapter(
             self._make_openai_record(auth_header="X-API-Key")
         )
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         self.assertEqual(adapter._auth_header, "X-API-Key")
 
     def test_defaults_auth_header_to_authorization(self):
         adapter = OpenAICompatibleAdapter(self._make_openai_record())
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         self.assertEqual(adapter._auth_header, "Authorization")
 
@@ -462,13 +472,14 @@ class TestOpenAICompatibleAdapterValidate(unittest.TestCase):
             provider_type=ProviderType.OPENAI_COMPATIBLE,
             deployment=DeploymentType.CLOUD,
             base_url="https://api.openai.com/v1",
-            api_key="test-key",
+            auth_type=AuthType.API_KEY,
         )
         defaults.update(kwargs)
         return _record(**defaults)
 
     def test_accepts_https(self):
         adapter = OpenAICompatibleAdapter(self._make_openai_record())
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         adapter.validate_configuration()  # must not raise
 
@@ -476,6 +487,7 @@ class TestOpenAICompatibleAdapterValidate(unittest.TestCase):
         adapter = OpenAICompatibleAdapter(
             self._make_openai_record(base_url="http://insecure.local/v1")
         )
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         with self.assertRaises(LLMConfigurationError) as ctx:
             adapter.validate_configuration()
@@ -503,9 +515,10 @@ class TestOpenAICompatibleAdapterLifecycle(unittest.TestCase):
                 provider_type=ProviderType.OPENAI_COMPATIBLE,
                 deployment=DeploymentType.CLOUD,
                 base_url="https://api.openai.com/v1",
-                api_key="test-key",
+                auth_type=AuthType.API_KEY,
             )
         )
+        adapter.attach_credential(ProviderCredential(api_key="test-key"))
         adapter.initialize()
         import asyncio
         asyncio.run(adapter.start())

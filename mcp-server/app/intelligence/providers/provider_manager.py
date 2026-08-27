@@ -14,14 +14,18 @@ import logging
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator, Optional
 
+from app.intelligence.credentials import CredentialNotFoundError
 from app.intelligence.exceptions import LLMConfigurationError, LLMProviderError
 from app.intelligence.ports.base import BaseProvider
 from app.intelligence.providers.base_provider import BaseProviderRuntime
+from app.intelligence.providers.credential import ProviderCredential
 from app.intelligence.providers.provider_factory import ProviderFactory
 from app.intelligence.registry.catalog.catalog import ModelCatalog
+from app.intelligence.registry.models.provider import AuthType
 
 if TYPE_CHECKING:
-    pass
+    from app.intelligence.credentials import CredentialStore
+    from app.intelligence.registry.models.provider import ProviderRecord
 
 
 _logger = logging.getLogger(__name__)
@@ -48,12 +52,19 @@ class ProviderManager:
         self,
         factory: ProviderFactory,
         catalog: ModelCatalog,
+        credential_store: "Optional[CredentialStore]" = None,
     ) -> None:
         """Construct the manager.
 
         Args:
             factory: ProviderFactory instance with all known adapter types registered.
             catalog: Frozen ModelCatalog containing all enabled ProviderRecords.
+            credential_store: Optional secret store used to resolve API keys for
+                providers whose ``auth.type`` is ``api_key``. This is the single
+                bootstrap point where secrets cross into the provider runtime.
+                Providers that use AWS or no authentication never consult it.
+                When None, api-key providers cannot be initialized and fail with
+                a clear configuration error.
 
         Raises:
             LLMConfigurationError: If ``catalog`` is None.
@@ -65,6 +76,7 @@ class ProviderManager:
             )
         self._factory = factory
         self._catalog = catalog
+        self._credential_store = credential_store
         self._providers: dict[str, BaseProvider] = {}
         self._initialized = False
 
@@ -239,7 +251,13 @@ class ProviderManager:
         # 1. Construct the adapter.
         adapter = self._factory.create(record)
 
-        # 2. Synchronous setup (env var resolution, file handles, etc.).
+        # 2. Resolve runtime credentials for providers that require them.
+        #    This is the single bootstrap point where a secret crosses from the
+        #    CredentialStore into the provider runtime. Credentials never enter
+        #    the catalog, records, routing decisions, or chat options.
+        self._resolve_and_attach_credential(record, adapter)
+
+        # 3. Synchronous setup (env var resolution, file handles, etc.).
         if isinstance(adapter, BaseProviderRuntime):
             adapter.initialize()
         else:
@@ -247,13 +265,76 @@ class ProviderManager:
             # skip the initialize() step.
             pass
 
-        # 3. Validate configuration before opening any connections.
+        # 4. Validate configuration before opening any connections.
         adapter.validate_configuration()
 
-        # 4. Acquire async resources (HTTP client, credential refresh, etc.).
+        # 5. Acquire async resources (HTTP client, credential refresh, etc.).
         await adapter.start()
 
         return adapter
+
+    def _resolve_and_attach_credential(
+        self,
+        record: "ProviderRecord",
+        adapter: BaseProvider,
+    ) -> None:
+        """Resolve and attach runtime authentication material for a provider.
+
+        Only API-key providers resolve a credential, and only from the
+        :class:`CredentialStore`. The lookup key is ``auth.api_key_env`` when
+        present; otherwise it is ``GUARDRAILHUB_CREDENTIAL__<PROVIDER_ID>`` in
+        uppercase (ADR-0017 Decision E). AWS providers use the AWS SDK credential
+        chain (never the CredentialStore); providers with no authentication need
+        no credential. The sentinel default (auth.type absent from YAML) is
+        treated as "not an api-key provider" and resolves nothing.
+
+        The resolved secret is wrapped in a :class:`ProviderCredential` and
+        attached to the adapter via ``attach_credential`` before ``initialize()``
+        runs. The secret is never logged and never placed in any configuration,
+        routing, or request object.
+
+        Args:
+            record: The provider's configuration record.
+            adapter: The freshly constructed adapter instance.
+
+        Raises:
+            LLMConfigurationError: If an api-key provider has no configured
+                credential store, or no stored credential. The message never
+                contains the secret value.
+        """
+        if record.auth.type != AuthType.API_KEY:
+            # aws  → AWS SDK credential chain (handled inside the adapter);
+            # none → no authentication material required;
+            # sentinel → auth.type absent, not an api-key provider.
+            return
+
+        if self._credential_store is None:
+            raise LLMConfigurationError(
+                f'Provider "{record.provider_id}" requires an API key, '
+                "but no credential store is configured."
+            )
+
+        # Compute the lookup key per ADR-0017 Decision E.
+        # auth.api_key_env names the env var that holds the secret; absent -> default.
+        if record.auth.api_key_env:
+            lookup_key = record.auth.api_key_env
+        else:
+            lookup_key = f"GUARDRAILHUB_CREDENTIAL__{record.provider_id.upper()}"
+
+        try:
+            api_key = self._credential_store.get(lookup_key)
+        except CredentialNotFoundError:
+            # Fail clearly, identifying only the provider — never the (missing)
+            # secret. "from None" suppresses the chained lookup detail.
+            raise LLMConfigurationError(
+                f'Provider "{record.provider_id}" requires an API key, '
+                "but no credential is configured."
+            ) from None
+
+        # Only runtime adapters can receive credentials. Duck-typed or
+        # not-yet-migrated adapters are left untouched.
+        if isinstance(adapter, BaseProviderRuntime):
+            adapter.attach_credential(ProviderCredential(api_key=api_key))
 
     async def _shutdown_provider(self, provider: BaseProvider) -> None:
         """Close a single provider instance.

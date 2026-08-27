@@ -595,7 +595,7 @@ def build_conversation_service(
     event_dispatcher,
     dao=None,
 ):
-    """Build Phase 5 ConversationService and its ConversationStore adapter.
+    """Build Phase 5 ConversationService and its associated runtime dependencies.
 
     This function follows the same functional-assembly pattern as the rest of
     bootstrap.py: it receives all its dependencies and returns a wiring graph.
@@ -605,29 +605,57 @@ def build_conversation_service(
       - "POSTGRES"  -> PostgresConversationStore
       - "NONE"      -> InMemoryConversationStore  (testing / no-persistence)
 
+    The credential backend is selected by build_credential_backend() from
+    GUARDRAILHUB_CREDENTIAL_BACKEND (platform-default for Windows, 'file' or 'env'
+    on Linux/Darwin). The backend is wrapped in a CredentialStore and wired into
+    the ProviderManager so api-key providers can resolve their credentials at
+    startup. A ProviderFactory is constructed and all known adapters are registered.
+
     Args:
-        registry_runtime: The started RegistryRuntime (for future LLMService wiring
-            when provider_manager is needed).
+        registry_runtime: The started RegistryRuntime (provides the frozen catalog).
         event_dispatcher: An InProcessEventDispatcher (EventPublisher) for audit.
         dao: Optional BaseOperationDAO. When None, InMemoryConversationStore is used
             (useful for tests or DATABASE_PROVIDER=NONE).
 
     Returns:
-        A tuple of (ConversationStore, ConversationService).
+        A tuple of (ConversationStore, ConversationService, ProviderManager).
+
+    Raises:
+        CredentialBackendError: When build_credential_backend() cannot select a
+            supported backend for this platform and mode combination.
     """
     from app.core.config import settings
     from app.core.events.dispatcher import InProcessEventDispatcher
     from app.intelligence.conversation.infrastructure.in_memory_store import (
         InMemoryConversationStore,
     )
+    from app.intelligence.credentials import CredentialStore
+    from app.intelligence.credentials.backend_factory import build_credential_backend
     from app.intelligence.inference.services.llm_service import LLMService
+    from app.intelligence.providers import ProviderFactory
+    from app.intelligence.providers.adapters import register_all_adapters
     from app.intelligence.providers.provider_manager import ProviderManager
     from app.services.conversation.conversation_service import ConversationService
+
+    # Build the credential store from the runtime backend.
+    # build_credential_backend() reads GUARDRAILHUB_CREDENTIAL_BACKEND and
+    # GUARDRAILHUB_SECRETS_DIR and selects the appropriate backend. It raises
+    # CredentialBackendError fail-closed on unsupported platform+mode combinations.
+    backend = build_credential_backend()
+    credential_store = CredentialStore(backend)
+
+    # Build the provider factory and register all known adapters.
+    factory = ProviderFactory()
+    register_all_adapters(factory)
 
     # Build LLMService from the already-started registry runtime.
     # RegistryRuntime.start() must have been called before this function.
     catalog = registry_runtime.catalog
-    provider_manager = ProviderManager(catalog)
+    provider_manager = ProviderManager(
+        factory,
+        catalog,
+        credential_store=credential_store,
+    )
     # Note: provider_manager.start() must be called by the caller before
     # the ConversationService is used for inference.  This function only
     # assembles the wiring; lifecycle management is the caller's responsibility.

@@ -130,17 +130,20 @@ class OpenAICompatibleAdapter(
 
         object.__setattr__(self, "_base_url", base_url)
 
-        # API key precedence: $OPENAI_API_KEY > record.auth.api_key
-        api_key = os.environ.get(
-            "OPENAI_API_KEY",
-            self._record.auth.api_key or "",
-        ).strip()
-        if not api_key:
+        # API key resolution.
+        # The key is resolved by the ProviderManager from the CredentialStore
+        # (keyed by provider_id) and attached as runtime-only credential
+        # material before initialize() runs. The secret is never read from the
+        # registry configuration and never stored in llm.yaml.
+        credential = self._credential
+        if credential is None or not credential.api_key:
             raise LLMConfigurationError(
-                f"provider '{self._record.provider_id}': OPENAI_API_KEY is not set "
-                "in the environment or registry. Set it to authenticate requests."
+                f"provider '{self._record.provider_id}': no API key credential "
+                "was attached to the runtime. API-key providers must be "
+                "initialized via the ProviderManager with a configured "
+                "CredentialStore."
             )
-        object.__setattr__(self, "_api_key", api_key)
+        object.__setattr__(self, "_api_key", credential.api_key)
 
         # Custom auth header (e.g. "X-API-Key") if specified in the registry.
         # Defaults to "Authorization" (the standard Bearer scheme).
