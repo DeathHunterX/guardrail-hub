@@ -37,6 +37,7 @@ real SDKs. This mirrors the injection pattern in test_provider_adapters.py.
 import dataclasses
 import logging
 import os
+import tempfile
 import sys
 import unittest
 from unittest import mock
@@ -169,6 +170,7 @@ sys.modules.setdefault("boto3.session", _fake_boto3.session)
 # ---------------------------------------------------------------------------
 
 from app.intelligence.credentials import CredentialStore, InMemoryCredentialBackend
+from app.intelligence.credentials.container_backend import ContainerFileCredentialBackend
 from app.intelligence.exceptions import LLMConfigurationError, LLMProviderError
 from app.intelligence.ports.chat import ChatOptions
 from app.intelligence.providers.adapters import (
@@ -195,6 +197,7 @@ from app.intelligence.registry.types.capability import Capability
 from app.intelligence.registry.types.deployment import DeploymentType
 from app.intelligence.registry.types.model import ModelType
 from app.intelligence.registry.types.provider import ProviderType
+from app.intelligence.setup.service import CredentialSetupService
 
 
 # ---------------------------------------------------------------------------
@@ -216,10 +219,10 @@ def _openai_provider_record(
 
     ``api_key_env`` holds only the NAME of the environment variable — never the
     secret value. The secret is resolved from the CredentialStore at runtime,
-    keyed by the value of ``auth.api_key_env`` (ADR-0017 Decision E).
+    keyed by the provider ID; env-name projection is backend-specific.
 
     To store a credential for this record, use the credential store key
-    ``"NVIDIA_API_KEY"`` (the ``auth.api_key_env`` value).
+    ``"nvidia"`` (the provider ID).
     """
     return ProviderRecord(
         provider_id=provider_id,
@@ -240,11 +243,9 @@ def _openai_provider_record_no_env_key(
 ) -> ProviderRecord:
     """Build an OpenAI-compatible, api-key provider record WITHOUT an explicit api_key_env.
 
-    When ``auth.api_key_env`` is absent, the lookup key defaults to
-    ``GUARDRAILHUB_CREDENTIAL__<PROVIDER_ID>`` in uppercase (ADR-0017 Decision E).
-
-    To store a credential for this record, use the credential store key
-    ``f"GUARDRAILHUB_CREDENTIAL__{provider_id.upper()}"``.
+    When ``auth.api_key_env`` is absent, the env backend derives
+    ``GUARDRAILHUB_CREDENTIAL__<PROVIDER_ID>`` in uppercase as its physical
+    environment-variable name. CredentialStore continues to use ``provider_id``.
     """
     return ProviderRecord(
         provider_id=provider_id,
@@ -342,14 +343,14 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
     """Prove the runtime credential-resolution security boundary end to end."""
 
     async def test_api_key_resolved_from_credential_store(self):
-        """(1) The api key is resolved from the CredentialStore by auth.api_key_env.
+        """(1) The api key is resolved from the CredentialStore by provider ID.
 
-        The lookup key is auth.api_key_env ("NVIDIA_API_KEY" for this provider),
+        The lookup key is provider_id ("nvidia" for this provider),
         per ADR-0017 Decision E. Also proves the value is read live from the store
         (a different stored value produces a different resolved credential).
         """
         store = CredentialStore(InMemoryCredentialBackend())
-        store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
+        store.set("nvidia", _OPENAI_SECRET)
 
         manager = ProviderManager(
             factory=_build_factory(),
@@ -370,7 +371,7 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
         # read live from the store (by provider_id), never hardcoded.
         other_secret = "sk-a-completely-different-value-987654321"
         store2 = CredentialStore(InMemoryCredentialBackend())
-        store2.set("NVIDIA_API_KEY", other_secret)
+        store2.set("nvidia", other_secret)
         manager2 = ProviderManager(
             factory=_build_factory(),
             catalog=_build_catalog(_openai_provider_record()),
@@ -463,7 +464,7 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
 
         # Dynamic: after a successful resolution, the catalog holds no secret.
         store = CredentialStore(InMemoryCredentialBackend())
-        store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
+        store.set("nvidia", _OPENAI_SECRET)
         catalog = _build_catalog(_openai_provider_record())
         manager = ProviderManager(_build_factory(), catalog, credential_store=store)
         await manager.start()
@@ -492,7 +493,7 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn(forbidden, fields)
 
         store = CredentialStore(InMemoryCredentialBackend())
-        store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
+        store.set("nvidia", _OPENAI_SECRET)
         catalog = _build_catalog(_openai_provider_record())
         manager = ProviderManager(_build_factory(), catalog, credential_store=store)
         await manager.start()
@@ -529,7 +530,7 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
         root.setLevel(logging.DEBUG)
         try:
             store = CredentialStore(InMemoryCredentialBackend())
-            store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
+            store.set("nvidia", _OPENAI_SECRET)
             manager = ProviderManager(
                 _build_factory(),
                 _build_catalog(_openai_provider_record()),
@@ -580,7 +581,7 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
         # after the credential has been resolved and attached) never leaks it.
         bad_record = _openai_provider_record(base_url="http://insecure.example.com/v1")
         store = CredentialStore(InMemoryCredentialBackend())
-        store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
+        store.set("nvidia", _OPENAI_SECRET)
         manager = ProviderManager(
             _build_factory(), _build_catalog(bad_record), credential_store=store
         )
@@ -625,7 +626,7 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
     async def test_openai_compatible_api_key_authentication_works(self):
         """(10) OpenAI-compatible auth uses the resolved key in the Authorization header."""
         store = CredentialStore(InMemoryCredentialBackend())
-        store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
+        store.set("nvidia", _OPENAI_SECRET)
         manager = ProviderManager(
             _build_factory(),
             _build_catalog(_openai_provider_record()),
@@ -677,25 +678,21 @@ class TestCredentialStaticBoundaries(unittest.TestCase):
 
 
 class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
-    """ADR-0017 Decision E: lookup key is auth.api_key_env when present.
+    """CredentialStore always receives the provider's logical identity."""
 
-    When auth.api_key_env is absent, the default key is
-    ``GUARDRAILHUB_CREDENTIAL__<PROVIDER_ID>`` in uppercase.
-    """
-
-    async def test_api_key_env_present_uses_env_var_name_as_lookup_key(self):
-        """When auth.api_key_env is set, the CredentialStore is queried by that name.
+    async def test_api_key_env_present_uses_provider_id_as_lookup_key(self):
+        """api_key_env never changes the CredentialStore namespace.
 
         The provider record declares auth.api_key_env="CUSTOM_API_KEY". The store
-        must have the credential under "CUSTOM_API_KEY" — not under the provider_id.
-        A credential stored under the provider_id alone must NOT be found.
+        must have the credential under the provider ID. A value stored under the
+        environment-variable name alone must NOT be found.
         """
         catalog = _build_catalog(_openai_provider_record())
         factory = _build_factory()
 
-        # Store under the WRONG key (provider_id) — must NOT be resolved.
+        # Store under the wrong physical env name — it must not be resolved.
         wrong_store = CredentialStore(InMemoryCredentialBackend())
-        wrong_store.set("nvidia", _OPENAI_SECRET)  # provider_id, not the env var name
+        wrong_store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
 
         manager_wrong = ProviderManager(factory, catalog, credential_store=wrong_store)
         with self.assertRaises(LLMProviderError) as ctx:
@@ -703,9 +700,9 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         self.assertIn("nvidia", str(ctx.exception))
         await manager_wrong.stop()
 
-        # Store under the CORRECT key (auth.api_key_env) — must be resolved.
+        # Store under the logical provider ID — must be resolved.
         correct_store = CredentialStore(InMemoryCredentialBackend())
-        correct_store.set("NVIDIA_API_KEY", _OPENAI_SECRET)  # auth.api_key_env value
+        correct_store.set("nvidia", _OPENAI_SECRET)
 
         manager_correct = ProviderManager(factory, catalog, credential_store=correct_store)
         await manager_correct.start()
@@ -716,13 +713,82 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager_correct.stop()
 
-    async def test_api_key_env_absent_uses_default_derived_key(self):
-        """When auth.api_key_env is absent, the default key is derived as
-        ``GUARDRAILHUB_CREDENTIAL__<PROVIDER_ID>`` in uppercase.
+    async def test_setup_and_runtime_agree_on_provider_id_identity(self):
+        """Setup and runtime use provider_id, never api_key_env, as the store key."""
+        class RecordingBackend(InMemoryCredentialBackend):
+            def __init__(self):
+                super().__init__()
+                self.get_keys = []
+                self.set_keys = []
 
-        A provider record WITHOUT api_key_env set should look up
-        ``GUARDRAILHUB_CREDENTIAL__<PROVIDER_ID>``.
-        """
+            def get(self, provider_id):
+                self.get_keys.append(provider_id)
+                return super().get(provider_id)
+
+            def set(self, provider_id, credential):
+                self.set_keys.append(provider_id)
+                super().set(provider_id, credential)
+
+        class SecretPrompt:
+            def read_secret(self, prompt_text):
+                return _OPENAI_SECRET
+
+        class AwsDetector:
+            def is_available(self):
+                return False
+
+        class Output:
+            def write_line(self, text):
+                pass
+
+        record = _openai_provider_record(provider_id="openai-cloud")
+        configured_env_name = record.auth.api_key_env
+        backend = RecordingBackend()
+        store = CredentialStore(backend)
+        setup = CredentialSetupService(
+            credential_store=store,
+            secret_prompt=SecretPrompt(),
+            aws_detector=AwsDetector(),
+            output=Output(),
+        )
+
+        setup.run([record])
+        self.assertEqual(backend.set_keys, ["openai-cloud"])
+
+        backend.get_keys.clear()
+        manager = ProviderManager(
+            _build_factory(), _build_catalog(record), credential_store=store
+        )
+        await manager.start()
+        try:
+            self.assertEqual(backend.get_keys, ["openai-cloud"])
+            self.assertNotIn(configured_env_name, backend.get_keys)
+        finally:
+            await manager.stop()
+
+    async def test_file_backend_uses_provider_id_when_api_key_env_is_configured(self):
+        """The file backend receives provider_id, never the env-variable name."""
+        with tempfile.TemporaryDirectory() as directory:
+            secret_path = os.path.join(directory, "nvidia")
+            with open(secret_path, "w", encoding="utf-8") as secret_file:
+                secret_file.write(_OPENAI_SECRET)
+
+            manager = ProviderManager(
+                _build_factory(),
+                _build_catalog(_openai_provider_record()),
+                credential_store=CredentialStore(
+                    ContainerFileCredentialBackend(secrets_dir=directory)
+                ),
+            )
+            await manager.start()
+            try:
+                provider = manager.get_provider("nvidia")
+                self.assertEqual(provider._credential.api_key, _OPENAI_SECRET)
+            finally:
+                await manager.stop()
+
+    async def test_api_key_env_absent_still_uses_provider_id_as_lookup_key(self):
+        """Env fallback naming is backend-owned, not ProviderManager policy."""
         # Build a record with no api_key_env (AuthConfig() has no type and no api_key_env).
         record_no_env = ProviderRecord(
             provider_id="my-provider",
@@ -737,10 +803,9 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         catalog = _build_catalog(record_no_env)
         factory = _build_factory()
 
-        # Store under the default derived key.
-        default_key = f"GUARDRAILHUB_CREDENTIAL__MY-PROVIDER"
+        # Store under the logical provider ID.
         default_store = CredentialStore(InMemoryCredentialBackend())
-        default_store.set(default_key, _OPENAI_SECRET)
+        default_store.set("my-provider", _OPENAI_SECRET)
 
         manager = ProviderManager(factory, catalog, credential_store=default_store)
         await manager.start()
@@ -751,21 +816,20 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager.stop()
 
-        # Storing under the provider_id alone must NOT work when api_key_env is absent.
+        # The former global env fallback must not be treated as a store key.
         wrong_store = CredentialStore(InMemoryCredentialBackend())
-        wrong_store.set("my-provider", _OPENAI_SECRET)  # wrong key
+        wrong_store.set("GUARDRAILHUB_CREDENTIAL__MY-PROVIDER", _OPENAI_SECRET)
 
         manager_wrong = ProviderManager(factory, catalog, credential_store=wrong_store)
         with self.assertRaises(LLMProviderError):
             await manager_wrong.start()
         await manager_wrong.stop()
 
-    async def test_spec_custom_key_resolves_and_default_key_is_not_used(self):
-        """ADR-0017 D1 acceptance criteria, verbatim.
+    async def test_custom_env_name_does_not_replace_provider_store_identity(self):
+        """A configured environment name is not a logical credential identity.
 
-        provider_id="test", api_key_env="MY_CUSTOM_KEY", store holds
-        MY_CUSTOM_KEY -> "secret-value". Resolving must retrieve "secret-value",
-        and the provider_id-derived default key must NOT be consulted.
+        Runtime resolution retrieves a value stored under provider_id="test",
+        never under the environment-variable name.
         """
         record = ProviderRecord(
             provider_id="test",
@@ -780,10 +844,9 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         catalog = _build_catalog(record)
         factory = _build_factory()
 
-        # Only MY_CUSTOM_KEY is present. The derived default key is absent, so if
-        # the manager consulted the default it would fail to resolve.
+        # Only the provider ID is present.
         store = CredentialStore(InMemoryCredentialBackend())
-        store.set("MY_CUSTOM_KEY", "secret-value")
+        store.set("test", "secret-value")
 
         manager = ProviderManager(factory, catalog, credential_store=store)
         await manager.start()
@@ -794,10 +857,9 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager.stop()
 
-        # Negative control: the provider_id-derived default key must NOT satisfy
-        # the lookup when api_key_env is declared.
+        # Negative control: the physical env name must not satisfy the lookup.
         default_only = CredentialStore(InMemoryCredentialBackend())
-        default_only.set("GUARDRAILHUB_CREDENTIAL__TEST", "secret-value")
+        default_only.set("MY_CUSTOM_KEY", "secret-value")
 
         manager_default = ProviderManager(
             factory, catalog, credential_store=default_only
@@ -834,10 +896,8 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn(_OPENAI_SECRET, message)
         await manager.stop()
 
-    async def test_env_var_name_appears_in_lookup_key_not_in_error(self):
-        """The env var name (NVIDIA_API_KEY) is used as the store key.
-        It is NOT disclosed in the error message — only the provider_id is.
-        """
+    async def test_env_name_is_not_disclosed_when_provider_credential_is_missing(self):
+        """Missing credentials identify the provider, never its physical env name."""
         catalog = _build_catalog(_openai_provider_record())
         factory = _build_factory()
         empty_store = CredentialStore(InMemoryCredentialBackend())
@@ -848,7 +908,7 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         message = str(ctx.exception)
         # The provider is named in the error.
         self.assertIn("nvidia", message)
-        # The env var name is NOT in the error (it's the lookup key, not the provider).
+        # The env name is a backend implementation detail and is not disclosed.
         self.assertNotIn("NVIDIA_API_KEY", message)
         self.assertNotIn(_OPENAI_SECRET, message)
         await manager.stop()

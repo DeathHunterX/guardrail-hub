@@ -10,6 +10,15 @@ from app.intelligence.credentials import CredentialStore, InMemoryCredentialBack
 from app.intelligence.providers.provider_factory import ProviderFactory
 from app.intelligence.providers.provider_manager import ProviderManager
 from app.intelligence.registry.catalog.catalog import ModelCatalog
+from app.intelligence.registry.models.provider import (
+    AuthConfig,
+    AuthType,
+    Capability,
+    ConnectionConfig,
+    DeploymentType,
+    ProviderRecord,
+    ProviderType,
+)
 
 
 class TestBootstrapCredentialWiring(unittest.TestCase):
@@ -18,6 +27,30 @@ class TestBootstrapCredentialWiring(unittest.TestCase):
     def test_build_conversation_service_wires_credential_runtime(self):
         """Build the real composition graph with only backend selection patched."""
         catalog = ModelCatalog()
+        catalog.register_provider(
+            ProviderRecord(
+                provider_id="openai-cloud",
+                provider_type=ProviderType.OPENAI_COMPATIBLE,
+                deployment=DeploymentType.CLOUD,
+                auth=AuthConfig(type=AuthType.API_KEY, api_key_env="OPENAI_API_KEY"),
+                connection=ConnectionConfig(base_url="https://example.com/v1"),
+                capabilities=frozenset({Capability.CHAT}),
+                enabled=True,
+                priority=10,
+            )
+        )
+        catalog.register_provider(
+            ProviderRecord(
+                provider_id="fallback-cloud",
+                provider_type=ProviderType.OPENAI_COMPATIBLE,
+                deployment=DeploymentType.CLOUD,
+                auth=AuthConfig(type=AuthType.API_KEY),
+                connection=ConnectionConfig(base_url="https://example.com/v1"),
+                capabilities=frozenset({Capability.CHAT}),
+                enabled=True,
+                priority=20,
+            )
+        )
         catalog.freeze()
         registry_runtime = SimpleNamespace(catalog=catalog)
         backend = InMemoryCredentialBackend()
@@ -31,7 +64,12 @@ class TestBootstrapCredentialWiring(unittest.TestCase):
                 event_dispatcher=MagicMock(),
             )
 
-        build_backend.assert_called_once_with()
+        build_backend.assert_called_once_with(
+            env_var_names={
+                "openai-cloud": "OPENAI_API_KEY",
+                "fallback-cloud": "GUARDRAILHUB_CREDENTIAL__FALLBACK-CLOUD",
+            }
+        )
         self.assertIsInstance(provider_manager, ProviderManager)
         self.assertIsInstance(provider_manager._factory, ProviderFactory)
         self.assertEqual(

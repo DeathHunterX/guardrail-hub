@@ -281,12 +281,12 @@ class ProviderManager:
         """Resolve and attach runtime authentication material for a provider.
 
         Only API-key providers resolve a credential, and only from the
-        :class:`CredentialStore`. The lookup key is ``auth.api_key_env`` when
-        present; otherwise it is ``GUARDRAILHUB_CREDENTIAL__<PROVIDER_ID>`` in
-        uppercase (ADR-0017 Decision E). AWS providers use the AWS SDK credential
-        chain (never the CredentialStore); providers with no authentication need
-        no credential. The sentinel default (auth.type absent from YAML) is
-        treated as "not an api-key provider" and resolves nothing.
+        :class:`CredentialStore` using the provider's stable logical identity.
+        Backend-specific physical lookup remains behind the credential seam. AWS
+        providers use the AWS SDK credential chain (never the CredentialStore);
+        providers with no authentication need no credential. The sentinel default
+        (auth.type absent from YAML) is treated as "not an api-key provider" and
+        resolves nothing.
 
         The resolved secret is wrapped in a :class:`ProviderCredential` and
         attached to the adapter via ``attach_credential`` before ``initialize()``
@@ -314,15 +314,8 @@ class ProviderManager:
                 "but no credential store is configured."
             )
 
-        # Compute the lookup key per ADR-0017 Decision E.
-        # auth.api_key_env names the env var that holds the secret; absent -> default.
-        if record.auth.api_key_env:
-            lookup_key = record.auth.api_key_env
-        else:
-            lookup_key = f"GUARDRAILHUB_CREDENTIAL__{record.provider_id.upper()}"
-
         try:
-            api_key = self._credential_store.get(lookup_key)
+            api_key = self._credential_store.get(record.provider_id)
         except CredentialNotFoundError:
             # Fail clearly, identifying only the provider — never the (missing)
             # secret. "from None" suppresses the chained lookup detail.

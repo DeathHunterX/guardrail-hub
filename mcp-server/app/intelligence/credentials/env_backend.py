@@ -1,10 +1,10 @@
 """Read-only credential backend backed by process environment variables.
 
 This backend satisfies the :class:`CredentialBackend` contract by reading secrets
-from ``os.environ``. It is intentionally a thin, generic adapter: it receives a
-pre-computed ``lookup_key`` (an environment variable name) from the caller and
-returns the variable's value. It has no knowledge of provider records, auth
-configuration, ``api_key_env`` semantics, or any other application-level concept.
+from ``os.environ``. It receives a provider identity from the caller, projects it
+through a pre-composed provider-to-environment-name mapping, then returns the
+environment variable's value. It has no knowledge of provider records, auth
+configuration, or ``api_key_env`` semantics.
 
 This makes it suitable as a drop-in backend for any deployment where credentials
 are injected as environment variables (e.g. systemd unit files, container run
@@ -22,6 +22,7 @@ Security constraints enforced at this boundary:
 from __future__ import annotations
 
 import os
+from typing import Mapping
 
 from app.intelligence.credentials.base import (
     CredentialBackend,
@@ -33,57 +34,61 @@ from app.intelligence.credentials.base import (
 class EnvVarCredentialBackend(CredentialBackend):
     """Read-only credential backend reading secrets from the process environment.
 
-    Each credential is a single environment variable whose name is the
-    ``lookup_key`` passed to :meth:`get`. The backend treats ``lookup_key``
-    as a pure string and is unaware of how it was derived.
+    Each credential is addressed by its provider ID. The backend maps that
+    identity to a configured environment-variable name before reading it.
 
     This backend is **read-only** by design. ``set`` and ``delete`` are
     refused unconditionally because secrets are provisioned by the deployment
     platform, not by the application.
 
     Args:
-        No constructor arguments. The backend is stateless — all state lives
-        in ``os.environ``.
+        provider_env_names: Non-secret mapping from provider IDs to environment
+            variable names. This is composed by bootstrap from the frozen catalog.
 
     Example::
 
-        # ProviderManager computes the lookup key; the backend receives it.
-        backend = EnvVarCredentialBackend()
-        secret = backend.get("OPENAI_API_KEY")        # reads os.environ["OPENAI_API_KEY"]
-        secret = backend.get("GUARDRAILHUB_CREDENTIAL__OPENAI")  # same pattern
+        backend = EnvVarCredentialBackend({"openai-cloud": "OPENAI_API_KEY"})
+        secret = backend.get("openai-cloud")  # reads os.environ["OPENAI_API_KEY"]
     """
+
+    def __init__(self, provider_env_names: Mapping[str, str]) -> None:
+        self._provider_env_names = dict(provider_env_names)
 
     # ------------------------------------------------------------------
     # Read path
     # ------------------------------------------------------------------
 
-    def get(self, lookup_key: str) -> str:
-        """Retrieve the value of the environment variable named ``lookup_key``.
+    def get(self, provider_id: str) -> str:
+        """Retrieve a provider credential from its configured environment variable.
 
         Args:
-            lookup_key: The exact name of the environment variable to read.
+            provider_id: The logical credential identity.
 
         Returns:
             The environment variable's value.
 
         Raises:
-            CredentialNotFoundError: No variable with this name exists in
-                ``os.environ``, or the variable exists but is set to an empty
-                string.
+            CredentialNotFoundError: The provider has no configured environment
+                variable, the variable is absent, or it is empty.
             CredentialBackendError: The operation failed for a reason other
                 than a missing variable.
         """
         try:
-            value = os.environ[lookup_key]
+            env_name = self._provider_env_names[provider_id]
+        except KeyError:
+            raise CredentialNotFoundError(provider_id)
+
+        try:
+            value = os.environ[env_name]
         except KeyError:
             # Raise a credential-domain exception so callers can handle it
             # uniformly without importing ``os``.
-            raise CredentialNotFoundError(lookup_key)
+            raise CredentialNotFoundError(provider_id)
 
         # Treat an empty string as absent: an empty env var is a configuration
         # error (the variable is defined but has no value), not a valid secret.
         if not value:
-            raise CredentialNotFoundError(lookup_key)
+            raise CredentialNotFoundError(provider_id)
 
         return value
 
@@ -91,7 +96,7 @@ class EnvVarCredentialBackend(CredentialBackend):
     # Read-only contract (INV-3)
     # ------------------------------------------------------------------
 
-    def set(self, lookup_key: str, credential: str) -> None:
+    def set(self, provider_id: str, credential: str) -> None:
         """Refuse to write credentials.
 
         This backend is read-only because secrets are provisioned by the
@@ -106,21 +111,21 @@ class EnvVarCredentialBackend(CredentialBackend):
         """
         try:
             raise CredentialBackendError(
-                lookup_key,
+                provider_id,
                 "credentials are managed by the deployment platform; "
                 "this backend is read-only",
             )
         finally:
             del credential
 
-    def delete(self, lookup_key: str) -> None:
+    def delete(self, provider_id: str) -> None:
         """Refuse to delete credentials.
 
         Raises:
             CredentialBackendError: always, because this backend is read-only.
         """
         raise CredentialBackendError(
-            lookup_key,
+            provider_id,
             "credentials are managed by the deployment platform; "
             "this backend is read-only",
         )

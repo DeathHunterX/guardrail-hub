@@ -1,8 +1,7 @@
 """Unit tests for EnvVarCredentialBackend.
 
-Phase 5D: covers get(), set(), delete(), __repr__, and INV-6 non-disclosure.
-The backend is generic and provider-agnostic — no knowledge of provider records,
-AuthConfig, or api_key_env is exercised or expected.
+The backend receives provider identities and projects them to pre-composed,
+non-secret environment-variable names.
 """
 
 import os
@@ -59,22 +58,23 @@ class _EnvPatch:
 class TestEnvBackendGet(unittest.TestCase):
     """Successful and unsuccessful credential retrieval."""
 
-    def test_get_returns_environ_value(self):
-        """get() returns the value of the named environment variable."""
-        with _env(MY_SECRET=_TEST_SECRET):
-            backend = EnvVarCredentialBackend()
-            result = backend.get("MY_SECRET")
+    def test_get_projects_provider_id_to_configured_env_name(self):
+        """A provider ID resolves only through its configured env-name mapping."""
+        with _env(OPENAI_API_KEY=_TEST_SECRET):
+            backend = EnvVarCredentialBackend({"openai-cloud": "OPENAI_API_KEY"})
+            result = backend.get("openai-cloud")
         self.assertEqual(result, _TEST_SECRET)
 
     def test_get_missing_raises_not_found(self):
         """get() for a non-existent variable raises CredentialNotFoundError."""
         # Ensure it does not exist.
         with _env(NON_EXISTENT_VAR_987654321=None):
-            backend = EnvVarCredentialBackend()
+            backend = EnvVarCredentialBackend(
+                {"missing-provider": "NON_EXISTENT_VAR_987654321"}
+            )
             with self.assertRaises(CredentialNotFoundError) as ctx:
-                backend.get("NON_EXISTENT_VAR_987654321")
-            # The exception carries the key (metadata), not the secret.
-            self.assertEqual(ctx.exception.provider_id, "NON_EXISTENT_VAR_987654321")
+                backend.get("missing-provider")
+            self.assertEqual(ctx.exception.provider_id, "missing-provider")
             self.assertNotIn(_TEST_SECRET, str(ctx.exception))
 
     def test_get_empty_string_raises_not_found(self):
@@ -84,16 +84,30 @@ class TestEnvBackendGet(unittest.TestCase):
         no value. It is not a valid credential.
         """
         with _env(EMPTY_SECRET_VAR=""):
-            backend = EnvVarCredentialBackend()
+            backend = EnvVarCredentialBackend(
+                {"empty-provider": "EMPTY_SECRET_VAR"}
+            )
             with self.assertRaises(CredentialNotFoundError) as ctx:
-                backend.get("EMPTY_SECRET_VAR")
-            self.assertEqual(ctx.exception.provider_id, "EMPTY_SECRET_VAR")
+                backend.get("empty-provider")
+            self.assertEqual(ctx.exception.provider_id, "empty-provider")
+
+    def test_unmapped_provider_is_not_treated_as_raw_environment_name(self):
+        """An unmapped provider must fail even if its raw name exists in env."""
+        with _env(**{"openai-cloud": _TEST_SECRET}):
+            backend = EnvVarCredentialBackend({})
+            with self.assertRaises(CredentialNotFoundError) as ctx:
+                backend.get("openai-cloud")
+        self.assertEqual(ctx.exception.provider_id, "openai-cloud")
+        self.assertNotIn(_TEST_SECRET, str(ctx.exception))
+        self.assertNotIn(_TEST_SECRET, repr(ctx.exception))
 
     def test_get_whitespace_value_preserved(self):
         """A variable containing only whitespace (not empty) is returned as-is."""
         with _env(WHITESPACE_SECRET="   \t\n   "):
-            backend = EnvVarCredentialBackend()
-            result = backend.get("WHITESPACE_SECRET")
+            backend = EnvVarCredentialBackend(
+                {"whitespace-provider": "WHITESPACE_SECRET"}
+            )
+            result = backend.get("whitespace-provider")
         self.assertEqual(result, "   \t\n   ")
 
 
@@ -108,17 +122,16 @@ class TestEnvBackendInv6(unittest.TestCase):
     def test_secret_not_in_exception_message(self):
         """CredentialNotFoundError message does not contain the secret."""
         with _env(INV6_SECRET=_TEST_SECRET):
-            backend = EnvVarCredentialBackend()
-            try:
-                backend.get("INV6_SECRET")
-            except CredentialNotFoundError as e:
-                self.assertNotIn(_TEST_SECRET, str(e))
-                self.assertNotIn(_TEST_SECRET, repr(e))
+            backend = EnvVarCredentialBackend({"inv6-provider": "INV6_SECRET"})
+            with self.assertRaises(CredentialNotFoundError) as ctx:
+                backend.get("unmapped-provider")
+        self.assertNotIn(_TEST_SECRET, str(ctx.exception))
+        self.assertNotIn(_TEST_SECRET, repr(ctx.exception))
 
     def test_secret_not_in_repr(self):
         """backend repr contains no secret values or variable names."""
         with _env(SECRET_FOR_REPR="my-secret-value"):
-            backend = EnvVarCredentialBackend()
+            backend = EnvVarCredentialBackend({"repr-provider": "SECRET_FOR_REPR"})
             r = repr(backend)
             self.assertNotIn("my-secret-value", r)
             self.assertNotIn("SECRET_FOR_REPR", r)
@@ -136,7 +149,7 @@ class TestEnvBackendSet(unittest.TestCase):
 
     def test_set_raises_backend_error(self):
         """set() always raises CredentialBackendError."""
-        backend = EnvVarCredentialBackend()
+        backend = EnvVarCredentialBackend({})
         with self.assertRaises(CredentialBackendError) as ctx:
             backend.set("SOME_VAR", "any-value")
         self.assertEqual(ctx.exception.provider_id, "SOME_VAR")
@@ -144,7 +157,7 @@ class TestEnvBackendSet(unittest.TestCase):
 
     def test_set_error_message_no_secret(self):
         """CredentialBackendError message does not contain the secret value."""
-        backend = EnvVarCredentialBackend()
+        backend = EnvVarCredentialBackend({})
         with self.assertRaises(CredentialBackendError) as ctx:
             backend.set("ANOTHER_VAR", _TEST_SECRET)
         self.assertNotIn(_TEST_SECRET, str(ctx.exception))
@@ -160,7 +173,7 @@ class TestEnvBackendDelete(unittest.TestCase):
 
     def test_delete_raises_backend_error(self):
         """delete() always raises CredentialBackendError."""
-        backend = EnvVarCredentialBackend()
+        backend = EnvVarCredentialBackend({})
         with self.assertRaises(CredentialBackendError) as ctx:
             backend.delete("SOME_VAR")
         self.assertEqual(ctx.exception.provider_id, "SOME_VAR")
@@ -178,7 +191,7 @@ class TestEnvBackendRepr(unittest.TestCase):
     def test_repr_no_secret_no_var_name(self):
         """repr() contains neither the secret value nor the variable name."""
         with _env(SOME_VAR_FOR_REPR="super-secret-value-xyz"):
-            backend = EnvVarCredentialBackend()
+            backend = EnvVarCredentialBackend({"repr-provider": "SOME_VAR_FOR_REPR"})
             r = repr(backend)
             self.assertIn("EnvVarCredentialBackend", r)
             self.assertNotIn("super-secret-value-xyz", r)
@@ -186,7 +199,7 @@ class TestEnvBackendRepr(unittest.TestCase):
 
     def test_repr_identical_every_time(self):
         """repr() is deterministic (stateless backend)."""
-        backend = EnvVarCredentialBackend()
+        backend = EnvVarCredentialBackend({})
         self.assertEqual(repr(backend), repr(backend))
 
 

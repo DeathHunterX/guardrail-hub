@@ -635,13 +635,28 @@ def build_conversation_service(
     from app.intelligence.providers import ProviderFactory
     from app.intelligence.providers.adapters import register_all_adapters
     from app.intelligence.providers.provider_manager import ProviderManager
+    from app.intelligence.registry.models.provider import AuthType
     from app.services.conversation.conversation_service import ConversationService
+
+    # RegistryRuntime.start() must have been called before this function.
+    catalog = registry_runtime.catalog
+
+    # The CredentialStore namespace is always provider_id. Only the env backend
+    # projects provider IDs to physical environment-variable names.
+    env_var_names = {
+        record.provider_id: (
+            record.auth.api_key_env
+            or f"GUARDRAILHUB_CREDENTIAL__{record.provider_id.upper()}"
+        )
+        for record in catalog.iter_providers()
+        if record.auth.type == AuthType.API_KEY
+    }
 
     # Build the credential store from the runtime backend.
     # build_credential_backend() reads GUARDRAILHUB_CREDENTIAL_BACKEND and
     # GUARDRAILHUB_SECRETS_DIR and selects the appropriate backend. It raises
     # CredentialBackendError fail-closed on unsupported platform+mode combinations.
-    backend = build_credential_backend()
+    backend = build_credential_backend(env_var_names=env_var_names)
     credential_store = CredentialStore(backend)
 
     # Build the provider factory and register all known adapters.
@@ -649,8 +664,6 @@ def build_conversation_service(
     register_all_adapters(factory)
 
     # Build LLMService from the already-started registry runtime.
-    # RegistryRuntime.start() must have been called before this function.
-    catalog = registry_runtime.catalog
     provider_manager = ProviderManager(
         factory,
         catalog,

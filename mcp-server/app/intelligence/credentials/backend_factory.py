@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Final, Optional
+from typing import Final, Mapping, Optional
 
 from app.intelligence.credentials import CredentialBackend, CredentialBackendError
 
@@ -45,6 +45,8 @@ _VALID_MODES: Final[frozenset[str]] = frozenset({"windows", "wincm", "file", "en
 
 def build_credential_backend(
     platform: Optional[str] = None,
+    *,
+    env_var_names: Optional[Mapping[str, str]] = None,
 ) -> CredentialBackend:
     """Select and return the credential backend for this runtime environment.
 
@@ -85,6 +87,8 @@ def build_credential_backend(
         platform: Platform identifier (``sys.platform``). Defaults to the
             running platform. Exposed for testability so tests can exercise
             Windows and non-Windows branches on a single machine.
+        env_var_names: Non-secret provider-ID to environment-variable-name
+            mapping used only by the ``env`` backend.
 
     Returns:
         A configured :class:`CredentialBackend` for this environment.
@@ -134,7 +138,7 @@ def build_credential_backend(
         from app.intelligence.credentials.env_backend import (
             EnvVarCredentialBackend,
         )
-        return EnvVarCredentialBackend()
+        return EnvVarCredentialBackend(env_var_names or {})
 
     # unset, windows, wincm, or unknown → fail closed
     _raise_unsupported(resolved_platform, raw_mode or "<unset>")
