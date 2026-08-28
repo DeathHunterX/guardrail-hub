@@ -114,10 +114,9 @@ The first benchmark ([Fix Bug](benchmarks/fix-bug.md)) was established and run i
 
 | Benchmark | Version | Last Run | Result |
 |---|---|---|---|
-| [Fix Bug](benchmarks/fix-bug.md) | 1.0.0 | 2026-07-06 | **Pass** (baseline) |
+| [Fix Bug](benchmarks/fix-bug.md) | 1.0.3 | 2026-07-29 | **Pass** (revalidated) |
 | Implement API | — | — | not yet run |
 | Create Scanner | — | — | not yet run |
-| Review PR | — | — | not yet run |
 | Review PR | — | — | not yet run |
 | Deploy Service | — | — | not yet run |
 | Create Dashboard | — | — | not yet run |

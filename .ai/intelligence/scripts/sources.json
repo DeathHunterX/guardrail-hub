@@ -1,6 +1,6 @@
 {
-  "verified_commit": "10bd79b-SUPERSEDED-see-ADR-0005",
-  "verified_date": "2026-07-03 (re-verification pending after 2026-07-10 hardening refactor, ADR-0005)",
+  "verified_commit": "adab504+working-tree",
+  "verified_date": "2026-08-28",
   "documents": {
     "system-overview.md": {
       "sources": [
@@ -9,9 +9,11 @@
         "web",
         "mobile",
         "api",
-        "docs"
+        "docs",
+        "architecture",
+        ".github/workflows"
       ],
-      "hash": "cfc2e35bef3a70adce0e010f92ff660839d60f4eb42b26481d8cf572e4d0fbd1"
+      "hash": "c784124f31edc38a206febcb4559efdf4caf8732e22651f9e7f7980e417e493b"
     },
     "project-map.md": {
       "sources": [
@@ -19,30 +21,36 @@
         "web",
         "mobile",
         "api",
-        "docs"
+        "docs",
+        "architecture",
+        ".github/workflows"
       ],
-      "hash": "1a069c39959def77d8cf2c0274d0aa6ce7a2410adfa4059020a391be10bc76ad"
+      "hash": "7fdd44978c9a60a87d80466f405d6d30a9a8e3fe7cf582860297fe3c30958883"
     },
     "module-map.md": {
       "sources": [
         "mcp-server/app",
         "web/app",
         "web/components",
+        "web/features",
         "web/lib",
         "web/hooks"
       ],
-      "hash": "32002268588f2f0bd2425842528b9e48d0ac6152614d6fed79649a3124a57a2e"
+      "hash": "7223c43219d82994835e863f8f07d919fd221e2b587091425fbb8aa9a9523b05"
     },
     "codegraph.md": {
       "sources": [
         "mcp-server/app/main.py",
+        "mcp-server/app/bootstrap.py",
+        "mcp-server/app/core/startup.py",
         "mcp-server/app/routers",
         "mcp-server/app/services",
         "mcp-server/app/integrations",
         "mcp-server/app/dao",
-        "mcp-server/app/core"
+        "mcp-server/app/intelligence",
+        "mcp-server/app/runtime"
       ],
-      "hash": "65960579eddd4b3d9735ff60e891491fc273550b521970886099e7bf7e8d14ea"
+      "hash": "da412c6042d929644c40b49950e71fbf2c2d03fe635b329cadfd30891fc5a8c5"
     },
     "dependency-graph.md": {
       "sources": [
@@ -50,67 +58,89 @@
         "web/package.json",
         "mcp-server/app"
       ],
-      "hash": "7d5a9da29c4273aae6338b28780e83c23bb7226cc03bc37368bad8a5b70ff923"
+      "hash": "847253713bcc93e49f51a957bbc343d94caa4d5c534046ccf4c91f7d1b85ab2d"
     },
     "api-map.md": {
       "sources": [
         "mcp-server/app/routers",
-        "mcp-server/app/schemas"
+        "mcp-server/app/schemas",
+        "mcp-server/app/main.py",
+        "mcp-server/app/runtime/jmeter"
       ],
-      "hash": "4c7ec934388ef6b2e3d1da8347b79463107da65d324108c1a2dd026c8daec1fa"
+      "hash": "e6b4b8bc8472afb1051055b1563d426975bc884cdfb5a42063e78d2815bbedda"
     },
     "database-map.md": {
       "sources": [
         "mcp-server/app/dao",
+        "mcp-server/migrations",
+        "mcp-server/app/intelligence/conversation",
+        "mcp-server/app/services/conversation",
         "mcp-server/app/schemas/internal",
         "mcp-server/app/schemas/tools/owasp_zap",
         "mcp-server/app/constants"
       ],
-      "hash": "c38d5a27bce96dfc4319993279d9dca19b065b80ae6069cbd35f0b131ced2287"
+      "hash": "03167043cac0d2c4bfbfb0cb20fbde8121f34dbcb64383ea51554ed8d9733251"
     },
     "deployment-map.md": {
       "sources": [
         "mcp-server/docker-compose.yml",
         "mcp-server/docker",
-        "mcp-server/app/core/mcp_logger.py"
+        "mcp-server/app/core/mcp_logger.py",
+        "mcp-server/app/core/startup.py",
+        "mcp-server/app/core/config",
+        ".github/workflows"
       ],
-      "hash": "bfae8b8e780587a67b1f6edd7b7239b1071d34b36ed5801ba514ad14c265fecb"
+      "hash": "c44603e6afae01bea6ee5b3c1037a22d9860da420fb8e9920f0f2057cb748c0a"
     },
     "security-map.md": {
       "sources": [
         "mcp-server/app/core/config",
-        "mcp-server/app/routers/internal",
+        "mcp-server/app/main.py",
+        "mcp-server/app/routers",
+        "mcp-server/app/intelligence/credentials",
+        "mcp-server/app/intelligence/providers",
+        "mcp-server/app/intelligence/conversation",
+        "mcp-server/app/services/tools",
         "mcp-server/dependencies",
-        "mcp-server/app/security",
-        "mcp-server/app/policies",
-        "mcp-server/.env.example"
+        "mcp-server/.env.example",
+        ".github/workflows"
       ],
-      "hash": "73504cd931c6536131192fee7aaa54df4805a3c8b88dc42fa0ea58c114e271db"
+      "hash": "363f6b21b3b92e970e4649c888cf4ecc7a81e03e884ddaa5dfbeda925d4aa72b"
     },
     "technology-stack.md": {
       "sources": [
         "mcp-server/pyproject.toml",
         "mcp-server/.python-version",
         "web/package.json",
-        "mcp-server/docker-compose.yml"
+        "mcp-server/docker-compose.yml",
+        "mcp-server/docker"
       ],
-      "hash": "004738f859aec2c1e51468a4e5c64c9309eca0807f3adb182c1889d6527753d8"
+      "hash": "d77e1e64215fad9e6b4e9ed567b064f6f16314cb235adba9906a60381dd60511"
     },
     "conventions.md": {
       "sources": [
         "mcp-server/app",
+        "mcp-server/tests",
         "web/app",
-        "web/components"
+        "web/components",
+        "web/features",
+        "web/hooks",
+        "web/lib",
+        "web/package.json"
       ],
-      "hash": "b14690c15fdcb2e41551dc9ef9c58d2f3b4ae9b4cb263d8cc3dcebb12f590432"
+      "hash": "b129569166db551d42897948369836842b17c416914d5139a50b53e89b9e73e3"
     },
     "glossary.md": {
       "sources": [
         "README.md",
+        "AGENTS.md",
         "mcp-server/app/core/config",
-        "mcp-server/app/constants"
+        "mcp-server/app/constants",
+        "mcp-server/app/domain",
+        "mcp-server/app/intelligence",
+        "mcp-server/app/services"
       ],
-      "hash": "dfd3b8fa181763626b08c86428d8a34f65a0ca0f85fbd66cf30a3eb54545f3eb"
+      "hash": "11779c0d78f53fa88ea715527a4fecea9df4583e528bc99bca3566a772e3ebc7"
     }
   }
 }

@@ -1,8 +1,8 @@
 # Intelligence Layer — Architecture Overview
 
-> The canonical entry point for understanding the Intelligence Layer.
-> This document connects the existing ADRs, Standards, and Playbooks
-> into a coherent map. It introduces no new decisions.
+> **Draft working overview.** This document describes the implementation on the
+> current feature branch. It is not an Active AIOS unit and does not create
+> authority for the planned ADRs, Standards, or Playbooks named below.
 
 ---
 
@@ -252,7 +252,7 @@ triple of three coordinated changes.
    capability contract pattern.
 3. Provider implementations of the new port (one or more adapters).
 
-Governing playbook: [add-capability](../playbooks/intelligence/add-capability.md)
+Planned playbook: `playbooks/intelligence/add-capability.md` (not authored yet).
 
 ### Add routing strategy
 
@@ -262,7 +262,7 @@ Governing playbook: [add-capability](../playbooks/intelligence/add-capability.md
 3. Wire the strategy at the composition root when constructing `Router`
    or `LLMService`.
 
-Governing playbook: [add-routing-strategy](../playbooks/intelligence/add-routing-strategy.md)
+Planned playbook: `playbooks/intelligence/add-routing-strategy.md` (not authored yet).
 
 ### Add policy
 
@@ -278,11 +278,11 @@ metrics). The policy wraps the strategy call; conflation is forbidden.
 
 | Context | Governing ADRs |
 |---|---|
-| Intelligence Layer (overall shape) | [0013 — Intelligence Layer Architecture](../decisions/0013-intelligence-layer-architecture.md) |
-| Registry (provider + model + catalog) | [0014 — Provider & Routing Architecture](../decisions/0014-provider-and-routing-architecture.md) |
-| Provider Runtime (lifecycle, ports) | [0014 — Provider & Routing Architecture](../decisions/0014-provider-and-routing-architecture.md) |
-| Inference (router, strategy, policy) | [0014](../decisions/0014-provider-and-routing-architecture.md), [0016 — Inference Policy](../decisions/0016-inference-policy.md) |
-| Health | [0015 — Inference Runtime](../decisions/0015-inference-runtime.md) |
+| Intelligence Layer (overall shape) | Planned ADR 0013 — not authored |
+| Registry (provider + model + catalog) | Planned ADR 0014 — not authored |
+| Provider Runtime (lifecycle, ports) | Planned ADR 0014 — not authored |
+| Inference (router, strategy, policy) | Planned ADRs 0014/0016 — not authored |
+| Health | Planned ADR 0015 — not authored |
 | Conversation | (deferred — no dedicated ADR yet) |
 
 ### Standards
@@ -294,13 +294,13 @@ the contexts to the standards that govern them.
 |---|---|
 | Overall layer constraints | [backend-layering](../standards/architecture/backend-layering.md) |
 | Package design rules | [service-package-design](../standards/architecture/service-package-design.md) |
-| Registry runtime | [registry-runtime](../standards/architecture/registry-runtime.md) |
-| Provider records | [provider-registry](../standards/architecture/provider-registry.md) |
-| Model records | [model-registry](../standards/architecture/model-registry.md) |
-| Provider lifecycle | [provider-lifecycle](../standards/architecture/provider-lifecycle.md) |
-| Routing | [routing](../standards/architecture/routing.md) |
-| Conversation (later) | [conversation](../standards/architecture/conversation.md) |
-| Health (later) | [health-monitor](../standards/architecture/health-monitor.md) |
+| Registry runtime | Planned `registry-runtime` Standard — not authored |
+| Provider records | Planned `provider-registry` Standard — not authored |
+| Model records | Planned `model-registry` Standard — not authored |
+| Provider lifecycle | Planned `provider-lifecycle` Standard — not authored |
+| Routing | Planned `routing` Standard — not authored |
+| Conversation | Planned `conversation` Standard — not authored |
+| Health | Planned `health-monitor` Standard — not authored |
 
 ### Playbooks
 
@@ -308,10 +308,10 @@ Playbooks are the **how to add X** procedures. Each extension point in
 §6 cites its playbook; the full set is:
 
 - [add-provider](../playbooks/intelligence/add-provider.md)
-- [add-model](../playbooks/intelligence/add-model.md)
-- [add-capability](../playbooks/intelligence/add-capability.md)
-- [add-routing-strategy](../playbooks/intelligence/add-routing-strategy.md)
-- [migrate-registry](../playbooks/intelligence/migrate-registry.md)
+- `add-model` — planned, not authored
+- `add-capability` — planned, not authored
+- `add-routing-strategy` — planned, not authored
+- `migrate-registry` — planned, not authored
 
 ---
 

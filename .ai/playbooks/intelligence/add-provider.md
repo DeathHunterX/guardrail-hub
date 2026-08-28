@@ -1,128 +1,50 @@
-# Playbook — Add a Provider
+# Add an Intelligence Provider
 
-> Operational guide for adding a new LLM provider to the Intelligence Layer. Authority: [Decision 0014](../../decisions/0014-provider-and-routing-architecture.md). Standards: [provider-registry](../../standards/architecture/provider-registry.md), [provider-lifecycle](../../standards/architecture/provider-lifecycle.md), [routing](../../standards/architecture/routing.md).
+> **Draft working guide.** The Intelligence-specific ADRs and Standards named in earlier drafts were never authored, so this is not an Active Blueprint and grants no independent implementation authority. Use it with the Active Backend Standards and confirm every path against current source.
 
-## Prerequisites
+## Purpose
 
-- [ ] The provider has an SDK or HTTP API that exposes chat, embedding, vision, speech, or rerank capability.
-- [ ] The provider's SDK version is pinned in the project's dependency list.
-- [ ] The `provider_id` is unique — no other provider uses it.
-- [ ] The provider's `provider_type` exists in the `ProviderType` enum (or is added as part of this change).
-- [ ] The provider's `DeploymentType` is decided (cloud, self-hosted, proxy, local).
-- [ ] The provider's credentials are available in the deployment environment.
+Describe the current extension points for a new LLM provider without reviving the removed split `providers.yaml`/`models.yaml` configuration.
 
-## Procedure
+## Current extension path
 
-### Step 1 — Add the provider record to `providers.yaml`
+1. Add the provider kind to `app/intelligence/registry/types/provider.py` when it is genuinely new. Reuse an existing type for another deployment of the same protocol.
+2. Implement an adapter under `app/intelligence/providers/adapters/`. It must implement `BaseProviderRuntime` and only the capability ports it actually supports.
+3. Translate vendor/HTTP/SDK failures into the shared exception hierarchy in `app/intelligence/exceptions.py`; do not leak vendor exceptions past the adapter.
+4. Register the constructor and declared capabilities in `providers/adapters/__init__.py::register_all_adapters`.
+5. Add provider and model records to the single canonical configuration, `mcp-server/config/llm.yaml`. Provider capabilities are derived from its models by the loader.
+6. Keep secrets out of `llm.yaml`. Declare the authentication mechanism/reference and deliver the value through the credential backend/store selected at startup.
+7. Add tests for loader/validator behavior, factory registration, adapter lifecycle/capabilities, real request translation at the HTTP/SDK boundary, and ProviderManager startup/shutdown behavior.
+8. Run the relevant backend tests and `python .ai/tools/aios.py check`.
 
-**Governed by:** [provider-registry](../../standards/architecture/provider-registry.md) PR-1, PR-4, PR-6.
+## Required invariants
 
-- Add a single entry under `providers:` with the chosen `provider_id`.
-- Set `provider_type` to the enum value.
-- Set `deployment` to the chosen deployment type.
-- Set `enabled: true` if the provider is active in this deployment.
-- Set `priority` to influence the routing strategy's preference.
-- Set `auth` and `connection` to the provider-specific configuration.
+- `provider_id` is a unique logical deployment identifier; provider type identifies the adapter protocol/vendor family.
+- `model_id` is Guardrail Hub's logical routing identifier; `deployment_name` is the provider-facing identifier.
+- Declared capabilities must match methods actually implemented by the adapter.
+- Disabled providers do not require credentials at startup.
+- Secret values never appear in registry configuration, logs, exceptions, fixtures or committed environment files.
+- Concrete adapter wiring remains in the provider factory/composition path, not in HTTP or MCP routers.
+- Adding one provider must not require changing unrelated adapters or inference consumers.
 
-**Check:** The YAML parses cleanly via the loader. The validator accepts the record.
+## Validation checklist
 
-### Step 2 — Implement the provider adapter
+- [ ] Unified `llm.yaml` loads and validates.
+- [ ] The provider factory creates the adapter for the new provider type.
+- [ ] Provider startup resolves credentials without exposing their values.
+- [ ] Every advertised capability succeeds through the shared port contract.
+- [ ] Authentication, timeout, unavailable, validation and provider failures map to shared exceptions.
+- [ ] Existing provider and routing tests remain green.
+- [ ] Intelligence maps are re-reviewed and their drift baselines updated if their declared sources changed.
 
-**Governed by:** [provider-lifecycle](../../standards/architecture/provider-lifecycle.md) PL-8, base port requirement.
+## Governance gap
 
-- Create a new module under `mcp-server/app/intelligence/providers/<provider_id>/`.
-- The module implements `BaseProvider` and the relevant capability ports (`ChatCapable`, `EmbeddingCapable`, …).
-- The module imports the provider SDK **only** inside the adapter module.
-- The constructor accepts a `ProviderRecord` and stores the connection / auth configuration.
-- The `validate_configuration()` method performs a structural check (and a cheap probe if available).
+Before promoting this file to an Active Blueprint, author and ratify the provider-registry/lifecycle/routing rules it relies on, give the unit valid Blueprint frontmatter, route it through Review, and replace this gap statement with real references. Planned ADR numbers 0013–0016 are not repository records and must not be cited as authority.
 
-**Check:** The adapter compiles; the SDK import is restricted to the adapter module.
+## Related Documents
 
-### Step 3 — Translate SDK exceptions to the LLM exception hierarchy
+[Intelligence architecture draft](../../architecture/intelligence-layer.md) · [service-package-design](../../standards/architecture/service-package-design.md) · [backend-layering](../../standards/architecture/backend-layering.md)
 
-**Governed by:** [routing](../../standards/architecture/routing.md) RT-6.
+## Last Updated
 
-- Every method that calls the provider SDK MUST catch SDK exceptions and raise the corresponding `LLMException` subclass.
-- The mapping table is documented in the standard; the adapter follows it.
-
-**Check:** No raw SDK exception is re-raised. The routing layer never sees a vendor-specific exception.
-
-### Step 4 — Register the constructor and capabilities in `ProviderFactory`
-
-**Governed by:** [provider-lifecycle](../../standards/architecture/provider-lifecycle.md) PL-5, PL-8.
-
-- Register the constructor at the composition root: `factory.register(provider_type.value, ProviderClass)`.
-- Register the capabilities: `factory.register_capabilities(provider_type.value, frozenset({Capability.CHAT, …}))`.
-
-**Check:** The factory knows the provider's type, constructor, and declared capabilities.
-
-### Step 5 — Update the catalog
-
-**Governed by:** [registry-runtime](../../standards/architecture/registry-runtime.md) RR-1, RR-3.
-
-- The catalog is rebuilt automatically at startup. No manual change is required.
-- For hot-reload (when implemented), the registry hot-reload triggers a catalog rebuild.
-
-**Check:** Restart the application; the catalog lists the new provider.
-
-### Step 6 — Add at least one model for the provider
-
-**Governed by:** [model-registry](../../standards/architecture/model-registry.md) MR-3.
-
-- Add at least one model record to `models.yaml` referencing the new `provider_id`.
-- Or use the [add-model playbook](add-model.md) as a follow-up.
-
-**Check:** A request that requires the provider's capability can be routed.
-
-### Step 7 — Update the composition root
-
-**Governed by:** [provider-lifecycle](../../standards/architecture/provider-lifecycle.md) PL-1, [service-package-design](../../standards/architecture/service-package-design.md) R4 / E1 (Composition Root Exception).
-
-- Wire the provider's constructor and capability registration in `bootstrap.py`.
-- The startup must construct the provider; the validation must succeed.
-
-**Check:** The application starts. The provider instance is in the manager's map.
-
-## Validation Checklist
-
-- [ ] `providers.yaml` parses without errors.
-- [ ] The validator reports no `ValidationError` for the new record.
-- [ ] The adapter's `validate_configuration()` returns no error.
-- [ ] The factory lists the provider's `provider_type` and capabilities.
-- [ ] The catalog lists the provider under the expected `provider_id`.
-- [ ] The manager reports the provider as `healthy` (or as `unhealthy` if the validation fails).
-- [ ] `aios check` passes.
-- [ ] `aios arch` reports no dependency violation.
-
-## Common Mistakes
-
-- **Importing the provider SDK outside the adapter module.** The SDK import MUST be isolated. The factory, manager, and routing layer MUST NOT import SDKs.
-- **Returning a raw SDK exception.** The adapter translates; the routing layer does not see vendor exceptions.
-- **Defining a `ProviderRecord` in code instead of YAML.** Two definitions is the same drift class [Decision 0008](../../decisions/0008-domain-ubiquitous-language.md) ¶ 2.1 warns against.
-- **Forgetting to register capabilities.** The factory's constructor registration is not enough; the capabilities registration is what the routing candidate selection uses.
-- **Constructing the provider per request.** The provider is constructed once at startup; per-request construction is a layering violation.
-- **Leaving the provider's `enabled` flag at `false` unintentionally.** The provider is in the catalog but not routable.
-
-## Required Tests
-
-- **Unit tests for the provider adapter.** The adapter's methods against a mocked SDK; the exception translation; the `validate_configuration()` success and failure paths.
-- **Unit tests for the factory registration.** The factory knows the provider's type, constructor, and capabilities.
-- **Integration tests for the catalog.** The catalog includes the new provider after a registry load.
-- **Integration tests for the lifecycle.** The manager constructs the provider at startup; the singleton invariant holds.
-
-## Files Typically Modified
-
-- `mcp-server/app/intelligence/providers/<provider_id>/__init__.py` (new)
-- `mcp-server/app/intelligence/providers/<provider_id>/<provider_id>_client.py` (new)
-- `mcp-server/app/intelligence/providers/<provider_id>/config.py` (new, optional)
-- `mcp-server/app/intelligence/providers/<provider_id>/tests/` (new)
-- `mcp-server/config/providers.yaml`
-- `mcp-server/app/intelligence/bootstrap.py` (registration in the factory)
-- `mcp-server/app/intelligence/registry/providers.yaml` (or wherever the registry YAML lives)
-- `mcp-server/requirements.txt` (if the SDK is not already pinned)
-
-## ADR References
-
-- [Decision 0013](../../decisions/0013-intelligence-layer-architecture.md) — the Intelligence Layer bounded contexts
-- [Decision 0014](../../decisions/0014-provider-and-routing-architecture.md) — the Provider Registry, Factory, and Manager architecture
-- [Decision 0016](../../decisions/0016-inference-policy.md) — the routing policy that includes the new provider
+2026-08-28 — aligned with unified `llm.yaml`, current adapter registration and credential delivery.

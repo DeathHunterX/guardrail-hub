@@ -18,7 +18,7 @@ validated_against: [standards/architecture/backend-layering@1.2.0, standards/arc
 
 # Backend Agent
 
-> The first real Capability Agent. Domain: Backend (`mcp-server/`). Authored in M3; status `Review` pending M4's Review pass to reach `Active`. Frontmatter above is the machine half ([schema/agent.schema.json](../../schema/agent.schema.json)); the 13-field contract below is the human half ([agents/README.md](../README.md#the-agent-contract)).
+> The first real Capability Agent. Domain: Backend (`mcp-server/`). Active since M4. Frontmatter above is the machine half ([schema/agent.schema.json](../../schema/agent.schema.json)); the 13-field contract below is the human half ([agents/README.md](../README.md#the-agent-contract)).
 
 | Field | Value |
 |---|---|

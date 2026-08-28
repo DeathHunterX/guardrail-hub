@@ -1,77 +1,56 @@
 # Deployment Map
 
 ## Purpose
-Document how the system runs today — containers, orchestration, CI/CD, monitoring, logging — and what's absent.
+
+Describe how the implemented system runs and what operational infrastructure is absent.
 
 ## Scope
-Deployment and operational tooling for `mcp-server/` and `web/`. Does not cover application-level architecture (see [codegraph.md](codegraph.md)).
+
+Docker, Compose, startup, configuration, logging and repository automation.
 
 ## AI Usage Guidance
-Do not assume Kubernetes manifests, CI pipelines, or monitoring infrastructure exist — none were found in the repository. If a task requires any of these, they need to be created from scratch, not modified.
+
+Use actual Dockerfiles, Compose and settings as deployment truth. Do not infer production readiness from the existence of containers.
 
 ## Main Content
 
-### Applications & Containers
+### Container topology
 
-```mermaid
-graph TD
-    subgraph "docker-compose.yml (mcp-server/)"
-        MCPService[mcp-server<br/>build: docker/fastapi/Dockerfile<br/>port 8787]
-        ZapService[zap<br/>build: docker/owasp_zap/Dockerfile<br/>profile: zap]
-        PGService[postgres:16-alpine<br/>profile: postgres, local-db]
-    end
-    MCPService --> PGService
-    MCPService --> ZapService
-    WebApp[web/ — no Dockerfile,<br/>run via next dev/start directly]
-    Mobile[mobile/ — not implemented]
-```
+`docker-compose.yml` defines:
 
-| Service | Definition | Ports | Volumes | Profile | Always runs? |
-|---|---|---|---|---|---|
-| `mcp-server` | `docker-compose.yml`, build `docker/fastapi/Dockerfile` | `${MCP_SERVER_PORT:-8787}:8787` | `./app`, `./config`, `./data`, `./logs`, `./public` | default | Yes |
-| `postgres` | `postgres:16-alpine` | `${POSTGRES_PORT:-5432}:5432` | `postgres-data:/var/lib/postgresql/data` | `postgres`, `local-db` | Only with profile |
-| `zap` | build `docker/owasp_zap/Dockerfile` | 8080/8090 (container-internal only, not host-mapped) | anonymous `/zap/wrk`, `/zap/reports` (not host-path — see below) | `zap` | Only with profile |
-
-Network: single bridge network `app-network`. Named volume: `postgres-data`.
-
-**`zap` supports `docker compose --profile zap up --scale zap=N`** with no application configuration change. It has no `container_name` (a fixed name would collide across replicas under `--scale`), and its `/zap/wrk`/`/zap/reports` volumes are anonymous rather than host-path bind mounts — every replica needs its own working directory, not one shared across all of them. Each replica self-registers with `mcp-server` on startup (see Dockerfiles below); there is no `ZAP_CONTAINER_NAME_PREFIX`/`ZAP_AMOUNT_OF_CONTAINERS` config anywhere — the Worker Registry (`app/integrations/owasp_zap/registry.py`) is the single source of truth for how many workers exist and where they are. See `architecture/zap-worker-pool/README.md` at the repo root for the full design.
-
-### Dockerfiles
-
-| File | Base | Builds |
+| Service | Role | Scaling/state |
 |---|---|---|
-| `mcp-server/docker/fastapi/Dockerfile` | `python:3.12-slim` | Installs `uv`, runs `uv sync --frozen --no-dev` against `pyproject.toml`/`uv.lock`, copies `app/` + `config/`, creates `data/logs/reports` dirs, exposes 8787, runs `uvicorn app.main:app --reload` |
-| `mcp-server/docker/owasp_zap/Dockerfile` | `zaproxy/zap-stable` | Creates `/zap/sessions` owned by uid/gid 1000; installs `curl`; sets `ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]`, which runs ZAP (the container's `command:`) alongside `register-worker.sh` — the self-registration/heartbeat sidecar (`POST /workers/register`, periodic `POST /workers/heartbeat`, `DELETE /workers/{id}` on graceful shutdown) |
+| `mcp-server` | FastAPI + MCP control plane | Single application service in Compose |
+| `postgres` | Optional relational persistence | Durable named volume |
+| `zap` | Self-registering ZAP worker | Intended to scale horizontally |
+| `jmeter-worker` | Isolated JMeter runtime | Intended to scale horizontally |
 
-**No Dockerfile exists for `web/`** — it is not containerized; it runs via `next dev`/`next start` directly. No Dockerfile exists at the repository root either.
+Compose uses an application network and a shared worker/control-plane network. The backend runs on Python 3.12 slim; ZAP uses the stable upstream image; JMeter is 5.6.3 on Temurin 21.
 
-### Kubernetes / Helm
+### Runtime startup
 
-None. No manifests, no Helm charts anywhere in the repository — this is still aspirational, not implemented. The ZAP worker pool's design (self-registration + heartbeat, no server-side hostname generation, Registry as source of truth) is deliberately orchestrator-agnostic so a future Kubernetes Deployment/StatefulSet of ZAP pods could reuse the same `/workers/register` and `/workers/heartbeat` protocol without server-side changes — but no manifests exist yet.
+The server validates settings, initializes persistence/migrations, builds the LLM registry and credential/provider runtime, constructs shared operation and notification flows, and starts worker dispatch components. Production-mode configuration rejects unsafe or missing secret choices in several areas.
 
-### CI/CD
+Credential backend behavior is platform-aware:
 
-None. No `.github/workflows/`, no `Jenkinsfile`, no `.gitlab-ci.yml`, no other CI config anywhere in the repository. There is currently no automated build, test, or deploy pipeline — and, notably, no automated security scanning of Guardrail Hub's own code despite that being the product's purpose (see [security-map.md](security-map.md)).
+- Windows defaults to Windows Credential Manager.
+- Non-Windows deployments must explicitly select mounted-file secrets or the environment backend; otherwise startup fails closed.
+- The mounted-file backend defaults to `/run/secrets`.
 
-### Monitoring
+### Observability
 
-None. No Prometheus, Grafana, or other observability tooling/config found. The root README's "Runtime Monitoring" scanning mode (Falco/WAF/SIEM sources) is described as a target capability, not something implemented against Guardrail Hub's own deployment.
+Application code primarily emits structured output through `MCPLogger`; Slack can receive user-facing lifecycle status. Health/liveness/readiness endpoints exist. There is no demonstrated metrics backend, distributed tracing stack, centralized log pipeline, SLO definition or production alerting configuration in this repository.
 
-### Logging
+### Automation and delivery
 
-| Aspect | Implementation |
-|---|---|
-| Mechanism | `MCPLogger` (`app/core/mcp_logger.py`) — the app's only logging path, no structured/centralized log shipping |
-| Output | File-based, written to `mcp-server/logs/` (observed: `OWASP ZAP_*.log`, `OwaspZapPool_*.log`, `PostgresDAO_*.log`, `PostgresOperationDAO_*.log`) |
-| Configuration | `LOG_LEVEL`, `LOG_FORMAT`, `LOG_FILE_PATH` (`.env.example`) |
-| Aggregation/shipping | None — logs stay local to the container/host filesystem; no ELK/Loki/CloudWatch integration found |
+`.github/workflows/aios-check.yml` validates AIOS structure, links, lint, architecture boundaries and intelligence drift. No product build/test/deploy workflow, Kubernetes manifests, Terraform, Helm, or release pipeline is present.
 
-### Environments
-
-Only a local/dev environment is evidenced (Docker Compose with `${VAR:-default}` fallbacks, `.env`/`.env.example`). No staging or production environment configuration (e.g., separate compose files, environment-specific `.env` templates) was found.
+Repository workflow presence does not by itself make a check required: GitHub branch protection/rulesets must separately require the workflow's status check.
 
 ## Related Documents
-[technology-stack.md](technology-stack.md) · [security-map.md](security-map.md) · [system-overview.md](system-overview.md)
+
+[technology-stack.md](technology-stack.md) · [security-map.md](security-map.md) · [database-map.md](database-map.md)
 
 ## Last Updated
-2026-07-10 — updated for the ZAP Worker Pool refactor (scalable `zap` service, self-registration sidecar).
+
+2026-08-28 — Compose, Dockerfiles, startup and CI re-reviewed.
