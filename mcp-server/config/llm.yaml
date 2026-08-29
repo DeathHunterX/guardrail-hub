@@ -32,7 +32,7 @@
 #         region: us-east-1        # AWS region (Bedrock only)
 #       auth:
 #         type: api_key|aws|none   # HOW the provider authenticates
-#         api_key_env: ENV_VAR     # env var name holding the API key (api_key type only)
+#         api_key_env: ENV_VAR     # physical env-var mapping in opt-in env mode only
 #         auth_header: X-API-Key   # optional custom header name
 #       models:
 #         - id: model-id           # Guardrail Hub logical identifier (model_id)
@@ -50,12 +50,18 @@
 #
 # AUTHENTICATION — secrets MUST NOT appear in this file
 #   auth.type declares HOW authentication works (api_key | aws | none).
-#   The actual secret value lives in an environment variable.
-#   For api_key: set the variable named in auth.api_key_env before starting the app.
-#   For aws: credentials come from the standard AWS SDK chain (env vars, config, IAM role).
+#   API-key credentials are resolved by provider ID through the backend selected
+#   with GUARDRAILHUB_CREDENTIAL_BACKEND; provider_id is always the logical key.
+#   Windows uses GuardrailHub:<provider_id>; file mode reads
+#   <secrets_dir>/<provider_id> (default /run/secrets). In those modes,
+#   api_key_env is inert.
+#   In explicit env mode only, api_key_env names the physical variable to read.
+#   If it is absent, env mode uses GUARDRAILHUB_CREDENTIAL__{provider_id.upper()}
+#   without normalizing the provider ID.
+#   For aws: credentials come from the standard AWS SDK credential provider chain.
 #   For none: no credential is required.
 #
-# Reference: Decision 0014, architectural review 2025
+# Reference: Decision 0017, container and orchestrated credential delivery.
 # =============================================================================
 
 llm:
@@ -106,7 +112,9 @@ llm:
       enabled: true
       connection:
         base_url: https://api.openai.com/v1
-      # Bearer token auth; key value lives in $OPENAI_API_KEY (never in this file).
+      # The logical credential identity is openai-cloud. In explicit env mode,
+      # OPENAI_API_KEY is the physical environment-variable mapping; Windows and
+      # file backends use the provider ID instead. No credential value appears here.
       auth:
         type: api_key
         api_key_env: OPENAI_API_KEY
