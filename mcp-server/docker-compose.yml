@@ -70,6 +70,7 @@ services:
     build:
       context: .
       dockerfile: docker/owasp_zap/Dockerfile
+    scale: 3
     # No container_name: fixing a name blocks `docker compose up --scale
     # zap=N` (every replica would collide on it). Each replica gets Docker's
     # own generated name/hostname and self-registers via that — see

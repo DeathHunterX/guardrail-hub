@@ -1,183 +1,48 @@
-# =============================================================================
-# LLM Provider & Model Registry — Unified Configuration
-# =============================================================================
-#
-# This is the SINGLE source of truth for all LLM provider and model configuration.
-# The old providers.yaml and models.yaml have been removed.
-#
-# Architecture:
-#   llm.yaml
-#       ↓
-#   LLmConfigLoader
-#       ↓
-#   validated ProviderRecord[] + ModelRecord[]
-#       ↓
-#   ProviderRegistry + ModelRegistry (separate runtime concepts)
-#       ↓
-#   ProviderFactory / ProviderManager
-#       ↓
-#   Router
-#       ↓
-#   LLM adapters
-#
-# SCHEMA
-# llm:
-#   providers:
-#     - id: provider-id            # unique logical identifier
-#       type: ollama|openai_compatible|bedrock|...
-#       deployment: cloud|self_hosted|local|proxy
-#       enabled: true
-#       connection:
-#         base_url: https://...    # provider-specific URL
-#         region: us-east-1        # AWS region (Bedrock only)
-#       auth:
-#         type: api_key|aws|none   # HOW the provider authenticates
-#         api_key_env: ENV_VAR     # physical env-var mapping in opt-in env mode only
-#         auth_header: X-API-Key   # optional custom header name
-#       models:
-#         - id: model-id           # Guardrail Hub logical identifier (model_id)
-#           type: chat|completion|embedding|...
-#           deployment_name: ...   # provider-facing identifier (may differ from id)
-#           context_window: 8192
-#           priority: 100           # lower = higher preference
-#           capabilities:
-#             - chat
-#
-# CRITICAL: model_id vs deployment_name
-#   model_id        = Guardrail Hub's logical identifier (used for routing)
-#   deployment_name = what the provider API actually expects
-#   Example: model_id=claude-sonnet, deployment_name=anthropic.claude-3-sonnet-20240229-v1:0
-#
-# AUTHENTICATION — secrets MUST NOT appear in this file
-#   auth.type declares HOW authentication works (api_key | aws | none).
-#   API-key credentials are resolved by provider ID through the backend selected
-#   with GUARDRAILHUB_CREDENTIAL_BACKEND; provider_id is always the logical key.
-#   Windows uses GuardrailHub:<provider_id>; file mode reads
-#   <secrets_dir>/<provider_id> (default /run/secrets). In those modes,
-#   api_key_env is inert.
-#   In explicit env mode only, api_key_env names the physical variable to read.
-#   If it is absent, env mode uses GUARDRAILHUB_CREDENTIAL__{provider_id.upper()}
-#   without normalizing the provider ID.
-#   For aws: credentials come from the standard AWS SDK credential provider chain.
-#   For none: no credential is required.
-#
-# Reference: Decision 0017, container and orchestrated credential delivery.
-# =============================================================================
+# Runtime LLM provider and model configuration.
+# Never store credential values here; configure only the authentication method.
+# See examples/config/llm.example.yaml for reusable provider templates.
 
 llm:
   providers:
 
-    # -------------------------------------------------------------------------
-    # Ollama — self-hosted local inference (no auth by default)
-    # -------------------------------------------------------------------------
+    # Ollama — local/self-hosted inference
     - id: ollama-local
       type: ollama
       deployment: self_hosted
       enabled: true
-      # base_url resolves to http://localhost:11434 if not set
-      # Override via $OLLAMA_BASE_URL or set connection.base_url here
       connection:
         base_url: http://localhost:11434
-      # No authentication required for local Ollama by default.
-      # If your Ollama server has auth enabled, switch to api_key and set OLLAMA_API_KEY.
       auth:
         type: none
       models:
-        - id: llama3
+        - id: qwen3.6
           type: chat
-          deployment_name: llama3           # Ollama uses the model tag as-is
-          context_window: 8192
+          deployment_name: qwen3.6
+          context_window: 262144
           capabilities:
             - chat
 
-        - id: llama3-70b
-          type: chat
-          deployment_name: llama3:70b
-          context_window: 32768
-          capabilities:
-            - chat
-
-        - id: nomic-embed-text
-          type: embedding
-          deployment_name: nomic-embed-text
-          capabilities:
-            - embedding
-
-    # -------------------------------------------------------------------------
-    # OpenAI-compatible — cloud providers (OpenAI, Groq, Cohere, LocalAI, etc.)
-    # -------------------------------------------------------------------------
-    - id: openai-cloud
+    # NVIDIA NIM
+    - id: nvidia-nim
       type: openai_compatible
       deployment: cloud
       enabled: true
       connection:
-        base_url: https://api.openai.com/v1
-      # The logical credential identity is openai-cloud. In explicit env mode,
-      # OPENAI_API_KEY is the physical environment-variable mapping; Windows and
-      # file backends use the provider ID instead. No credential value appears here.
+        base_url: https://integrate.api.nvidia.com/v1
       auth:
         type: api_key
-        api_key_env: OPENAI_API_KEY
+        api_key_env: NVIDIA_API_KEY
       models:
-        - id: gpt-4o
+        - id: moonshotai/kimi-k3
           type: chat
-          deployment_name: gpt-4o
-          context_window: 128000
+          deployment_name: moonshotai/kimi-k3
+          context_window: 1048576
           capabilities:
             - chat
 
-        - id: gpt-4o-mini
+        - id: deepseek-ai/deepseek-v4-pro-0813
           type: chat
-          deployment_name: gpt-4o-mini
-          context_window: 128000
+          deployment_name: deepseek-ai/deepseek-v4-pro-0813
+          context_window: 1048576
           capabilities:
             - chat
-
-        - id: text-embedding-3-small
-          type: embedding
-          deployment_name: text-embedding-3-small
-          capabilities:
-            - embedding
-
-    # -------------------------------------------------------------------------
-    # AWS Bedrock — Anthropic Claude via AWS
-    # -------------------------------------------------------------------------
-    - id: bedrock
-      type: bedrock
-      deployment: cloud
-      enabled: true
-      connection:
-        # region is resolved from $AWS_REGION or $AWS_DEFAULT_REGION at runtime
-        # (Bedrock does not use base_url; the adapter constructs it from region)
-        region: us-east-1
-      # AWS SDK credential chain: reads $AWS_ACCESS_KEY_ID, $AWS_SECRET_ACCESS_KEY,
-      # $AWS_SESSION_TOKEN, or uses IAM role / config file — never hard-coded here.
-      auth:
-        type: aws
-      models:
-        - id: claude-sonnet-4
-          type: chat
-          deployment_name: anthropic.claude-sonnet-4-20250514
-          context_window: 200000
-          capabilities:
-            - chat
-
-        - id: claude-opus-4
-          type: chat
-          deployment_name: anthropic.claude-opus-4-20250514
-          context_window: 200000
-          capabilities:
-            - chat
-
-        - id: claude-3-5-sonnet
-          type: chat
-          deployment_name: anthropic.claude-3-5-sonnet-20241022
-          context_window: 200000
-          capabilities:
-            - chat
-
-        - id: amazon-titan-embed
-          type: embedding
-          deployment_name: amazon.titan-embed-text-v2:0
-          capabilities:
-            - embedding

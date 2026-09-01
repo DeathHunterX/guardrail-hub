@@ -1,0 +1,60 @@
+# Example LLM provider and model configuration.
+# Copy the provider entries you need into config/llm.yaml and replace sample values.
+# This file is not loaded at runtime. Never store credential values in YAML.
+# `id` is the name used for routing; `deployment_name` is sent to the provider.
+# `context_window` is the maximum number of tokens supported by the model.
+
+llm:
+  providers:
+
+    # Ollama — no authentication by default
+    - id: ollama-local
+      type: ollama
+      deployment: self_hosted
+      enabled: true
+      connection:
+        base_url: http://localhost:11434
+      auth:
+        type: none
+      models:
+        - id: qwen3.6
+          type: chat
+          deployment_name: qwen3.6
+          context_window: 262144
+          capabilities:
+            - chat
+
+    # OpenAI-compatible provider — API key is resolved outside this file
+    - id: provider-cloud
+      type: openai_compatible
+      deployment: cloud
+      enabled: true
+      connection:
+        base_url: https://api.example.com/v1
+      auth:
+        type: api_key
+        api_key_env: PROVIDER_API_KEY
+      models:
+        - id: cloud-chat-model
+          type: chat
+          deployment_name: provider-model-name
+          context_window: 128000
+          capabilities:
+            - chat
+
+    # AWS Bedrock — uses the standard AWS credential chain
+    - id: bedrock
+      type: bedrock
+      deployment: cloud
+      enabled: true
+      connection:
+        region: us-east-1
+      auth:
+        type: aws
+      models:
+        - id: bedrock-chat-model
+          type: chat
+          deployment_name: provider.model-version
+          context_window: 200000
+          capabilities:
+            - chat
