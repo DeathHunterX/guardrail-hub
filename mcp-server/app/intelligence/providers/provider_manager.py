@@ -15,7 +15,11 @@ from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, AsyncIterator, Optional
 
 from app.intelligence.credentials import CredentialNotFoundError
-from app.intelligence.exceptions import LLMConfigurationError, LLMProviderError
+from app.intelligence.exceptions import (
+    LLMConfigurationError,
+    LLMProviderError,
+    LLMUnavailableError,
+)
 from app.intelligence.ports.base import BaseProvider
 from app.intelligence.providers.base_provider import BaseProviderRuntime
 from app.intelligence.providers.credential import ProviderCredential
@@ -31,12 +35,18 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
+class _MissingProviderCredential(LLMUnavailableError):
+    """Internal signal that an API-key provider cannot start without a key."""
+
+
 class ProviderManager:
     """Manages the lifecycle of all enabled providers.
 
     Responsibilities:
     * Startup: Call ``initialize()`` → ``validate_configuration()`` →
       ``start()`` on every enabled provider from the frozen catalog.
+      API-key providers with no credential remain unavailable without blocking
+      other providers; every unrelated failure remains fatal.
     * Shutdown: Call ``close()`` on every provider instance.
     * Access: Return provider instances by ID.
 
@@ -63,8 +73,7 @@ class ProviderManager:
                 providers whose ``auth.type`` is ``api_key``. This is the single
                 bootstrap point where secrets cross into the provider runtime.
                 Providers that use AWS or no authentication never consult it.
-                When None, api-key providers cannot be initialized and fail with
-                a clear configuration error.
+                When None, only API-key providers remain credential-unavailable.
 
         Raises:
             LLMConfigurationError: If ``catalog`` is None.
@@ -78,6 +87,7 @@ class ProviderManager:
         self._catalog = catalog
         self._credential_store = credential_store
         self._providers: dict[str, BaseProvider] = {}
+        self._credential_unavailable: set[str] = set()
         self._initialized = False
 
     @property
@@ -89,6 +99,15 @@ class ProviderManager:
     def provider_count(self) -> int:
         """Number of provider instances currently held."""
         return len(self._providers)
+
+    @property
+    def credential_unavailable_providers(self) -> tuple[str, ...]:
+        """Provider IDs that could not start because an API key is missing."""
+        return tuple(sorted(self._credential_unavailable))
+
+    def is_credential_unavailable(self, provider_id: str) -> bool:
+        """Return whether *provider_id* is unavailable only for a missing key."""
+        return provider_id in self._credential_unavailable
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -104,8 +123,9 @@ class ProviderManager:
         4. ``adapter.start()`` — async resource acquisition (HTTP client, etc.)
 
         Raises:
-            LLMConfigurationError: If a provider's configuration is invalid.
-            LLMProviderError: If any provider raises during initialization.
+            LLMConfigurationError: If the catalog is not frozen.
+            LLMProviderError: If any non-credential provider initialization
+                fails. Missing API-key credentials affect only that provider.
         """
         if self._initialized:
             return
@@ -119,12 +139,15 @@ class ProviderManager:
         provider_summaries = self._catalog.list_providers(enabled_only=True)
         errors: list[str] = []
         initialized: list[str] = []
+        self._credential_unavailable.clear()
 
         for summary in provider_summaries:
             try:
                 provider = await self._initialize_provider(summary.provider_id)
                 self._providers[summary.provider_id] = provider
                 initialized.append(summary.provider_id)
+            except _MissingProviderCredential:
+                self._credential_unavailable.add(summary.provider_id)
             except Exception as e:  # noqa: BLE001
                 errors.append(f"provider '{summary.provider_id}': {e}")
 
@@ -132,6 +155,7 @@ class ProviderManager:
             # Attempt graceful rollback: close any providers that were
             # successfully started before the error occurred.
             await self._rollback_started(initialized)
+            self._credential_unavailable.clear()
             raise LLMProviderError(
                 f"failed to initialize {len(errors)} provider(s):\n"
                 + "\n".join(f"  - {e}" for e in errors)
@@ -163,6 +187,7 @@ class ProviderManager:
                 del self._providers[provider_id]
 
         self._providers.clear()
+        self._credential_unavailable.clear()
 
     @asynccontextmanager
     async def lifespan(self) -> AsyncIterator["ProviderManager"]:
@@ -298,7 +323,7 @@ class ProviderManager:
             adapter: The freshly constructed adapter instance.
 
         Raises:
-            LLMConfigurationError: If an api-key provider has no configured
+            _MissingProviderCredential: If an api-key provider has no configured
                 credential store, or no stored credential. The message never
                 contains the secret value.
         """
@@ -309,7 +334,7 @@ class ProviderManager:
             return
 
         if self._credential_store is None:
-            raise LLMConfigurationError(
+            raise _MissingProviderCredential(
                 f'Provider "{record.provider_id}" requires an API key, '
                 "but no credential store is configured."
             )
@@ -319,7 +344,7 @@ class ProviderManager:
         except CredentialNotFoundError:
             # Fail clearly, identifying only the provider — never the (missing)
             # secret. "from None" suppresses the chained lookup detail.
-            raise LLMConfigurationError(
+            raise _MissingProviderCredential(
                 f'Provider "{record.provider_id}" requires an API key, '
                 "but no credential is configured."
             ) from None

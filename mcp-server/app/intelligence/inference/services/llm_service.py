@@ -17,6 +17,7 @@ from app.intelligence.exceptions import (
     LLMError,
     LLMModelNotFoundError,
     LLMProviderError,
+    LLMUnavailableError,
 )
 from app.intelligence.inference.router.router import Router
 from app.intelligence.inference.strategies.base import RoutingStrategy
@@ -30,6 +31,12 @@ from app.intelligence.providers.base_provider import BaseProviderRuntime
 from app.intelligence.providers.provider_manager import ProviderManager
 from app.intelligence.registry.catalog.catalog import ModelCatalog
 from app.intelligence.registry.types.capability import Capability
+
+
+LLM_CREDENTIALS_UNAVAILABLE_MESSAGE = (
+    "LLM functionality is unavailable because no LLM credentials "
+    "have been configured."
+)
 
 
 class LLMService:
@@ -89,16 +96,55 @@ class LLMService:
         Raises:
             LLMModelNotFoundError: No capable model found.
             LLMProviderError: Provider not found or not started.
+            LLMUnavailableError: Every eligible provider is unavailable because
+                its API-key credential is missing.
         """
-        decision = self._router.route(capability, model=model, provider=provider)
+        excluded_provider_ids: set[str] = set()
+        allow_implicit_fallback = model is None and provider is None
 
-        if decision.provider_id is None:
-            raise LLMModelNotFoundError(
-                f"no capable model found for capability '{capability.value}'"
+        while True:
+            try:
+                routing_hints = (
+                    {"excluded_provider_ids": excluded_provider_ids}
+                    if excluded_provider_ids
+                    else {}
+                )
+                decision = self._router.route(
+                    capability,
+                    model=model,
+                    provider=provider,
+                    **routing_hints,
+                )
+            except LLMModelNotFoundError:
+                if excluded_provider_ids:
+                    raise LLMUnavailableError(
+                        LLM_CREDENTIALS_UNAVAILABLE_MESSAGE
+                    ) from None
+                raise
+
+            if decision.provider_id is None:
+                raise LLMModelNotFoundError(
+                    f"no capable model found for capability '{capability.value}'"
+                )
+
+            prov = self._provider_manager.get_provider(decision.provider_id)
+            if prov is not None:
+                break
+
+            credential_unavailable = (
+                self._provider_manager.is_credential_unavailable(
+                    decision.provider_id
+                )
+                is True
             )
+            if credential_unavailable:
+                if allow_implicit_fallback:
+                    excluded_provider_ids.add(decision.provider_id)
+                    continue
+                raise LLMUnavailableError(
+                    LLM_CREDENTIALS_UNAVAILABLE_MESSAGE
+                )
 
-        prov = self._provider_manager.get_provider(decision.provider_id)
-        if prov is None:
             raise LLMProviderError(
                 f"provider '{decision.provider_id}' is not started; "
                 "call ProviderManager.start() before issuing requests"

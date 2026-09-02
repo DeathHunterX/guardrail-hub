@@ -10,8 +10,8 @@ Proven properties (Phase 3 spec, section "Security Tests"):
 
 1.  API-key credentials are resolved from the CredentialStore, keyed by
     ``provider_id``, at provider bootstrap (and read live, not hardcoded).
-2.  A missing stored credential — and a missing credential store — each fail
-    clearly, with a message that names only the provider, never the secret.
+2.  A missing stored credential — and a missing credential store — each leave
+    only the affected provider unavailable, never exposing the secret.
 3.  Credentials never enter the ModelCatalog (ProviderRecord / ModelRecord).
 4.  Credentials never enter the router-facing surfaces. No dedicated
     ``RoutingDecision`` type exists in this codebase yet; the router's contract
@@ -171,7 +171,7 @@ sys.modules.setdefault("boto3.session", _fake_boto3.session)
 
 from app.intelligence.credentials import CredentialStore, InMemoryCredentialBackend
 from app.intelligence.credentials.container_backend import ContainerFileCredentialBackend
-from app.intelligence.exceptions import LLMConfigurationError, LLMProviderError
+from app.intelligence.exceptions import LLMProviderError, LLMUnavailableError
 from app.intelligence.ports.chat import ChatOptions
 from app.intelligence.providers.adapters import (
     BedrockAdapter,
@@ -384,55 +384,54 @@ class TestCredentialResolutionBoundary(unittest.IsolatedAsyncioTestCase):
         finally:
             await manager2.stop()
 
-    async def test_missing_stored_credential_fails_clearly(self):
-        """(2a) An api-key provider with no stored credential fails clearly.
+    async def test_missing_stored_credential_marks_provider_unavailable(self):
+        """(2a) A missing stored credential leaves only the provider unavailable.
 
-        The failure names only the provider and never contains the secret. The
-        exact message is asserted at the resolution boundary; the public start()
-        path is asserted to fail fast.
+        The availability state names only the provider and never contains the
+        secret. The exact safe detail is asserted at the resolution boundary.
         """
         store = CredentialStore(InMemoryCredentialBackend())  # nothing stored
         catalog = _build_catalog(_openai_provider_record())
         factory = _build_factory()
 
-        # Public bootstrap path fails fast.
         manager = ProviderManager(factory, catalog, credential_store=store)
-        with self.assertRaises(LLMProviderError) as ctx:
-            await manager.start()
-        message = str(ctx.exception)
-        self.assertIn('Provider "nvidia" requires an API key', message)
-        self.assertIn("no credential is configured", message)
-        self.assertNotIn(_OPENAI_SECRET, message)
-        # The provider must not be available after a failed start.
+        await manager.start()
+        self.assertTrue(manager.initialized)
         self.assertIsNone(manager.get_provider(_OPENAI_PROVIDER_ID))
+        self.assertEqual(
+            manager.credential_unavailable_providers,
+            (_OPENAI_PROVIDER_ID,),
+        )
+        self.assertNotIn(_OPENAI_SECRET, repr(manager.credential_unavailable_providers))
 
         # Exact message at the resolution boundary (white-box).
         record = _openai_provider_record()
         adapter = factory.create(record)
-        with self.assertRaises(LLMConfigurationError) as ctx2:
+        with self.assertRaises(LLMUnavailableError) as ctx2:
             manager._resolve_and_attach_credential(record, adapter)
         self.assertEqual(
             str(ctx2.exception),
             'Provider "nvidia" requires an API key, but no credential is configured.',
         )
 
-    async def test_missing_credential_store_fails_clearly(self):
-        """(2b) An api-key provider with no credential store at all fails clearly."""
+    async def test_missing_credential_store_marks_provider_unavailable(self):
+        """(2b) No credential store leaves only the api-key provider unavailable."""
         catalog = _build_catalog(_openai_provider_record())
         factory = _build_factory()
 
         manager = ProviderManager(factory, catalog, credential_store=None)
-        with self.assertRaises(LLMProviderError) as ctx:
-            await manager.start()
-        message = str(ctx.exception)
-        self.assertIn('Provider "nvidia" requires an API key', message)
-        self.assertIn("no credential store is configured", message)
-        self.assertNotIn(_OPENAI_SECRET, message)
+        await manager.start()
+        self.assertTrue(manager.initialized)
+        self.assertEqual(
+            manager.credential_unavailable_providers,
+            (_OPENAI_PROVIDER_ID,),
+        )
+        self.assertNotIn(_OPENAI_SECRET, repr(manager.credential_unavailable_providers))
 
         # Exact message at the resolution boundary (white-box).
         record = _openai_provider_record()
         adapter = factory.create(record)
-        with self.assertRaises(LLMConfigurationError) as ctx2:
+        with self.assertRaises(LLMUnavailableError) as ctx2:
             manager._resolve_and_attach_credential(record, adapter)
         self.assertEqual(
             str(ctx2.exception),
@@ -695,9 +694,8 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         wrong_store.set("NVIDIA_API_KEY", _OPENAI_SECRET)
 
         manager_wrong = ProviderManager(factory, catalog, credential_store=wrong_store)
-        with self.assertRaises(LLMProviderError) as ctx:
-            await manager_wrong.start()
-        self.assertIn("nvidia", str(ctx.exception))
+        await manager_wrong.start()
+        self.assertTrue(manager_wrong.is_credential_unavailable("nvidia"))
         await manager_wrong.stop()
 
         # Store under the logical provider ID — must be resolved.
@@ -821,8 +819,8 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         wrong_store.set("GUARDRAILHUB_CREDENTIAL__MY-PROVIDER", _OPENAI_SECRET)
 
         manager_wrong = ProviderManager(factory, catalog, credential_store=wrong_store)
-        with self.assertRaises(LLMProviderError):
-            await manager_wrong.start()
+        await manager_wrong.start()
+        self.assertTrue(manager_wrong.is_credential_unavailable("my-provider"))
         await manager_wrong.stop()
 
     async def test_custom_env_name_does_not_replace_provider_store_identity(self):
@@ -864,36 +862,33 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         manager_default = ProviderManager(
             factory, catalog, credential_store=default_only
         )
-        with self.assertRaises(LLMProviderError):
-            await manager_default.start()
+        await manager_default.start()
+        self.assertTrue(manager_default.is_credential_unavailable("test"))
         await manager_default.stop()
 
-    async def test_credential_not_found_error_message_identifies_provider(self):
-        """When a credential is missing, the error names the provider — never the secret."""
+    async def test_credential_not_found_state_identifies_provider(self):
+        """Missing-credential state names the provider, never the secret."""
         catalog = _build_catalog(_openai_provider_record())
         factory = _build_factory()
         empty_store = CredentialStore(InMemoryCredentialBackend())
 
         manager = ProviderManager(factory, catalog, credential_store=empty_store)
-        with self.assertRaises(LLMProviderError) as ctx:
-            await manager.start()
-        message = str(ctx.exception)
-        self.assertIn("nvidia", message)
-        self.assertIn("requires an API key", message)
-        self.assertNotIn(_OPENAI_SECRET, message)
+        await manager.start()
+        diagnostic = repr(manager.credential_unavailable_providers)
+        self.assertIn("nvidia", diagnostic)
+        self.assertNotIn(_OPENAI_SECRET, diagnostic)
         await manager.stop()
 
-    async def test_credential_store_none_error_identifies_provider(self):
-        """When no credential store is configured, the error names the provider."""
+    async def test_credential_store_none_state_identifies_provider(self):
+        """When no credential store exists, availability names the provider."""
         catalog = _build_catalog(_openai_provider_record())
         factory = _build_factory()
 
         manager = ProviderManager(factory, catalog, credential_store=None)
-        with self.assertRaises(LLMProviderError) as ctx:
-            await manager.start()
-        message = str(ctx.exception)
-        self.assertIn("nvidia", message)
-        self.assertNotIn(_OPENAI_SECRET, message)
+        await manager.start()
+        diagnostic = repr(manager.credential_unavailable_providers)
+        self.assertIn("nvidia", diagnostic)
+        self.assertNotIn(_OPENAI_SECRET, diagnostic)
         await manager.stop()
 
     async def test_env_name_is_not_disclosed_when_provider_credential_is_missing(self):
@@ -903,10 +898,9 @@ class TestD1ApiKeyEnvLookup(unittest.IsolatedAsyncioTestCase):
         empty_store = CredentialStore(InMemoryCredentialBackend())
 
         manager = ProviderManager(factory, catalog, credential_store=empty_store)
-        with self.assertRaises(LLMProviderError) as ctx:
-            await manager.start()
-        message = str(ctx.exception)
-        # The provider is named in the error.
+        await manager.start()
+        message = repr(manager.credential_unavailable_providers)
+        # The provider is named in the availability state.
         self.assertIn("nvidia", message)
         # The env name is a backend implementation detail and is not disclosed.
         self.assertNotIn("NVIDIA_API_KEY", message)

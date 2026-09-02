@@ -193,8 +193,9 @@ async def run_startup_sequence(settings) -> Optional[StartupResult]:
         dao=None,
     )
 
-    # Phase 7: start all providers before any inference-capable work begins.
-    # Raise on failure — do not swallow or degrade gracefully.
+    # Phase 7: start providers before any inference-capable work begins.
+    # Missing API keys leave only the affected providers unavailable; unrelated
+    # provider configuration and lifecycle failures still abort startup.
     await provider_manager.start()
 
     if settings.database_provider == "NONE":
@@ -202,7 +203,7 @@ async def run_startup_sequence(settings) -> Optional[StartupResult]:
             "Startup sequence complete (minimal) — registry runtime built "
             "(%d provider(s), %d model(s)), "
             "conversation service assembled (in-memory store)",
-            len(registry_runtime.catalog.iter_providers()),
+            len(list(registry_runtime.catalog.iter_providers())),
             len(list(registry_runtime.catalog.iter_models())),
         )
         return StartupResult(
@@ -233,8 +234,9 @@ async def run_startup_sequence(settings) -> Optional[StartupResult]:
         dao=dao,
     )
 
-    # Phase 7: start all providers before any inference-capable work begins.
-    # Raise on failure — do not swallow or degrade gracefully.
+    # Phase 7: start providers before any inference-capable work begins.
+    # Missing API keys leave only the affected providers unavailable; unrelated
+    # provider configuration and lifecycle failures still abort startup.
     await provider_manager.start()
 
     # 4. Initialize services. Assemble EXACTLY ONE notification pipeline (one
@@ -290,7 +292,7 @@ async def run_startup_sequence(settings) -> Optional[StartupResult]:
         "intelligence registry: %d provider(s), %d model(s); "
         "conversation service: %s store",
         len(flow.notification_service.channels),
-        len(registry_runtime.catalog.iter_providers()),
+        len(list(registry_runtime.catalog.iter_providers())),
         len(list(registry_runtime.catalog.iter_models())),
         "PostgreSQL" if dao is not None else "in-memory",
     )

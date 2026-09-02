@@ -78,8 +78,8 @@ class Router:
                 selects the best model from the capable set.
             provider: Explicit provider_id requested. If None, the
                 router selects the best provider from the capable set.
-            **kwargs: Additional routing hints (ignored in Phase 4;
-                reserved for future strategy parameters).
+            **kwargs: Additional routing hints. ``excluded_provider_ids`` may
+                remove unavailable providers from implicit candidate selection.
 
         Returns:
             RoutingDecision with the selected (provider_id, model_id).
@@ -92,6 +92,7 @@ class Router:
                 for the requested capability.
         """
         strategy = self._default_strategy
+        excluded_provider_ids = frozenset(kwargs.pop("excluded_provider_ids", ()))
 
         # Path 1 & 2: explicit model requested.
         if model is not None:
@@ -108,7 +109,11 @@ class Router:
             requested_provider=None,
             metadata=kwargs,
         )
-        candidates = strategy.get_candidates(context)
+        candidates = [
+            candidate
+            for candidate in strategy.get_candidates(context)
+            if candidate.provider_id not in excluded_provider_ids
+        ]
         decision = strategy.select(candidates, context)
         if decision.provider_id is None:
             raise LLMModelNotFoundError(

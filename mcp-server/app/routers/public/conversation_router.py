@@ -25,6 +25,16 @@ from app.intelligence.conversation.store import (
     ConversationClosedError,
     ConversationNotFoundError,
 )
+from app.intelligence.exceptions import (
+    LLMAuthenticationError,
+    LLMError,
+    LLMModelNotFoundError,
+    LLMProviderError,
+    LLMRateLimitedError,
+    LLMTimeoutError,
+    LLMUnavailableError,
+    LLMValidationError,
+)
 from app.schemas.conversation.conversation import (
     CreateConversationRequest,
     CreateConversationResponse,
