@@ -41,6 +41,22 @@ different directory. The resulting path is always
 effect in file mode. Provision the secret through the deployment platform and
 keep any local `secrets/` directory out of version control.
 
+### Linux Docker Compose host provisioning
+
+For the supported Linux Compose host flow, run setup from the project checkout:
+
+```bash
+cd mcp-server
+uv run guardrail-hub setup --provider nvidia-nim
+```
+
+`cd mcp-server` is currently required because setup anchors `config/llm.yaml`
+there before it recognizes the approved Compose project and its host
+`secrets/<provider_id>` target. This makes the host provisioning context
+writable. The running MCP container instead reads the corresponding
+`/run/secrets/<provider_id>` mount through its read-only file backend; it does
+not write credentials.
+
 ### Explicit environment-variable mode
 
 Environment-variable credentials are an explicit opt-in. Set

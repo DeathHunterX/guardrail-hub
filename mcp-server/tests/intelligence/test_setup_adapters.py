@@ -8,7 +8,9 @@ These cover the thin I/O adapters that back the setup ports:
 """
 
 import io
+import os
 import sys
+import time
 import unittest
 from unittest import mock
 
@@ -191,6 +193,63 @@ class MaskedSecretPromptTests(unittest.TestCase):
 
         self.assertEqual("a", result)
         self.assertEqual("Enter API key: *\r\n", output.getvalue())
+
+    @unittest.skipUnless(os.name == "posix", "requires a real POSIX terminal")
+    def test_posix_real_pty_masks_paste_and_restores_terminal_state(self):
+        """Losing cbreak, mask, or restore logic must fail against a real PTY."""
+        import pty
+        import select
+        import termios
+
+        pid, descriptor = pty.fork()
+        if pid == 0:  # pragma: no cover - assertions run in the parent process.
+            before = termios.tcgetattr(sys.stdin.fileno())
+            try:
+                value = MaskedSecretPrompt().read_secret("Enter API key: ")
+                restored = before == termios.tcgetattr(sys.stdin.fileno())
+                print(
+                    f"PTY_RESULT={value == 'abCZ'} RESTORED={restored}",
+                    flush=True,
+                )
+            finally:
+                os._exit(0)
+
+        output = bytearray()
+        input_sent = False
+        child_reaped = False
+        deadline = time.monotonic() + 5
+        try:
+            while time.monotonic() < deadline:
+                readable, _, _ = select.select([descriptor], [], [], 0.1)
+                if readable:
+                    try:
+                        chunk = os.read(descriptor, 4096)
+                    except OSError:
+                        chunk = b""
+                    output.extend(chunk)
+                    if not input_sent and b"Enter API key: " in output:
+                        active_mode = termios.tcgetattr(descriptor)
+                        self.assertFalse(active_mode[3] & termios.ECHO)
+                        # One write models paste; the arrow key is ignored,
+                        # backspace removes D, Z replaces it, and Enter submits.
+                        os.write(descriptor, b"abCD\x1b[A\x7fZ\r")
+                        input_sent = True
+                waited, _status = os.waitpid(pid, os.WNOHANG)
+                if waited:
+                    child_reaped = True
+                    break
+            else:
+                self.fail("POSIX masked prompt did not complete")
+        finally:
+            os.close(descriptor)
+            if not child_reaped:
+                os.kill(pid, 9)
+                os.waitpid(pid, 0)
+
+        rendered = output.decode("utf-8", "replace")
+        self.assertIn("PTY_RESULT=True RESTORED=True", rendered)
+        self.assertEqual(5, rendered.count("*"))
+        self.assertNotIn("abCD", rendered)
 
 
 class StreamOutputWriterTests(unittest.TestCase):
