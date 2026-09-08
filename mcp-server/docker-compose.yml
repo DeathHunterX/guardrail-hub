@@ -11,6 +11,7 @@ services:
       - path: ./.env
         required: false
     environment:
+      GUARDRAILHUB_CREDENTIAL_BACKEND: "file"
       PATH: "/app/.venv/bin:/usr/local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
@@ -31,6 +32,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./public:/app/public
+      - ./secrets:/run/secrets:ro
     healthcheck:
       test:
         - CMD-SHELL

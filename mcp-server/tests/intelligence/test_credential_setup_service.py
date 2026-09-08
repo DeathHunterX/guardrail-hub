@@ -40,6 +40,7 @@ from app.intelligence.registry.types.deployment import DeploymentType
 from app.intelligence.registry.types.provider import ProviderType
 from app.intelligence.setup.plan import (
     ProviderAuthKind,
+    SetupOperation,
     SetupOutcomeStatus,
 )
 from app.intelligence.setup.service import CredentialSetupService
@@ -144,6 +145,8 @@ def build_service(
     detector: FakeAwsDetector,
     output: BufferOutput,
     reconfigure=frozenset(),
+    operation=SetupOperation.CONFIGURE,
+    credential_locations=None,
 ) -> CredentialSetupService:
     return CredentialSetupService(
         credential_store=store,
@@ -151,6 +154,8 @@ def build_service(
         aws_detector=detector,
         output=output,
         reconfigure=reconfigure,
+        operation=operation,
+        credential_locations=credential_locations,
     )
 
 
@@ -301,6 +306,61 @@ class ApiKeyProviderTests(unittest.TestCase):
             service.run([provider])
         # We never prompted, because the lookup failed first.
         self.assertEqual(prompt.call_count, 0)
+
+
+class ValidateApiKeyProviderTests(unittest.TestCase):
+    """Validation checks externally managed credentials without changing them."""
+
+    def test_missing_credential_is_reported_without_prompting_or_storing(self):
+        store = CredentialStore(InMemoryCredentialBackend())
+        prompt = FakeSecretPrompt(values=[_SECRET])
+        out = BufferOutput()
+        service = build_service(
+            store=store,
+            prompt=prompt,
+            detector=FakeAwsDetector(available=False),
+            output=out,
+            operation=SetupOperation.VALIDATE,
+            credential_locations={"openai-cloud": "/run/secrets/openai-cloud"},
+        )
+
+        report = service.run(
+            [make_provider("openai-cloud", auth_type=AuthType.API_KEY)]
+        )
+
+        self.assertEqual(report.outcomes[0].status, SetupOutcomeStatus.MISSING)
+        self.assertFalse(report.ok)
+        self.assertEqual(prompt.call_count, 0)
+        with self.assertRaises(CredentialNotFoundError):
+            store.get("openai-cloud")
+        self.assertIn("/run/secrets/openai-cloud", out.text)
+        self.assertNotIn(_SECRET, out.text)
+
+    def test_existing_credential_validates_without_prompting_or_storing(self):
+        backend = InMemoryCredentialBackend()
+        backend.set("openai-cloud", _SECRET)
+        store = CredentialStore(backend)
+        prompt = FakeSecretPrompt(values=["replacement-must-not-be-used"])
+        out = BufferOutput()
+        service = build_service(
+            store=store,
+            prompt=prompt,
+            detector=FakeAwsDetector(available=False),
+            output=out,
+            operation=SetupOperation.VALIDATE,
+            credential_locations={"openai-cloud": "OPENAI_API_KEY"},
+        )
+
+        report = service.run(
+            [make_provider("openai-cloud", auth_type=AuthType.API_KEY)]
+        )
+
+        self.assertTrue(report.ok)
+        self.assertEqual(
+            report.outcomes[0].status, SetupOutcomeStatus.ALREADY_CONFIGURED
+        )
+        self.assertEqual(prompt.call_count, 0)
+        self.assertEqual(store.get("openai-cloud"), _SECRET)
 
 
 # ------------------------------------------------------------------

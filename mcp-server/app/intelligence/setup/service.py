@@ -4,10 +4,12 @@ Given the providers declared in llm.yaml and a CredentialStore, this service:
 
   1. Enumerates the (enabled) configured providers.
   2. Derives each provider's credential requirement from ``auth.type``.
-  3. For api_key providers: reuses an existing stored credential, or prompts
-     (hidden input) for a missing one and stores it securely.
-  4. For aws providers: detects the AWS SDK credential chain; stores nothing.
-  5. For none / unauthenticated providers: does nothing.
+  3. For api_key providers in configure mode: reuses an existing stored
+     credential, or prompts (hidden input) and stores a missing one securely.
+  4. For api_key providers in validate mode: checks the selected externally
+     managed backend and reports the expected location without prompting/writing.
+  5. For aws providers: detects the AWS SDK credential chain; stores nothing.
+  6. For none / unauthenticated providers: does nothing.
 
 Security properties (enforced by construction):
 
@@ -24,13 +26,14 @@ or an OS keyring.
 
 from __future__ import annotations
 
-from typing import FrozenSet, Iterable, List, Optional
+from typing import FrozenSet, Iterable, List, Mapping, Optional
 
 from app.intelligence.credentials import CredentialNotFoundError, CredentialStore
 from app.intelligence.registry.models.provider import ProviderRecord
 from app.intelligence.setup.plan import (
     ProviderAuthKind,
     ProviderSetupOutcome,
+    SetupOperation,
     SetupOutcomeStatus,
     SetupReport,
     auth_kind_label,
@@ -54,6 +57,8 @@ class CredentialSetupService:
         aws_detector: AwsCredentialDetector,
         output: OutputWriter,
         reconfigure: Optional[FrozenSet[str]] = None,
+        operation: SetupOperation = SetupOperation.CONFIGURE,
+        credential_locations: Optional[Mapping[str, str]] = None,
     ) -> None:
         """Construct the service.
 
@@ -64,12 +69,18 @@ class CredentialSetupService:
             output: User-facing output sink (never receives a secret).
             reconfigure: provider_ids for which an existing api_key credential
                 should be replaced (re-prompted) even if one is already stored.
+            operation: Configure writable local credentials or validate
+                externally managed credentials without prompting or writing.
+            credential_locations: Secret-free provider-to-location labels used
+                to tell operators where a missing external credential belongs.
         """
         self._store = credential_store
         self._prompt = secret_prompt
         self._aws_detector = aws_detector
         self._output = output
         self._reconfigure = reconfigure or frozenset()
+        self._operation = operation
+        self._credential_locations = dict(credential_locations or {})
 
     # ------------------------------------------------------------------
     # Public API
@@ -83,7 +94,12 @@ class CredentialSetupService:
                 keyring is unavailable). Expected "not found" lookups are
                 handled internally and never raise out of this method.
         """
-        self._output.write_line("Configuring LLM providers...")
+        action = (
+            "Validating LLM provider credentials..."
+            if self._operation is SetupOperation.VALIDATE
+            else "Configuring LLM providers..."
+        )
+        self._output.write_line(action)
 
         outcomes: List[ProviderSetupOutcome] = []
         for provider in providers:
@@ -93,7 +109,12 @@ class CredentialSetupService:
 
         self._output.write_line("")
         if report.ok:
-            self._output.write_line("Setup complete.")
+            completion = (
+                "Validation complete."
+                if self._operation is SetupOperation.VALIDATE
+                else "Setup complete."
+            )
+            self._output.write_line(completion)
         else:
             self._output.write_line(
                 "Setup incomplete: one or more providers still need credentials "
@@ -139,7 +160,10 @@ class CredentialSetupService:
     ) -> ProviderSetupOutcome:
         """Resolve or prompt-and-store the api_key credential for a provider."""
         provider_id = provider.provider_id
-        force_replace = provider_id in self._reconfigure
+        force_replace = (
+            self._operation is SetupOperation.CONFIGURE
+            and provider_id in self._reconfigure
+        )
 
         # Reuse an existing credential unless the operator asked to replace it.
         # A CredentialNotFoundError is the expected "needs prompting" signal;
@@ -157,6 +181,19 @@ class CredentialSetupService:
                     "✓ Credential already configured",
                 )
 
+        if self._operation is SetupOperation.VALIDATE:
+            location = self._credential_locations.get(provider_id, provider_id)
+            detail = "Credential is not provisioned"
+            self._output.write_line(f"  ✗ {detail}")
+            self._output.write_line("  Expected externally managed credential:")
+            self._output.write_line(f"    {location}")
+            return ProviderSetupOutcome(
+                provider_id=provider_id,
+                auth_kind=kind,
+                status=SetupOutcomeStatus.MISSING,
+                detail=f"{detail}: {location}",
+            )
+
         # Prompt for the secret using hidden input. The value is used only to
         # store it, and is never echoed, logged, or returned.
         secret = self._prompt.read_secret("  API Key: ")
@@ -168,7 +205,13 @@ class CredentialSetupService:
                 "✗ No API key entered; credential not stored",
             )
 
-        self._store.set(provider_id, secret)
+        # Keep the caller frame clean if a setup-plane target fails while
+        # persisting the credential. Runtime-backed CredentialStore already
+        # applies the same discipline at its delegation boundary.
+        try:
+            self._store.set(provider_id, secret)
+        finally:
+            del secret
         return self._report(
             provider,
             kind,

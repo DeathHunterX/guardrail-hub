@@ -220,6 +220,16 @@ class OpenAICompatibleAdapter(
                 pass
         object.__setattr__(self, "_started", False)
 
+    async def check_connection(self) -> bool:
+        """Perform a non-generative authenticated OpenAI-compatible probe."""
+        self._check_started()
+        try:
+            response = await self._client.get("/v1/models")
+            response.raise_for_status()
+            return True
+        except httpx.HTTPError:
+            return False
+
     # -------------------------------------------------------------------------
     # ChatCapable
     # -------------------------------------------------------------------------

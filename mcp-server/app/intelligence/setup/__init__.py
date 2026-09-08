@@ -1,16 +1,16 @@
-"""Credential setup workflow for the ``guardrail-hub setup`` command.
+"""Credential setup primitives for configured-provider operations.
 
-This capability package bootstraps local LLM credentials from the providers
-declared in ``config/llm.yaml``. It derives each provider's requirement from
-``auth.type`` (never from a hard-coded provider id), prompts only for missing
-api_key credentials, and stores them in the CredentialStore. It never writes
-llm.yaml, never creates a .env file, and never prints, logs, or raises secrets.
+The public CLI uses provider-scoped dashboard, credential, and connection-test
+flows. These primitives derive requirements from ``auth.type`` (never a
+hard-coded provider ID), never alter ``llm.yaml``, create a ``.env`` file, or
+expose credential values. Read-only backends remain read-only.
 
 Public API:
 
     CredentialSetupService  — orchestrates the workflow over provider records
     SetupReport             — aggregate result of a run
     ProviderSetupOutcome    — per-provider result (secret-free by construction)
+    SetupOperation          — legacy service operation retained for direct callers
     SetupOutcomeStatus      — enum of per-provider outcomes
     ProviderAuthKind        — auth kind derived from auth.type
     classify_auth           — AuthConfig -> ProviderAuthKind
@@ -25,6 +25,7 @@ capability packages.
 from app.intelligence.setup.plan import (
     ProviderAuthKind,
     ProviderSetupOutcome,
+    SetupOperation,
     SetupOutcomeStatus,
     SetupReport,
     auth_kind_label,
@@ -36,6 +37,7 @@ __all__ = [
     "CredentialSetupService",
     "ProviderAuthKind",
     "ProviderSetupOutcome",
+    "SetupOperation",
     "SetupOutcomeStatus",
     "SetupReport",
     "auth_kind_label",

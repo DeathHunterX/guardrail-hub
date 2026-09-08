@@ -17,11 +17,12 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class SecretPrompt(Protocol):
-    """Reads a secret from the operator using hidden (non-echoed) input.
+    """Reads a secret from the operator using masked terminal input.
 
     Implementations MUST NOT echo the typed characters, and MUST NOT log,
-    persist, or otherwise expose the returned value. The returned string is
-    handed straight to the CredentialStore by the service and then discarded.
+    persist, or otherwise expose the returned value. Interactive implementations
+    render only mask characters. The returned string is handed straight to the
+    CredentialStore by the service and then discarded.
     """
 
     def read_secret(self, prompt_text: str) -> str:

@@ -11,6 +11,9 @@ Covers:
 """
 
 import sys
+import uuid
+from pathlib import Path
+from unittest import mock
 import unittest
 
 from app.intelligence.credentials import (
@@ -195,7 +198,12 @@ class CredentialStoreBackendFailureTests(unittest.TestCase):
         found = False
         while tb is not None:
             frame = tb.tb_frame
-            if "credentials/base.py" in frame.f_code.co_filename:
+            if Path(frame.f_code.co_filename).parts[-4:] == (
+                "app",
+                "intelligence",
+                "credentials",
+                "base.py",
+            ):
                 found = True
                 self.assertNotIn(
                     "credential",
@@ -318,6 +326,45 @@ class WindowsBackendAvailabilityTests(unittest.TestCase):
         )
         backend = WindowsCredentialManagerBackend()
         self.assertIsInstance(backend, CredentialBackend)
+
+    @unittest.skipIf(
+        sys.platform != "win32",
+        "Windows Credential Manager backend is Windows-only",
+    )
+    def test_nonexistent_windows_credential_is_missing_not_backend_failure(self):
+        """A native ERROR_NOT_FOUND must reach setup as a normal missing state."""
+        from app.intelligence.credentials.windows_backend import (
+            WindowsCredentialManagerBackend,
+        )
+        backend = WindowsCredentialManagerBackend()
+        with self.assertRaises(CredentialNotFoundError):
+            backend.get(f"audit-missing-{uuid.uuid4().hex}")
+
+    @unittest.skipIf(
+        sys.platform != "win32",
+        "Windows Credential Manager backend is Windows-only",
+    )
+    def test_unexpected_windows_read_error_remains_backend_failure(self):
+        """Only ERROR_NOT_FOUND may be translated into CredentialNotFoundError."""
+        from app.intelligence.credentials.windows_backend import (
+            WindowsCredentialManagerBackend,
+        )
+
+        class FailingAdvapi32:
+            @staticmethod
+            def CredReadW(*_args):
+                return 0
+
+        backend = WindowsCredentialManagerBackend()
+        with (
+            mock.patch(
+                "app.intelligence.credentials.windows_backend._get_advapi32",
+                return_value=FailingAdvapi32(),
+            ),
+            mock.patch.object(backend, "_get_last_error", return_value=5),
+            self.assertRaises(CredentialBackendError),
+        ):
+            backend.get("audit-real-read-error")
 
     @unittest.skipIf(
         sys.platform == "win32",

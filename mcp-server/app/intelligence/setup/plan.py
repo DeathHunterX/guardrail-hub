@@ -32,6 +32,13 @@ class ProviderAuthKind(str, Enum):
     NONE = "none"  # No credential required.
 
 
+class SetupOperation(str, Enum):
+    """Whether setup may configure credentials or only validate them."""
+
+    CONFIGURE = "configure"
+    VALIDATE = "validate"
+
+
 class SetupOutcomeStatus(str, Enum):
     """The result of attempting to configure one provider."""
 
@@ -118,6 +125,7 @@ def auth_kind_label(kind: ProviderAuthKind) -> str:
 __all__ = [
     "ProviderAuthKind",
     "ProviderSetupOutcome",
+    "SetupOperation",
     "SetupOutcomeStatus",
     "SetupReport",
     "auth_kind_label",

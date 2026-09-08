@@ -23,9 +23,10 @@ from __future__ import annotations
 
 import os
 import sys
-from typing import Final, Mapping, Optional
+from typing import Final, Iterable, Mapping, Optional
 
 from app.intelligence.credentials import CredentialBackend, CredentialBackendError
+from app.intelligence.registry.models.provider import AuthType, ProviderRecord
 
 # Import the constants from container_backend to avoid duplication.
 # container_backend.py is Phase 5C and must not be modified.
@@ -36,6 +37,19 @@ from app.intelligence.credentials.container_backend import (
 
 # Supported mode values after normalisation.
 _VALID_MODES: Final[frozenset[str]] = frozenset({"windows", "wincm", "file", "env"})
+
+def build_provider_env_var_names(
+    providers: Iterable[ProviderRecord],
+) -> dict[str, str]:
+    """Map API-key provider IDs to their physical environment variable names."""
+    return {
+        provider.provider_id: (
+            provider.auth.api_key_env
+            or f"GUARDRAILHUB_CREDENTIAL__{provider.provider_id.upper()}"
+        )
+        for provider in providers
+        if provider.auth.type == AuthType.API_KEY
+    }
 
 
 # ----------------------------------------------------------------------

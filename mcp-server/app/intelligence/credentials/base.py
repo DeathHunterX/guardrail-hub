@@ -59,12 +59,17 @@ class CredentialNotFoundError(CredentialStoreError):
 class CredentialBackendError(CredentialStoreError):
     """Raised when the underlying credential backend fails.
 
+    ``operator_reason`` is credential-free, terminal-safe text that may be
+    shown by an interactive setup flow. Raw exception details stay in the
+    chained cause instead.
+
     Examples: the OS keyring is unavailable, a system call fails,
     the credential exceeds size limits.
     """
 
     def __init__(self, provider_id: str, message: str) -> None:
         self.provider_id = provider_id
+        self.operator_reason = message
         super().__init__(
             f"backend error for provider '{provider_id}': {message}"
         )

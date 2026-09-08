@@ -92,14 +92,27 @@ class _CREDENTIAL(ctypes.Structure):
 
 
 def _get_advapi32() -> "ctypes._FuncPtr":  # type: ignore[name-defined]
-    """Return the advapi32 DLL, raising CredentialBackendError on non-Windows."""
+    """Return Advapi32 with Win32 last-error preservation enabled.
+
+    ``ctypes.get_last_error()`` is meaningful only when the DLL is loaded with
+    ``use_last_error=True``.  Credential reads rely on that value to distinguish
+    a normal missing entry from a genuine Credential Manager failure.
+    """
     if sys.platform != "win32":
         raise CredentialBackendError(
             "<windows>",
             "Windows Credential Manager backend is only available on Windows",
         )
     try:
-        return ctypes.windll.advapi32
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        advapi32.CredReadW.argtypes = [
+            LPCWSTR,
+            DWORD,
+            DWORD,
+            ctypes.POINTER(ctypes.POINTER(_CREDENTIAL)),
+        ]
+        advapi32.CredReadW.restype = BOOL
+        return advapi32
     except AttributeError:
         raise CredentialBackendError(
             "<windows>",
