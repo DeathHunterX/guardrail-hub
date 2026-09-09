@@ -36,7 +36,8 @@ Choose the owner by responsibility, then confirm its public API and tests before
 | `services/conversation/` | Conversation use cases and state transitions | Implemented |
 | `intelligence/registry/`, `intelligence/catalog/` | Provider/model definitions and catalog validation | Implemented from `config/llm.yaml` |
 | `intelligence/providers/` | Ollama, OpenAI-compatible and Bedrock adapters plus manager | Implemented outbound calls |
-| `intelligence/credentials/` | Windows Credential Manager, mounted-file and environment backends | Implemented with platform-aware selection |
+| `intelligence/credentials/` | Runtime credential consumption through Windows Credential Manager, mounted-file and environment backends | Implemented; file and environment backends are read-only |
+| `intelligence/setup/` | Operator credential setup, selected-provider connection checks and recognized Compose-host provisioning | Implemented for Windows-local and recognized Guardrail Hub Compose hosts |
 | `intelligence/inference/` | LLM service for chat, stream, embeddings, rerank and vision | Implemented; generic policy classes are incomplete |
 | `intelligence/conversation/` | Conversation stores and orchestration support | PostgreSQL and in-memory implementations |
 | `intelligence/health/` | Provider-health capability | Stub/incomplete |
@@ -60,4 +61,4 @@ Choose the owner by responsibility, then confirm its public API and tests before
 
 ## Last Updated
 
-2026-08-28 — full source-module re-review.
+2026-09-09 — Phase 5 credential setup and runtime-consumption boundaries re-reviewed.

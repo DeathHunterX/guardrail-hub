@@ -19,6 +19,7 @@ Trace a requested change through the appropriate flow before editing. Keep trans
 | Entry point | Location | Role |
 |---|---|---|
 | Backend API/MCP | `mcp-server/app/main.py` | FastAPI app, routers, static reports and `/mcp` mount |
+| Operator CLI | `mcp-server/app/cli.py` | Credential readiness, selected-provider testing and approved host provisioning |
 | Backend lifecycle | `app/core/startup.py` | Registry, credentials, providers, database, workers and notifications |
 | Composition root | `app/bootstrap.py` | Constructs concrete services and adapters |
 | JMeter worker | `app/runtime/jmeter/main.py` | Isolated ASGI assignment runtime |
@@ -36,6 +37,22 @@ FastAPI lifespan
   -> build ConversationService (PostgreSQL store when available, otherwise memory)
   -> start registered providers and background lifecycle work
 ```
+
+### Credential setup flow
+
+```text
+guardrail-hub setup
+  -> load and validate llm.yaml without starting FastAPI/MCP
+  -> select Windows-local, recognized Compose-host, or read-only external context
+  -> MaskedSecretPrompt reads a candidate without plaintext echo
+  -> ProviderConnectionTester starts and probes only the selected provider
+  -> on success, persist by provider_id to Windows Credential Manager
+     or atomically replace host secrets/<provider_id> with hardened permissions
+  -> Compose mounts ./secrets at /run/secrets read-only
+  -> ContainerFileCredentialBackend consumes /run/secrets/<provider_id>
+```
+
+File-backed and environment-backed runtime stores remain read-only. Generic Linux, running-container, Kubernetes and externally managed environment contexts receive validation/guidance rather than mutation.
 
 ### Tool execution
 
@@ -73,4 +90,4 @@ No inbound authentication/authorization middleware protects these routes. Config
 
 ## Last Updated
 
-2026-08-28 — startup and execution paths re-traced from source.
+2026-09-09 — Phase 5 setup and runtime credential paths re-traced from source.

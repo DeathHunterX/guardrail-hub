@@ -49,7 +49,19 @@ config/llm.yaml
       -> OpenAI-compatible adapter
       -> Bedrock adapter
 
-credential backend -> CredentialStore -> provider startup
+provisioning plane:
+  guardrail-hub setup
+    -> MaskedSecretPrompt
+    -> ProviderConnectionTester (selected provider only)
+    -> Windows Credential Manager by provider_id
+       or ComposeHostCredentialProvisioner -> host secrets/<provider_id>
+
+runtime consumption plane:
+  provider_id -> CredentialStore
+    -> Windows Credential Manager
+       or ContainerFileCredentialBackend -> /run/secrets/<provider_id> (read-only)
+       or EnvVarCredentialBackend -> api_key_env/fallback (externally managed, read-only)
+  AWS/Bedrock -> AWS SDK credential chain (outside CredentialStore)
 ConversationService -> LLMService -> ProviderManager
 ```
 
@@ -72,4 +84,4 @@ The web application is independently built and currently has no operational depe
 
 ## Last Updated
 
-2026-08-28 — dependency directions re-reviewed from source and architecture rules.
+2026-09-09 — Phase 5 provisioning/runtime credential dependencies re-reviewed.

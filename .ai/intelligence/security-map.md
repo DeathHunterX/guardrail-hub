@@ -19,7 +19,11 @@ Treat missing controls as risks, not implied features. Security-sensitive change
 - Typed configuration validates several production secrets and unsafe defaults.
 - LLM credentials are abstracted behind a credential store with Windows Credential Manager, mounted-file and environment backends.
 - Non-Windows credential selection fails closed unless a backend is explicitly chosen.
-- Provider secrets are resolved at runtime rather than stored in `config/llm.yaml`.
+- Runtime credential identity is `provider_id` for Windows and mounted-file backends; only the env backend uses `api_key_env` or its approved fallback.
+- Provider secrets are resolved at runtime rather than stored in `config/llm.yaml` or `.env`.
+- Mounted-file and environment runtime backends are read-only. The running MCP container does not provision or reconfigure secrets.
+- Host-side setup accepts masked input and tests a candidate against only the selected provider before persistence. Recognized Compose-host files are replaced atomically with POSIX `0700`/`0600` permissions or hardened Windows ACLs.
+- AWS/Bedrock authentication remains outside the API-key credential store and uses the AWS SDK credential chain.
 - Domain and isolated-runtime import boundaries are mechanically checked by AIOS tooling.
 - ZAP/JMeter work is queued and assigned through worker services instead of arbitrary direct execution from MCP payloads.
 - Conversation redaction exists as an explicit operation.
@@ -52,4 +56,4 @@ The AIOS workflow checks repository governance artifacts, not dependency vulnera
 
 ## Last Updated
 
-2026-08-28 — security controls traced to executable enforcement points.
+2026-09-09 — Phase 5 credential provisioning and consumption controls traced to executable enforcement points.

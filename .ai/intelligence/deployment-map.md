@@ -35,7 +35,21 @@ Credential backend behavior is platform-aware:
 
 - Windows defaults to Windows Credential Manager.
 - Non-Windows deployments must explicitly select mounted-file secrets or the environment backend; otherwise startup fails closed.
-- The mounted-file backend defaults to `/run/secrets`.
+- The mounted-file backend resolves `/run/secrets/<provider_id>` by default and is read-only; the environment backend is also read-only and externally managed.
+- AWS/Bedrock remains isolated from the API-key credential store and uses the AWS SDK credential chain.
+
+### Credential provisioning and consumption
+
+Credential provisioning is a host/operator concern, separate from runtime consumption:
+
+| Context | Contract |
+|---|---|
+| Windows local host | Masked input is tested before persistence to Windows Credential Manager as `GuardrailHub:<provider_id>`. |
+| Recognized Guardrail Hub Compose host | Masked input is tested before an atomic write to `./secrets/<provider_id>`; POSIX hosts use directory/file modes `0700`/`0600`, and Windows hosts apply hardened ACLs. |
+| Running MCP container | `ContainerFileCredentialBackend` reads `/run/secrets/<provider_id>` from the read-only `./secrets:/run/secrets:ro` mount; it cannot set or delete credentials. |
+| Environment mode | `api_key_env` or its approved fallback names an externally managed environment variable; Guardrail Hub does not mutate it. |
+
+Provider API-key values are not persisted to `.env`, `llm.yaml`, or Compose environment entries. Generic Linux hosts are not writable setup targets unless the Guardrail Hub Compose project is positively recognized.
 
 ### Observability
 
@@ -53,4 +67,4 @@ Repository workflow presence does not by itself make a check required: GitHub br
 
 ## Last Updated
 
-2026-08-28 — Compose, Dockerfiles, startup and CI re-reviewed.
+2026-09-09 — Phase 5 Compose host provisioning and read-only runtime mount re-reviewed.
