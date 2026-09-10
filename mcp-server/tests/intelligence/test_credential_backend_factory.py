@@ -18,6 +18,7 @@ from app.intelligence.credentials import CredentialBackendError
 from app.intelligence.credentials.backend_factory import (
     build_credential_backend,
     build_default_credential_backend,
+    build_provider_env_var_names,
 )
 from app.intelligence.credentials.container_backend import (
     ContainerFileCredentialBackend,
@@ -27,6 +28,14 @@ from app.intelligence.credentials.env_backend import EnvVarCredentialBackend
 from app.intelligence.credentials.windows_backend import (
     WindowsCredentialManagerBackend,
 )
+from app.intelligence.registry.models.provider import (
+    AuthConfig,
+    AuthType,
+    ConnectionConfig,
+    ProviderRecord,
+)
+from app.intelligence.registry.types.deployment import DeploymentType
+from app.intelligence.registry.types.provider import ProviderType
 
 
 # ---------------------------------------------------------------------------
@@ -237,6 +246,35 @@ class TestBuildCredentialBackend_SecretsDir(unittest.TestCase):
         ):
             backend = build_credential_backend(platform="linux")
         self.assertIsInstance(backend, EnvVarCredentialBackend)
+
+
+class TestBuildProviderEnvVarNames(unittest.TestCase):
+    """One pure helper owns the runtime and CLI env identity projection."""
+
+    @staticmethod
+    def _provider(provider_id, api_key_env=None, auth_type=AuthType.API_KEY):
+        return ProviderRecord(
+            provider_id=provider_id,
+            provider_type=ProviderType.OPENAI_COMPATIBLE,
+            deployment=DeploymentType.CLOUD,
+            auth=AuthConfig(type=auth_type, api_key_env=api_key_env),
+            connection=ConnectionConfig(base_url="https://example.test/v1"),
+        )
+
+    def test_uses_api_key_env_and_approved_fallback_for_api_key_providers(self):
+        providers = [
+            self._provider("openai-cloud", "OPENAI_API_KEY"),
+            self._provider("fallback-cloud"),
+            self._provider("ollama-local", auth_type=AuthType.NONE),
+        ]
+
+        self.assertEqual(
+            build_provider_env_var_names(providers),
+            {
+                "openai-cloud": "OPENAI_API_KEY",
+                "fallback-cloud": "GUARDRAILHUB_CREDENTIAL__FALLBACK-CLOUD",
+            },
+        )
 
 
 # ---------------------------------------------------------------------------

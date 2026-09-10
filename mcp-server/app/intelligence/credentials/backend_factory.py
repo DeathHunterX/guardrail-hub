@@ -9,9 +9,9 @@ This module provides two entry points:
 
 ``build_default_credential_backend(platform)``
     (Phase 5B legacy API.) Returns the default persistent secure backend for
-    the setup command. On Windows this is Windows Credential Manager; on all
-    other platforms it raises ``CredentialBackendError``. Retained for
-    backward compatibility with the setup command's direct call path.
+    older callers. On Windows this is Windows Credential Manager; on all other
+    platforms it raises ``CredentialBackendError``. The setup CLI uses
+    ``build_credential_backend()`` so its selection matches runtime bootstrap.
 
 Design principle (fail-closed): the application never silently falls back to
 an insecure credential store. Every backend selection failure produces a clear
@@ -26,7 +26,6 @@ import sys
 from typing import Final, Iterable, Mapping, Optional
 
 from app.intelligence.credentials import CredentialBackend, CredentialBackendError
-from app.intelligence.registry.models.provider import AuthType, ProviderRecord
 
 # Import the constants from container_backend to avoid duplication.
 # container_backend.py is Phase 5C and must not be modified.
@@ -34,14 +33,20 @@ from app.intelligence.credentials.container_backend import (
     ContainerFileCredentialBackend,
     DEFAULT_SECRETS_DIR,
 )
+from app.intelligence.registry.models.provider import AuthType, ProviderRecord
 
 # Supported mode values after normalisation.
 _VALID_MODES: Final[frozenset[str]] = frozenset({"windows", "wincm", "file", "env"})
 
+
 def build_provider_env_var_names(
     providers: Iterable[ProviderRecord],
 ) -> dict[str, str]:
-    """Map API-key provider IDs to their physical environment variable names."""
+    """Map API-key provider IDs to their physical environment variable names.
+
+    This pure projection is shared by runtime bootstrap and the setup CLI so
+    ADR-0017's ``api_key_env`` fallback contract cannot drift between them.
+    """
     return {
         provider.provider_id: (
             provider.auth.api_key_env
@@ -178,19 +183,19 @@ def _raise_unsupported(platform: str, mode: str) -> "CredentialBackendError":
 
 
 # ----------------------------------------------------------------------
-# Legacy API — setup command (Phase 5B)
-# Retained for backward compatibility with direct setup-command calls.
+# Legacy API — Phase 5B
+# Retained for backward compatibility with older direct callers.
 # ----------------------------------------------------------------------
 
 
 def build_default_credential_backend(
     platform: Optional[str] = None,
 ) -> CredentialBackend:
-    """Return the default persistent secure credential backend for the setup command.
+    """Return the legacy default persistent secure credential backend.
 
     .. deprecated::
         New application code should use :func:`build_credential_backend` instead.
-        This function is retained for the setup command's direct call path.
+        The selector-aware setup CLI does not use this function.
 
     Args:
         platform: Platform identifier to select on. Defaults to ``sys.platform``.
@@ -229,4 +234,5 @@ def build_default_credential_backend(
 __all__ = [
     "build_credential_backend",
     "build_default_credential_backend",
+    "build_provider_env_var_names",
 ]

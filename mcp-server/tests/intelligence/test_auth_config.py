@@ -373,19 +373,15 @@ class AuthValidationTests(unittest.TestCase):
         )
 
     # -------------------------------------------------------------------------
-    # Explicit api_key auth requires api_key_env
+    # Explicit api_key auth may use the ADR-0017 derived env fallback
     # -------------------------------------------------------------------------
 
-    def test_explicit_api_key_auth_requires_api_key_env(self):
+    def test_explicit_api_key_auth_allows_derived_env_fallback(self):
         from app.intelligence.registry.models.provider import AuthConfig
         auth = AuthConfig(type=AuthType.API_KEY, api_key_env=None)
         result = self.validator.validate_providers([self._provider(auth)])
         errors = list(result)
-        self.assertGreater(len(errors), 0)
-        self.assertTrue(
-            any("api_key_env is required" in e.message for e in errors),
-            f"Expected 'api_key_env is required' error, got: {[e.message for e in errors]}",
-        )
+        self.assertEqual(len(errors), 0, f"Unexpected errors: {[e.message for e in errors]}")
 
     # -------------------------------------------------------------------------
     # aws auth

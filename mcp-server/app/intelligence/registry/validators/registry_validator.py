@@ -64,15 +64,6 @@ class RegistryValidator:
     validation errors are semantic/business rule errors.
     """
 
-    def _is_auth_type_explicit(self, provider: ProviderRecord) -> bool:
-        """Return True when auth.type was explicitly declared in the YAML.
-
-        The loader sets auth.type to AUTH_TYPE_DEFAULT_SENTINEL when the
-        field is absent from the YAML (Phase 1 backward compatibility).
-        Providers that omit auth.type are exempt from api_key_env requirements.
-        """
-        return provider.auth.type is not AUTH_TYPE_DEFAULT_SENTINEL
-
     def validate_providers(
         self,
         providers: Sequence[ProviderRecord],
@@ -111,19 +102,6 @@ class RegistryValidator:
                         f"got '{auth_type}'",
                     )
                 else:
-                    # api_key_env is required only when auth.type is explicitly api_key.
-                    # Phase 1 configs that omit auth.type entirely are exempt.
-                    if auth_type == AuthType.API_KEY and self._is_auth_type_explicit(provider):
-                        if not provider.auth.api_key_env:
-                            yield ValidationError(
-                                entity_type="provider",
-                                entity_id=provider.provider_id,
-                                field="auth.api_key_env",
-                                message="auth.api_key_env is required when auth.type is "
-                                "'api_key' (name the environment variable that holds the key)",
-                            )
-                        # api_key_env is expected and normal for api_key auth — no warning.
-
                     # api_key_env is an error if declared alongside AWS or NONE auth.
                     if auth_type in (AuthType.AWS, AuthType.NONE):
                         if provider.auth.api_key_env:

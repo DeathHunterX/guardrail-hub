@@ -630,12 +630,14 @@ def build_conversation_service(
         InMemoryConversationStore,
     )
     from app.intelligence.credentials import CredentialStore
-    from app.intelligence.credentials.backend_factory import build_credential_backend
+    from app.intelligence.credentials.backend_factory import (
+        build_credential_backend,
+        build_provider_env_var_names,
+    )
     from app.intelligence.inference.services.llm_service import LLMService
     from app.intelligence.providers import ProviderFactory
     from app.intelligence.providers.adapters import register_all_adapters
     from app.intelligence.providers.provider_manager import ProviderManager
-    from app.intelligence.registry.models.provider import AuthType
     from app.services.conversation.conversation_service import ConversationService
 
     # RegistryRuntime.start() must have been called before this function.
@@ -643,14 +645,7 @@ def build_conversation_service(
 
     # The CredentialStore namespace is always provider_id. Only the env backend
     # projects provider IDs to physical environment-variable names.
-    env_var_names = {
-        record.provider_id: (
-            record.auth.api_key_env
-            or f"GUARDRAILHUB_CREDENTIAL__{record.provider_id.upper()}"
-        )
-        for record in catalog.iter_providers()
-        if record.auth.type == AuthType.API_KEY
-    }
+    env_var_names = build_provider_env_var_names(catalog.iter_providers())
 
     # Build the credential store from the runtime backend.
     # build_credential_backend() reads GUARDRAILHUB_CREDENTIAL_BACKEND and

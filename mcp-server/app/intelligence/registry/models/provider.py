@@ -16,13 +16,14 @@ class AuthType(str, Enum):
     """Supported authentication types for LLM providers.
 
     Each value declares HOW a provider authenticates — not the secret itself.
-    The actual credential (API key, AWS token) is sourced from environment
-    variables or a secrets manager at runtime.
+    The actual credential is obtained by the selected runtime backend. For an
+    API-key provider, ``api_key_env`` is only the environment locator used by
+    the explicit env backend; it is never the secret value or storage policy.
 
     Attributes:
-        API_KEY:   Provider uses a bearer / API key. The key name is declared
-                   via auth.api_key_env in llm.yaml; the value lives in the
-                   environment (never in the YAML file).
+        API_KEY:   Provider uses a bearer / API key. ``auth.api_key_env`` is
+                   locator metadata for env-mode resolution, never a directive
+                   to persist a value in an environment file.
         AWS:       Provider uses AWS credentials (access key + secret, or IAM
                    role). Region is declared in connection.region. Credentials
                    come from the standard AWS SDK credential chain (env vars,
@@ -69,10 +70,10 @@ class AuthConfig:
     # including when AuthConfig is constructed with its class-level defaults.
     type: AuthTypeField = AUTH_TYPE_DEFAULT_SENTINEL
 
-    # Environment variable name that holds the API key value at runtime.
-    # Required for AuthType.API_KEY when type was explicitly declared,
-    # unused for AuthType.AWS and AuthType.NONE.
-    # The actual value must NOT appear in llm.yaml.
+    # Environment credential locator used only when the explicit env backend
+    # is selected. Optional for AuthType.API_KEY: the env backend derives the
+    # ADR-0017 fallback name when absent. Unused for AWS/NONE. The actual
+    # value must NOT appear in llm.yaml or be persisted by setup.
     api_key_env: Optional[str] = None
 
     # Custom auth header name (e.g. "X-API-Key"). Optional.

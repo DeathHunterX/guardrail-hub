@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 from app.intelligence.inference.router.router import Router
 from app.intelligence.inference.services.llm_service import LLMService
 from app.intelligence.inference.strategies.priority import PriorityStrategy
+from app.intelligence.credentials.backend_factory import build_provider_env_var_names
 from app.intelligence.ports.chat import ChatMessage, ChatOptions
 from app.intelligence.providers.provider_factory import ProviderFactory
 from app.intelligence.providers.provider_manager import ProviderManager
@@ -191,6 +192,30 @@ class TestRegistryRuntimeUnifiedConfig(unittest.TestCase):
         self.assertEqual(model_1.provider_id, "parent-provider")
         self.assertEqual(model_2.provider_id, "parent-provider")
         self.assertEqual(model_1.provider_id, model_2.provider_id)
+
+    def test_api_key_provider_without_env_name_reaches_approved_fallback(self):
+        path = _write_llm_yaml(_make_llm_yaml([
+            {
+                "id": "fallback-cloud",
+                "type": "openai_compatible",
+                "deployment": "cloud",
+                "connection": {"base_url": "https://api.example.com"},
+                "auth": {"type": "api_key"},
+                "models": [
+                    {"id": "model-a", "type": "chat", "capabilities": ["chat"]},
+                ],
+            },
+        ]))
+        self.addCleanup(lambda: path.unlink(missing_ok=True))
+
+        catalog = RegistryRuntime(
+            RegistryRuntimeSettings(llm_config_path=path),
+        ).start()
+
+        self.assertEqual(
+            build_provider_env_var_names(catalog.iter_providers()),
+            {"fallback-cloud": "GUARDRAILHUB_CREDENTIAL__FALLBACK-CLOUD"},
+        )
 
 
 # ---------------------------------------------------------------------------
