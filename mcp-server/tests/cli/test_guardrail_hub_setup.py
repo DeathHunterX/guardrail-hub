@@ -1379,3 +1379,47 @@ class SetupStateMachineTests(unittest.TestCase):
         self.assertEqual(3, code)
         self.assertIn("credential inspection failed (CredentialBackendError)", output.text)
         self.assertNotIn("backend unavailable", output.text)
+
+class ConfigCommandTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.current = Path(self.directory.name) / "llm.yaml"
+        self.current.write_text(_CONFIG, encoding="utf-8")
+        self.env = mock.patch.dict(os.environ, {"REGISTRY_LLM_CONFIG_PATH": str(self.current)}, clear=False)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_show_is_safe_and_validate_is_non_mutating(self) -> None:
+        output = _Output()
+        self.assertEqual(0, main(["config", "show"], output=output))
+        self.assertIn("cloud: type=openai_compatible", output.text)
+        self.assertNotIn("CLOUD_KEY=", output.text)
+        before = self.current.read_bytes()
+        candidate = Path(self.directory.name) / "candidate.yaml"
+        candidate.write_text(_CONFIG.replace("enabled: true", "enabled: false", 1), encoding="utf-8")
+        self.assertEqual(0, main(["config", "validate", str(candidate)], output=_Output()))
+        self.assertEqual(before, self.current.read_bytes())
+
+    def test_apply_requires_confirmation_and_replaces_only_after_yes(self) -> None:
+        candidate = Path(self.directory.name) / "candidate.yaml"
+        candidate.write_text(_CONFIG.replace("enabled: true", "enabled: false", 1), encoding="utf-8")
+        output = _Output()
+        self.assertEqual(0, main(["config", "apply", str(candidate)], output=output, input_reader=lambda _prompt: "yes"))
+        self.assertIn("Provider changed: local (enabled)", output.text)
+        self.assertEqual(candidate.read_bytes(), self.current.read_bytes())
+
+    def test_apply_fails_closed_without_interactive_input(self) -> None:
+        candidate = Path(self.directory.name) / "candidate.yaml"
+        candidate.write_text(_CONFIG, encoding="utf-8")
+        with mock.patch("sys.stdin.isatty", return_value=False):
+            self.assertEqual(3, main(["config", "apply", str(candidate)], output=_Output()))
+
+    def test_apply_failure_preserves_current_configuration(self) -> None:
+        candidate = Path(self.directory.name) / "candidate.yaml"
+        candidate.write_text(_CONFIG.replace("enabled: true", "enabled: false", 1), encoding="utf-8")
+        before = self.current.read_bytes()
+        with mock.patch("app.cli._atomic_replace", side_effect=OSError("replace failed")):
+            code = main(["config", "apply", str(candidate)], output=_Output(), input_reader=lambda _prompt: "yes")
+        self.assertEqual(2, code)
+        self.assertEqual(before, self.current.read_bytes())

@@ -1,5 +1,17 @@
 # Guardrail Hub MCP Server
 
+## LLM configuration commands
+
+Use the CLI to inspect and manage provider/model topology in `config/llm.yaml`:
+
+```powershell
+guardrail-hub config show
+guardrail-hub config validate .\candidate-llm.yaml
+guardrail-hub config apply .\candidate-llm.yaml
+```
+
+`show` renders provider and model metadata without reading credentials. `validate` strictly rejects unsupported fields and literal `auth.api_key` values without changing the canonical file. `apply` validates the candidate bytes, shows a semantic change summary, asks for confirmation, and atomically replaces the canonical file. It requires an interactive terminal.
+
 ## LLM credential deployment
 
 LLM provider configuration lives in `config/llm.yaml`. It identifies a provider

@@ -111,6 +111,7 @@ class LLmConfigLoader:
         path: str | Path,
         *,
         env: Mapping[str, str] | None = None,
+        strict: bool = False,
     ) -> LLmConfigLoadResult:
         """Load and normalize llm.yaml from a file path.
 
@@ -173,6 +174,32 @@ class LLmConfigLoader:
                 )
             ) from exc
 
+        return self.load_text(raw_text, file_path=file_path, env=env, strict=strict)
+
+    def load_text(
+        self,
+        raw_text: str,
+        *,
+        file_path: str = "llm.yaml",
+        env: Mapping[str, str] | None = None,
+        strict: bool = False,
+    ) -> LLmConfigLoadResult:
+        """Load one already-read YAML snapshot.
+
+        ``config apply`` uses this entry point so the validated snapshot is the
+        exact snapshot later written atomically. Runtime callers retain the
+        permissive default for backward compatibility; candidate commands opt
+        into strict schema validation.
+        """
+        from app.intelligence.registry.exceptions import LoadReport, RegistryLoadError
+
+        if _YAML_LOAD_SAFE is None:
+            raise RegistryLoadError(
+                LoadReport(
+                    issues=(LoadIssue(file_path=file_path, position="(root)", message="PyYAML is required for YAML registry loading"),)
+                )
+            )
+
         # Parse YAML.
         try:
             data = _YAML_LOAD_SAFE(raw_text)
@@ -188,6 +215,11 @@ class LLmConfigLoader:
                     )
                 )
             ) from exc
+
+        if strict:
+            strict_errors = _strict_schema_errors(data)
+            if strict_errors:
+                return LLmConfigLoadResult(errors=tuple(strict_errors))
 
         # Resolve environment variables.
         try:
@@ -354,7 +386,6 @@ class LLmConfigLoader:
         region = conn_data.get("region")
         if region is not None and not isinstance(region, str):
             raise TypeError("connection.region must be a string")
-
         # Auth config.
         auth_data = data.get("auth", {})
         if not isinstance(auth_data, dict):
@@ -402,6 +433,7 @@ class LLmConfigLoader:
                 auth_header=auth_header,
             ),
             enabled=bool(data.get("enabled", True)),
+            priority=int(data.get("priority", 100)),
             raw_models=models_data,
         )
 
@@ -559,7 +591,7 @@ class LLmConfigLoader:
             connection=connection,
             capabilities=provider_capabilities,
             enabled=raw.enabled,
-            priority=100,
+            priority=raw.priority,
         )
 
         return provider_record, models
@@ -568,6 +600,55 @@ class LLmConfigLoader:
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
+
+def _strict_schema_errors(data: Any) -> list[str]:
+    """Reject keys the normalizer would otherwise silently discard.
+
+    This is deliberately a small allow-list over the supported llm.yaml shape,
+    not a second schema framework. It is used only for operator-supplied
+    candidates so legacy runtime loading remains compatible.
+    """
+    errors: list[str] = []
+
+    def reject_unknown(value: Any, allowed: set[str], location: str) -> None:
+        if not isinstance(value, dict):
+            return
+        for key in value:
+            if key not in allowed:
+                if location.endswith("auth") and key == "api_key":
+                    errors.append("auth.api_key is not permitted in llm.yaml")
+                else:
+                    errors.append(f"{location}: unsupported field '{key}'")
+
+    reject_unknown(data, {"llm"}, "root")
+    if not isinstance(data, dict):
+        return errors
+    llm = data.get("llm")
+    reject_unknown(llm, {"providers"}, "llm")
+    if not isinstance(llm, dict) or not isinstance(llm.get("providers"), list):
+        return errors
+    provider_fields = {
+        "id", "type", "deployment", "enabled", "priority", "connection", "auth", "models"
+    }
+    model_fields = {
+        "id", "type", "deployment_name", "context_window", "capabilities", "priority", "base_url"
+    }
+    for index, provider in enumerate(llm["providers"]):
+        location = f"llm.providers[{index}]"
+        reject_unknown(provider, provider_fields, location)
+        if not isinstance(provider, dict):
+            continue
+        reject_unknown(
+            provider.get("connection"),
+            {"base_url", "region"},
+            f"{location}.connection",
+        )
+        reject_unknown(provider.get("auth"), {"type", "api_key_env", "auth_header"}, f"{location}.auth")
+        models = provider.get("models")
+        if isinstance(models, list):
+            for model_index, model in enumerate(models):
+                reject_unknown(model, model_fields, f"{location}.models[{model_index}]")
+    return errors
 
 def _parse_capabilities(caps: Any) -> frozenset[Capability]:
     """Parse capability input into ``frozenset[Capability]``.
@@ -611,6 +692,7 @@ class _RawProviderRecord:
     region: str | None
     auth: AuthConfig
     enabled: bool
+    priority: int
     raw_models: list[dict[str, Any]]
 
 

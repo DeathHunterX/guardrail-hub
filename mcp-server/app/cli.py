@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import stat
 import sys
+import tempfile
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -16,8 +18,9 @@ from app.intelligence.credentials import (
     CredentialStore,
 )
 from app.intelligence.exceptions.llm import LLMConfigurationError
-from app.intelligence.registry.exceptions import RegistryLoadError
-from app.intelligence.registry.loaders.llm_config_loader import LLmConfigLoader
+from app.intelligence.registry.builders.catalog_builder import CatalogBuilder
+from app.intelligence.registry.exceptions import RegistryLoadError, RegistryValidationError
+from app.intelligence.registry.loaders.llm_config_loader import LLmConfigLoadResult, LLmConfigLoader
 from app.intelligence.registry.models.provider import AuthType, ProviderRecord
 from app.intelligence.setup.connection import ConnectionState, ProviderConnectionTester
 from app.intelligence.setup.ports import AwsCredentialDetector, OutputWriter, SecretPrompt
@@ -157,6 +160,13 @@ def _build_parser() -> argparse.ArgumentParser:
     credential_action = setup.add_mutually_exclusive_group()
     credential_action.add_argument("--credential", action="store_true", help="Configure a missing credential for --provider.")
     credential_action.add_argument("--reconfigure", action="store_true", help="Replace a credential for --provider after validation.")
+    config = commands.add_parser("config", help="Inspect and manage llm.yaml provider/model topology.")
+    config_commands = config.add_subparsers(dest="config_command", required=True)
+    config_commands.add_parser("show", help="Safely show the current LLM configuration.")
+    validate = config_commands.add_parser("validate", help="Strictly validate a candidate llm.yaml.")
+    validate.add_argument("llm_yaml", metavar="LLM_YAML")
+    apply = config_commands.add_parser("apply", help="Interactively validate, diff, and apply a candidate llm.yaml.")
+    apply.add_argument("llm_yaml", metavar="LLM_YAML")
     return parser
 
 
@@ -168,6 +178,8 @@ def main(argv: Optional[Sequence[str]] = None, *, credential_store: Optional[Cre
     from app.intelligence.setup.adapters import Boto3AwsCredentialDetector, MaskedSecretPrompt, SecureInputUnavailableError, StreamOutputWriter
     out, prompt, detector, reader = output or StreamOutputWriter(), secret_prompt or MaskedSecretPrompt(), aws_detector or Boto3AwsCredentialDetector(), input_reader or input
     try:
+        if args.command == "config":
+            return _run_config(args, out, reader)
         if (args.credential or args.reconfigure) and not args.provider:
             _build_parser().error("--credential and --reconfigure require --provider")
         # Parsing completes before this point, so help and parser errors never
@@ -179,30 +191,117 @@ def main(argv: Optional[Sequence[str]] = None, *, credential_store: Optional[Cre
         out.write_line("Setup error: secure credential entry requires an interactive terminal.")
         return _EXIT_SETUP_ERROR
     except (KeyboardInterrupt, EOFError):
-        out.write_line("Setup cancelled.")
+        out.write_line(
+            "Setup cancelled."
+            if args.command == "setup"
+            else "Configuration apply cancelled."
+        )
         return _EXIT_OK
     except Exception as exc:  # noqa: BLE001 - setup must restore a usable terminal.
-        out.write_line(f"Setup error: {type(exc).__name__}")
-        return _EXIT_SETUP_ERROR
+        if args.command == "setup":
+            out.write_line(f"Setup error: {type(exc).__name__}")
+            return _EXIT_SETUP_ERROR
+        raise
 
 
 def _current_config_path() -> Path:
     """Resolve only this setting, without importing full application Settings."""
     return Path(os.environ.get("REGISTRY_LLM_CONFIG_PATH", "config/llm.yaml"))
-def _load_validated(path: Path):
-    """Load the configured-provider topology used by setup screens."""
-    result = LLmConfigLoader().load(path)
+
+
+def _load_validated(path: Path, *, strict: bool = False, text: str | None = None):
+    loader = LLmConfigLoader()
+    result = loader.load_text(text, file_path=str(path), strict=strict) if text is not None else loader.load(path, strict=strict)
     if result.errors:
         from app.intelligence.registry.exceptions import LoadIssue, LoadReport
-        raise RegistryLoadError(
-            LoadReport(
-                issues=tuple(
-                    LoadIssue(file_path=str(path), position="(root)", message=error)
-                    for error in result.errors
-                )
-            )
-        )
-    return result, None
+        raise RegistryLoadError(LoadReport(issues=tuple(LoadIssue(file_path=str(path), position="(root)", message=error) for error in result.errors)))
+    catalog, _warnings, _errors = CatalogBuilder().build_from_llm_config_result(result)
+    return result, catalog
+
+
+def _run_config(args: argparse.Namespace, out: OutputWriter, reader: Callable[[str], str]) -> int:
+    current = _current_config_path()
+    try:
+        if args.config_command == "show":
+            result, _ = _load_validated(current)
+            _render_config(result, out)
+            return _EXIT_OK
+        candidate = Path(args.llm_yaml)
+        if args.config_command == "validate":
+            _load_validated(candidate, strict=True)
+            out.write_line("Configuration is valid.")
+            return _EXIT_OK
+        return _apply_config(current, candidate, out, reader)
+    except (RegistryLoadError, RegistryValidationError) as exc:
+        out.write_line("Configuration error:"); out.write_line(str(exc)); return _EXIT_CONFIG_ERROR
+    except OSError as exc:
+        out.write_line(f"Configuration error: {type(exc).__name__}"); return _EXIT_CONFIG_ERROR
+
+
+def _render_config(result: LLmConfigLoadResult, out: OutputWriter) -> None:
+    by_provider: dict[str, list] = {}
+    for model in result.models: by_provider.setdefault(model.provider_id, []).append(model)
+    for provider in result.providers:
+        auth = provider.auth.type.value if isinstance(provider.auth.type, AuthType) else "not_required"
+        out.write_line(f"{provider.provider_id}: type={provider.provider_type.value}, deployment={provider.deployment.value}, enabled={provider.enabled}, auth={auth}, priority={provider.priority}")
+        for model in sorted(by_provider.get(provider.provider_id, []), key=lambda item: item.model_id):
+            capabilities = ",".join(sorted(cap.value for cap in model.capabilities))
+            out.write_line(f"  - {model.model_id} -> {provider.provider_id} ({model.model_type.value}; capabilities={capabilities}; priority={model.priority})")
+
+
+def _apply_config(current: Path, candidate: Path, out: OutputWriter, reader: Callable[[str], str]) -> int:
+    if not sys.stdin.isatty() and reader is input:
+        out.write_line("Configuration apply requires an interactive terminal."); return _EXIT_SETUP_ERROR
+    candidate_bytes = candidate.read_bytes()
+    candidate_result, _ = _load_validated(candidate, strict=True, text=candidate_bytes.decode("utf-8"))
+    current_result, _ = _load_validated(current)
+    diff = _semantic_diff(current_result, candidate_result)
+    if not diff:
+        out.write_line("No configuration changes to apply."); return _EXIT_OK
+    out.write_line("Configuration changes:")
+    for line in diff: out.write_line(f"  {line}")
+    try: confirmed = reader("Apply these changes? [y/N]: ").strip().lower()
+    except (EOFError, OSError): confirmed = ""
+    if confirmed not in {"y", "yes"}:
+        out.write_line("Configuration apply cancelled."); return _EXIT_OK
+    _atomic_replace(current, candidate_bytes)
+    out.write_line("Configuration applied."); return _EXIT_OK
+
+
+def _semantic_diff(current: LLmConfigLoadResult, candidate: LLmConfigLoadResult) -> list[str]:
+    old_p, new_p = {p.provider_id: p for p in current.providers}, {p.provider_id: p for p in candidate.providers}
+    old_m, new_m = {m.model_id: m for m in current.models}, {m.model_id: m for m in candidate.models}
+    lines = [f"Provider removed: {item}" for item in sorted(old_p.keys() - new_p.keys())]
+    lines += [f"Provider added: {item}" for item in sorted(new_p.keys() - old_p.keys())]
+    for item in sorted(old_p.keys() & new_p.keys()):
+        old, new = old_p[item], new_p[item]
+        fields = [field for field in ("provider_type", "deployment", "enabled", "priority") if getattr(old, field) != getattr(new, field)]
+        if old.auth != new.auth: fields.append("authentication")
+        if old.connection != new.connection: fields.append("connection")
+        if fields: lines.append(f"Provider changed: {item} ({', '.join(fields)})")
+    lines += [f"Model removed: {item}" for item in sorted(old_m.keys() - new_m.keys())]
+    lines += [f"Model added: {item} -> {new_m[item].provider_id}" for item in sorted(new_m.keys() - old_m.keys())]
+    lines += [f"Model changed: {item}" for item in sorted(old_m.keys() & new_m.keys()) if old_m[item] != new_m[item]]
+    return lines
+
+
+def _atomic_replace(target: Path, content: bytes) -> None:
+    target_stat = os.lstat(target)
+    if stat.S_ISLNK(target_stat.st_mode) or not stat.S_ISREG(target_stat.st_mode): raise OSError("current llm.yaml is not a regular file")
+    descriptor, name = tempfile.mkstemp(prefix=".guardrail-hub-", dir=target.parent); temporary = Path(name)
+    try:
+        if hasattr(os, "fchmod"): os.fchmod(descriptor, stat.S_IMODE(target_stat.st_mode))
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = -1; handle.write(content); handle.flush(); os.fsync(handle.fileno())
+        os.replace(temporary, target); temporary = None
+        if os.name != "nt":
+            directory = os.open(target.parent, os.O_RDONLY)
+            try: os.fsync(directory)
+            finally: os.close(directory)
+    finally:
+        if descriptor >= 0: os.close(descriptor)
+        if temporary is not None: temporary.unlink(missing_ok=True)
+
 
 def _run_setup(args, out, prompt, detector, reader, injected_store, injected_tester, redraw: Callable[[], None] = lambda: None) -> int:
     current = _current_config_path()
