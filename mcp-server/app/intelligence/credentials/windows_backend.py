@@ -201,6 +201,33 @@ class WindowsCredentialManagerBackend(CredentialBackend):
         finally:
             advapi32.CredFree(p_cred)
 
+    def credential_exists(self, provider_id: str) -> bool:
+        """Inspect exact-target metadata without copying or decoding its blob."""
+        advapi32 = _get_advapi32()
+        target = _make_target(provider_id)
+        p_cred: ctypes.POINTER(_CREDENTIAL) = ctypes.POINTER(_CREDENTIAL)()
+
+        ok = advapi32.CredReadW(target, CRED_TYPE_GENERIC, 0, ctypes.byref(p_cred))
+        if not ok:
+            code = self._get_last_error()
+            if code == ERROR_NOT_FOUND:
+                return False
+            raise CredentialBackendError(
+                provider_id,
+                f"CredReadW failed (Windows error {code})",
+            )
+
+        try:
+            cred = p_cred.contents
+            if cred.CredentialBlobSize == 0 or cred.CredentialBlob is None:
+                raise CredentialBackendError(
+                    provider_id,
+                    "stored credential blob is empty",
+                )
+            return True
+        finally:
+            advapi32.CredFree(p_cred)
+
     def set(self, provider_id: str, credential: str) -> None:
         advapi32 = _get_advapi32()
         target = _make_target(provider_id)

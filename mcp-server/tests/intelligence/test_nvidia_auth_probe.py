@@ -217,3 +217,140 @@ llm:
         providers, errors = self._load("unrelated/model")
         self.assertEqual([], providers)
         self.assertTrue(any("auth_probe_model" in str(error) for error in errors))
+
+
+class _Output:
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+
+    def write_line(self, text: str) -> None:
+        self.lines.append(text)
+
+    @property
+    def text(self) -> str:
+        return "\n".join(self.lines)
+
+
+class _SecretPrompt:
+    def __init__(self, candidate: str) -> None:
+        self.candidate = candidate
+
+    def read_secret(self, _label: str) -> str:
+        return self.candidate
+
+
+class NvidiaReconfigurePersistenceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.config = Path(self.directory.name) / "llm.yaml"
+        self.config.write_text(
+            f"""\
+llm:
+  providers:
+    - id: nvidia-nim
+      type: openai_compatible
+      deployment: cloud
+      enabled: true
+      auth: {{type: api_key, api_key_env: NVIDIA_API_KEY}}
+      connection:
+        base_url: https://integrate.api.nvidia.com/
+        auth_probe_model: {_PROBE_MODEL}
+      models:
+        - id: {_PROBE_MODEL}
+          type: chat
+          deployment_name: {_PROBE_MODEL}
+          capabilities: [chat]
+""",
+            encoding="utf-8",
+        )
+        self.store = CredentialStore(InMemoryCredentialBackend())
+        self.environment = mock.patch.dict(
+            os.environ, {"REGISTRY_LLM_CONFIG_PATH": str(self.config)}, clear=False,
+        )
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def _client_factory(self, handler):
+        def build(**kwargs):
+            return _ProbeClient(handler, **kwargs)
+
+        return build
+
+    def test_invalid_replacement_preserves_existing_credential_byte_for_byte(self) -> None:
+        existing = "synthetic-existing-credential"
+        candidate = _CANDIDATE
+        self.store.set("nvidia-nim", existing)
+        output = _Output()
+
+        def handler(request: _ProbeRequest) -> _ProbeResponse:
+            if request.url.path == "/v1/models":
+                return _ProbeResponse(200)
+            return _ProbeResponse(401)
+
+        with (
+            mock.patch.object(
+                openai_adapter_module.httpx,
+                "AsyncClient",
+                side_effect=self._client_factory(handler),
+            ),
+            mock.patch.object(openai_adapter_module.httpx, "HTTPError", _ProbeHTTPError),
+        ):
+            code = main(
+                ["setup", "--provider", "nvidia-nim", "--reconfigure"],
+                credential_store=self.store,
+                secret_prompt=_SecretPrompt(candidate),
+                output=output,
+                input_reader=lambda _prompt, answers=iter(["3", "3"]): next(answers),
+            )
+
+        self.assertEqual(0, code)
+        self.assertEqual(existing, self.store.get("nvidia-nim"))
+        self.assertNotIn(candidate, output.text)
+        self.assertIn("Existing credential was not changed.", output.text)
+
+    def test_valid_replacement_persists_only_after_authenticated_probe(self) -> None:
+        existing = "synthetic-existing-credential"
+        replacement = "synthetic-valid-replacement"
+        calls: list[str] = []
+        credential_during_probe: list[str] = []
+        authorization_was_single_bearer: list[bool] = []
+        self.store.set("nvidia-nim", existing)
+        output = _Output()
+
+        def handler(request: _ProbeRequest) -> _ProbeResponse:
+            calls.append(request.url.path)
+            credential_during_probe.append(self.store.get("nvidia-nim"))
+            authorization_was_single_bearer.append(
+                len(request.headers.get_list("Authorization")) == 1
+                and request.headers.get("Authorization") == f"Bearer {replacement}"
+            )
+            return _ProbeResponse(200, {"choices": [{"message": {"content": "pong"}}]})
+
+        with (
+            mock.patch.object(
+                openai_adapter_module.httpx,
+                "AsyncClient",
+                side_effect=self._client_factory(handler),
+            ),
+            mock.patch.object(openai_adapter_module.httpx, "HTTPError", _ProbeHTTPError),
+        ):
+            code = main(
+                ["setup", "--provider", "nvidia-nim", "--reconfigure"],
+                credential_store=self.store,
+                secret_prompt=_SecretPrompt(replacement),
+                output=output,
+                input_reader=lambda _prompt, answers=iter(["2", "3"]): next(answers),
+            )
+
+        self.assertEqual(0, code)
+        self.assertEqual(["/v1/chat/completions"], calls)
+        self.assertEqual([existing], credential_during_probe)
+        self.assertEqual([True], authorization_was_single_bearer)
+        self.assertEqual(replacement, self.store.get("nvidia-nim"))
+        self.assertNotIn(replacement, output.text)
+        self.assertIn("Credential updated securely", output.text)
+
+
+if __name__ == "__main__":
+    unittest.main()

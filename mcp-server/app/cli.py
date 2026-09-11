@@ -7,7 +7,8 @@ import re
 import stat
 import sys
 import tempfile
-from dataclasses import dataclass
+import threading
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from typing import Callable, Optional, Sequence, TextIO
@@ -29,6 +30,66 @@ _EXIT_OK, _EXIT_CONFIG_ERROR, _EXIT_SETUP_ERROR = 0, 2, 3
 _PROG = "guardrail-hub"
 
 
+class _ConnectionSpinner:
+    """Presentation-only fixed-line activity indicator for a blocking probe."""
+
+    _BRAILLE_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+    _ASCII_FRAMES = ("|", "/", "-", "\\")
+
+    def __init__(self, output: OutputWriter, *, interval: float = 0.1) -> None:
+        self._output = output
+        self._interval = interval
+        self._stop_requested = threading.Event()
+        self._worker: threading.Thread | None = None
+        self._frames = self._select_frames()
+        self._frame_index = 0
+        self._line_width = max(len(f"{frame} Testing connection...") for frame in self._frames)
+
+    def __enter__(self) -> "_ConnectionSpinner":
+        # The first frame is intentionally synchronous: the probe must never
+        # start before the operator has seen an explicitly flushed activity cue.
+        self._write_frame()
+        self._worker = threading.Thread(
+            target=self._animate,
+            name="guardrail-connection-spinner",
+            daemon=False,
+        )
+        self._worker.start()
+        return self
+
+    def __exit__(self, _exc_type, _exc_value, _traceback) -> bool:
+        self.stop()
+        return False
+
+    def stop(self) -> None:
+        """Stop, join, and erase the active line before any screen transition."""
+        self._stop_requested.set()
+        if self._worker is not None:
+            self._worker.join()
+            self._worker = None
+        self._output.write("\r" + (" " * self._line_width) + "\r")
+        self._output.flush()
+
+    def _animate(self) -> None:
+        while not self._stop_requested.wait(self._interval):
+            self._write_frame()
+
+    def _write_frame(self) -> None:
+        frame = self._frames[self._frame_index]
+        self._frame_index = (self._frame_index + 1) % len(self._frames)
+        self._output.write(f"\r{frame} Testing connection...")
+        self._output.flush()
+
+    def _select_frames(self) -> tuple[str, ...]:
+        encoding = getattr(self._output, "encoding", None)
+        if encoding:
+            try:
+                "".join(self._BRAILLE_FRAMES).encode(encoding)
+            except (LookupError, UnicodeError):
+                return self._ASCII_FRAMES
+        return self._BRAILLE_FRAMES
+
+
 class _ArgumentParser(argparse.ArgumentParser):
     """Keep rejected command-line credential values out of operator output."""
 
@@ -45,6 +106,31 @@ class _ArgumentParser(argparse.ArgumentParser):
         super().error(message)
 
 
+def _enable_windows_vt(output: TextIO) -> tuple[bool, Callable[[], None] | None]:
+    """Return native-console detection plus a restorer when VT is usable."""
+    try:
+        import ctypes
+        import msvcrt
+
+        handle = msvcrt.get_osfhandle(output.fileno())
+        original_mode = ctypes.c_uint()
+        kernel32 = ctypes.windll.kernel32
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(original_mode)):
+            return False, None
+        enabled_mode = original_mode.value | 0x0004  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        changed = enabled_mode != original_mode.value
+        if changed and not kernel32.SetConsoleMode(handle, enabled_mode):
+            return True, None
+    except (AttributeError, OSError, ValueError):
+        return False, None
+
+    def restore() -> None:
+        if changed:
+            kernel32.SetConsoleMode(handle, original_mode.value)
+
+    return True, restore
+
+
 class _AlternateScreen:
     """Temporarily isolate interactive setup output from the calling shell."""
 
@@ -54,31 +140,57 @@ class _AlternateScreen:
 
     def __init__(self, output: TextIO, input_stream: TextIO, *, term: str | None = None) -> None:
         self._output = output
-        self._active = self._supported(input_stream, output, term)
+        self._interactive = self._streams_are_interactive(input_stream, output)
+        self._term = (term if term is not None else os.environ.get("TERM", "")).lower()
+        self._windows = os.name == "nt"
+        self._active = self._interactive and not self._windows and self._term != "dumb"
         self._entered = False
+        self._restore_windows_vt: Callable[[], None] | None = None
 
     @staticmethod
-    def _supported(input_stream: TextIO, output: TextIO, term: str | None) -> bool:
-        if not input_stream.isatty() or not output.isatty():
+    def _streams_are_interactive(input_stream: TextIO, output: TextIO) -> bool:
+        try:
+            return input_stream.isatty() and output.isatty()
+        except (AttributeError, OSError):
             return False
-        normalized_term = (term if term is not None else os.environ.get("TERM", "")).lower()
-        if normalized_term == "dumb":
-            return False
-        return bool(normalized_term or os.environ.get("WT_SESSION") or os.environ.get("ConEmuANSI"))
 
     def __enter__(self) -> "_AlternateScreen":
+        if self._interactive and self._windows:
+            native_console, self._restore_windows_vt = _enable_windows_vt(self._output)
+            self._active = self._restore_windows_vt is not None
+            if not native_console and self._term != "dumb":
+                self._active = bool(
+                    self._term
+                    or os.environ.get("WT_SESSION")
+                    or os.environ.get("ConEmuANSI")
+                )
         if self._active:
-            self._output.write(self._ENTER)
-            self._output.flush()
-            self._entered = True
+            try:
+                self._output.write(self._ENTER)
+                self._output.flush()
+                self._entered = True
+            except BaseException:
+                self._restore_console_mode()
+                self._active = False
+                raise
         return self
 
     def __exit__(self, _exc_type, _exc_value, _traceback) -> bool:
-        if self._active:
-            self._output.write(self._LEAVE)
-            self._output.flush()
+        try:
+            if self._entered:
+                self._output.write(self._LEAVE)
+                self._output.flush()
+        finally:
             self._entered = False
+            self._active = False
+            self._restore_console_mode()
         return False
+
+    def _restore_console_mode(self) -> None:
+        restore = self._restore_windows_vt
+        self._restore_windows_vt = None
+        if restore is not None:
+            restore()
 
     def redraw(self) -> None:
         """Clear the active alternate screen before a real screen transition."""
@@ -92,6 +204,46 @@ class ProviderStatus:
     provider: ProviderRecord
     credential: str
     connection: ConnectionState = ConnectionState.NOT_TESTED
+    credential_state: "_CredentialState | None" = None
+    selected_target: "_CredentialTarget | None" = None
+    other_target: "_CredentialTarget | None" = None
+    other_target_configured: bool = False
+    other_target_error: bool = False
+
+
+class _CredentialState(str, Enum):
+    CONFIGURED_HERE = "configured_here"
+    CONFIGURED_OTHER_TARGET = "configured_other_target"
+    MISSING = "missing"
+    BACKEND_ERROR = "backend_error"
+
+
+class _CredentialTarget(str, Enum):
+    WINDOWS_LOCAL = "Windows local credential store"
+    COMPOSE_HOST = "Docker Compose provisioning"
+
+
+@dataclass(frozen=True, slots=True)
+class _CredentialTargetContext:
+    """Presence-only context for the one other recognized target."""
+
+    selected: _CredentialTarget
+    other: _CredentialTarget
+    other_backend: object
+
+
+@dataclass(frozen=True, slots=True)
+class _StoreResolution:
+    store: CredentialStore | None
+    read_only_context: "_ReadOnlyCredentialContext | bool"
+    failed: bool
+    target_context: _CredentialTargetContext | None = None
+
+    def __iter__(self):
+        """Retain the established three-value resolver unpacking contract."""
+        yield self.store
+        yield self.read_only_context
+        yield self.failed
 
 
 class _CredentialMutationAction(str, Enum):
@@ -102,6 +254,27 @@ class _CredentialMutationAction(str, Enum):
 class _ReadOnlyCredentialContext(str, Enum):
     CONTAINER_FILE = "container_file"
     ENVIRONMENT = "environment"
+
+
+class _SetupScopeKind(str, Enum):
+    GLOBAL = "global"
+    PROVIDER = "provider"
+
+
+@dataclass(frozen=True, slots=True)
+class _SetupScope:
+    kind: _SetupScopeKind
+    provider_id: str | None = None
+
+    @classmethod
+    def provider(cls, provider_id: str) -> "_SetupScope":
+        return cls(_SetupScopeKind.PROVIDER, provider_id)
+
+    def is_provider(self, provider_id: str) -> bool:
+        return self.kind is _SetupScopeKind.PROVIDER and self.provider_id == provider_id
+
+
+_GLOBAL_SETUP_SCOPE = _SetupScope(_SetupScopeKind.GLOBAL)
 
 
 class _CredentialMutationBlocker(str, Enum):
@@ -127,6 +300,7 @@ class _CredentialMutationEligibility:
 @dataclass(slots=True)
 class _SetupSession:
     statuses: dict[str, ProviderStatus]
+    scope: _SetupScope = _GLOBAL_SETUP_SCOPE
     changed: bool = False
     redraw: Callable[[], None] = lambda: None
     has_screen: bool = False
@@ -305,53 +479,87 @@ def _atomic_replace(target: Path, content: bytes) -> None:
 
 def _run_setup(args, out, prompt, detector, reader, injected_store, injected_tester, redraw: Callable[[], None] = lambda: None) -> int:
     current = _current_config_path()
-    try:
-        result = LLmConfigLoader().load(current)
-    except RegistryLoadError as exc:
-        out.write_line("Configuration error: unable to load LLM configuration.")
-        out.write_line(str(exc))
-        return _EXIT_CONFIG_ERROR
-    if result.errors:
-        out.write_line(f"Configuration error: llm.yaml is invalid ({len(result.errors)} issue(s)):")
-        for error in result.errors:
-            out.write_line(f"  - {error}")
-        return _EXIT_CONFIG_ERROR
-    store, external, failed = _resolve_store(current, out, reader, injected_store)
+    try: result, _ = _load_validated(current)
+    except (RegistryLoadError, RegistryValidationError) as exc:
+        out.write_line("Configuration error:"); out.write_line(str(exc)); return _EXIT_CONFIG_ERROR
+    provider = None
+    scope = _GLOBAL_SETUP_SCOPE
+    inspected_providers = result.providers
+    if args.provider:
+        provider = next((p for p in result.providers if p.provider_id == args.provider), None)
+        if provider is None:
+            _unknown_provider(args.provider, result.providers, out)
+            return _EXIT_SETUP_ERROR
+        scope = _SetupScope.provider(provider.provider_id)
+        inspected_providers = [provider]
+    resolution = _resolve_store(current, out, reader, injected_store)
+    store, external, failed = resolution
     if failed: return _EXIT_SETUP_ERROR
     # Adapter imports are intentionally lazy. A dashboard or an unknown-provider
     # error must not import optional SDKs or construct the application runtime.
     tester = injected_tester
     try:
-        session = _SetupSession(_inspect(result.providers, store, detector, external), redraw=redraw)
+        session = _SetupSession(
+            _inspect(
+                inspected_providers,
+                store,
+                detector,
+                external,
+                target_context=(
+                    resolution.target_context
+                    if isinstance(resolution, _StoreResolution)
+                    else None
+                ),
+            ),
+            scope=scope,
+            redraw=redraw,
+        )
     except LLMConfigurationError as exc:
         out.write_line(f"Setup error: credential inspection failed ({type(exc).__name__})")
         return _EXIT_SETUP_ERROR
-    if args.provider:
-        provider = next((p for p in result.providers if p.provider_id == args.provider), None)
-        if provider is None: _unknown_provider(args.provider, out); return _EXIT_SETUP_ERROR
+    if provider is not None:
         if args.credential or args.reconfigure:
-            _credential_flow(
+            outcome = _credential_flow(
                 provider, args.reconfigure, [provider], session, store, tester, prompt, out, reader,
                 read_only=external,
             )
+            if outcome != "exit":
+                _provider_details_screen(
+                    provider, session, store, tester, prompt, out, reader, external, parent="dashboard",
+                )
         else:
             _provider_details_screen(provider, session, store, tester, prompt, out, reader, external, parent="dashboard")
+        return _EXIT_OK
     _main_menu(session, store, tester, prompt, out, reader, external)
     return _EXIT_OK
 
 
 def _resolve_store(current, out, reader, injected):
-    if injected is not None: return injected, False, False
+    if injected is not None: return _StoreResolution(injected, False, False)
     from app.intelligence.credentials.backend_factory import build_credential_backend, build_provider_env_var_names
     from app.intelligence.credentials.container_backend import ContainerFileCredentialBackend
     from app.intelligence.credentials.env_backend import EnvVarCredentialBackend
     from app.intelligence.setup.compose_host import ComposeHostCredentialProvisioner, recognize_compose_host_project
     compose = recognize_compose_host_project(current)
     try:
-        if compose and sys.platform != "win32": return CredentialStore(ComposeHostCredentialProvisioner(compose)), False, False
+        if compose and sys.platform != "win32":
+            return _StoreResolution(
+                CredentialStore(ComposeHostCredentialProvisioner(compose)),
+                False,
+                False,
+            )
         if compose and sys.platform == "win32":
             if not sys.stdin.isatty() and reader is input:
-                out.write_line("Setup error: Windows local and Compose host contexts are both possible; run interactively to choose the deployment context."); return None, False, True
+                out.write_line("Setup error: Windows local and Compose host contexts are both possible; run interactively to choose the deployment context.")
+                return _StoreResolution(None, False, True)
+            from app.intelligence.credentials.windows_backend import (
+                WindowsCredentialManagerBackend,
+            )
+
+            windows_backend = WindowsCredentialManagerBackend()
+            windows_store = CredentialStore(windows_backend)
+            compose_backend = ComposeHostCredentialProvisioner(compose)
+            compose_store = CredentialStore(compose_backend)
             out.write_line("Where should this credential be provisioned?")
             out.write_line("")
             out.write_line("1. Windows local credential store")
@@ -365,8 +573,26 @@ def _resolve_store(current, out, reader, injected):
                 if choice is None:
                     continue
                 if choice == 2:
-                    return CredentialStore(ComposeHostCredentialProvisioner(compose)), False, False
-                break
+                    return _StoreResolution(
+                        compose_store,
+                        False,
+                        False,
+                        _CredentialTargetContext(
+                            selected=_CredentialTarget.COMPOSE_HOST,
+                            other=_CredentialTarget.WINDOWS_LOCAL,
+                            other_backend=windows_backend,
+                        ),
+                    )
+                return _StoreResolution(
+                    windows_store,
+                    False,
+                    False,
+                    _CredentialTargetContext(
+                        selected=_CredentialTarget.WINDOWS_LOCAL,
+                        other=_CredentialTarget.COMPOSE_HOST,
+                        other_backend=compose_backend,
+                    ),
+                )
         records, _ = _load_validated(current)
         backend = build_credential_backend(env_var_names=build_provider_env_var_names(records.providers))
         read_only_context: _ReadOnlyCredentialContext | bool = False
@@ -374,9 +600,10 @@ def _resolve_store(current, out, reader, injected):
             read_only_context = _ReadOnlyCredentialContext.CONTAINER_FILE
         elif isinstance(backend, EnvVarCredentialBackend):
             read_only_context = _ReadOnlyCredentialContext.ENVIRONMENT
-        return CredentialStore(backend), read_only_context, False
+        return _StoreResolution(CredentialStore(backend), read_only_context, False)
     except LLMConfigurationError as exc:
-        out.write_line(f"Setup error: {exc}"); return None, False, True
+        out.write_line(f"Setup error: {exc}")
+        return _StoreResolution(None, False, True)
 
 
 class _UnsupportedConnectionTester:
@@ -407,15 +634,49 @@ def _default_tester(provider: ProviderRecord):
     return ProviderConnectionTester(factory=factory)
 
 
-def _inspect(providers, store, detector, external):
+def _inspect(providers, store, detector, external, *, target_context=None):
     statuses = {}
     for provider in providers:
         credential = "not_required"
+        credential_state = None
+        other_target_configured = False
+        other_target_error = False
         if provider.enabled and provider.auth.type is AuthType.AWS: credential = "aws_detected" if detector.is_available() else "missing"
         elif provider.enabled and provider.auth.type is AuthType.API_KEY:
-            try: store.get(provider.provider_id); credential = "configured"
-            except CredentialNotFoundError: credential = "missing"
-        statuses[provider.provider_id] = ProviderStatus(provider, credential)
+            try:
+                value = store.get(provider.provider_id)
+                credential = "configured"
+                credential_state = _CredentialState.CONFIGURED_HERE
+                del value
+            except CredentialNotFoundError:
+                credential = "missing"
+                credential_state = _CredentialState.MISSING
+            except CredentialBackendError:
+                credential = "backend_error"
+                credential_state = _CredentialState.BACKEND_ERROR
+
+            if target_context is not None:
+                try:
+                    other_target_configured = bool(
+                        target_context.other_backend.credential_exists(
+                            provider.provider_id
+                        )
+                    )
+                except CredentialBackendError:
+                    other_target_error = True
+                if credential == "missing" and other_target_configured:
+                    credential_state = _CredentialState.CONFIGURED_OTHER_TARGET
+                elif credential == "missing" and other_target_error:
+                    credential_state = _CredentialState.BACKEND_ERROR
+        statuses[provider.provider_id] = ProviderStatus(
+            provider,
+            credential,
+            credential_state=credential_state,
+            selected_target=target_context.selected if target_context else None,
+            other_target=target_context.other if target_context else None,
+            other_target_configured=other_target_configured,
+            other_target_error=other_target_error,
+        )
     return statuses
 
 
@@ -430,6 +691,14 @@ def _authentication_label(provider: ProviderRecord) -> str:
 def _provider_status_label(status: ProviderStatus) -> tuple[str, str]:
     if not status.provider.enabled:
         return "–", "Disabled"
+    if status.credential_state is _CredentialState.BACKEND_ERROR:
+        return "!", "Credential inspection unavailable"
+    if status.credential_state is _CredentialState.CONFIGURED_OTHER_TARGET:
+        return (
+            "!",
+            f"Credential configured in {status.other_target.value}; "
+            f"not configured for {status.selected_target.value}",
+        )
     if status.credential == "missing":
         return "✗", "Missing credential"
     if status.connection is ConnectionState.FAILED:
@@ -440,7 +709,7 @@ def _provider_status_label(status: ProviderStatus) -> tuple[str, str]:
 
 
 def _render_dashboard(statuses, out):
-    ready = missing = 0
+    ready = missing = configured_elsewhere = inspection_errors = 0
     out.write_line("Guardrail Hub — LLM Setup")
     out.write_line("")
     out.write_line("Providers")
@@ -448,7 +717,11 @@ def _render_dashboard(statuses, out):
         mark, label = _provider_status_label(item)
         if label == "Ready":
             ready += 1
-        elif label == "Missing credential":
+        elif item.credential_state is _CredentialState.BACKEND_ERROR:
+            inspection_errors += 1
+        elif item.credential_state is _CredentialState.CONFIGURED_OTHER_TARGET:
+            configured_elsewhere += 1
+        elif item.credential == "missing":
             missing += 1
         out.write_line("")
         out.write_line(f"{mark} {item.provider.provider_id}")
@@ -458,6 +731,8 @@ def _render_dashboard(statuses, out):
     out.write_line("Summary")
     out.write_line(f"  Ready:   {ready}")
     out.write_line(f"  Missing: {missing}")
+    out.write_line(f"  Configured elsewhere: {configured_elsewhere}")
+    out.write_line(f"  Inspection errors: {inspection_errors}")
     out.write_line(f"  Total:   {len(statuses)}")
 
 
@@ -627,21 +902,33 @@ def _provider_details_screen(provider, session, store, tester, prompt, out, read
             _render_external_credential_guidance(provider.provider_id, out, external)
             out.write_line("")
         if _is_testable(status): options.append(("Test connection", "test"))
-        options.append(("Back to provider details selection" if parent == "selection" else "Back to main menu", "back"))
+        if session.scope.is_provider(provider.provider_id):
+            options.append(("Exit", "exit"))
+        else:
+            options.append(("Back to provider details selection" if parent == "selection" else "Back to main menu", "back"))
         for index, (label, _) in enumerate(options, 1): out.write_line(f"{index}. {label}")
         while True:
             selected = _read_selection(reader, out, len(options))
             if selected is not None:
                 break
         action = options[selected - 1][1]
+        if action == "exit": return "exit"
         if action == "back": return "dashboard" if parent == "dashboard" else "selection"
         if action == "test":
-            testable = [item.provider for item in session.statuses.values() if _is_testable(item)]
-            _test_flow(provider, testable, session, store, tester, out, reader)
+            testable = [provider] if session.scope.is_provider(provider.provider_id) else [
+                item.provider for item in session.statuses.values() if _is_testable(item)
+            ]
+            outcome = _test_flow(provider, testable, session, store, tester, out, reader)
+            if session.scope.is_provider(provider.provider_id):
+                if outcome == "exit": return "exit"
+                continue
             return "dashboard"
         outcome = _credential_flow(
             provider, action == "reconfigure_credential", [provider], session, store, tester, prompt, out, reader,
         )
+        if session.scope.is_provider(provider.provider_id):
+            if outcome == "exit": return "exit"
+            continue
         if outcome == "dashboard":
             return "dashboard"
 
@@ -651,14 +938,49 @@ def _render_provider_details(status: ProviderStatus, out: OutputWriter) -> None:
     out.write_line("")
     out.write_line(f"Enabled: {'Yes' if status.provider.enabled else 'No'}")
     out.write_line(f"Authentication: {_authentication_label(status.provider)}")
-    out.write_line(f"Credential: {_credential_label(status.credential)}")
+    for line in _credential_status_lines(status):
+        out.write_line(line)
     out.write_line(f"Connection: {_connection_label(status.connection)}")
     out.write_line(f"Deployment: {status.provider.deployment.value.replace('_', ' ').title()}")
     out.write_line("")
 
 
 def _is_testable(status: ProviderStatus) -> bool:
-    return status.provider.enabled and status.credential not in {"missing"}
+    return status.provider.enabled and status.credential in {
+        "configured",
+        "externally_managed",
+        "not_required",
+        "aws_detected",
+    }
+
+
+def _credential_status_lines(status: ProviderStatus) -> tuple[str, ...]:
+    """Render target-aware credential state without backend error details."""
+    selected = status.selected_target
+    other = status.other_target
+    if selected is None or status.credential_state is None:
+        return (f"Credential: {_credential_label(status.credential)}",)
+    if status.credential_state is _CredentialState.CONFIGURED_OTHER_TARGET:
+        return (
+            f"Credential: Configured in {other.value}",
+            f"This credential is not configured for {selected.value}.",
+        )
+    if status.credential_state is _CredentialState.BACKEND_ERROR:
+        lines = ["Credential: Inspection unavailable"]
+        if status.credential == "backend_error":
+            lines.append(f"{selected.value} could not be inspected.")
+        elif status.other_target_error:
+            lines.append(f"This credential is not configured for {selected.value}.")
+            lines.append(f"{other.value} could not be inspected.")
+        return tuple(lines)
+    if status.credential_state is _CredentialState.CONFIGURED_HERE:
+        lines = [f"Credential: Configured in {selected.value}"]
+        if status.other_target_configured:
+            lines.append(f"Also configured in {other.value}.")
+        elif status.other_target_error:
+            lines.append(f"{other.value} could not be inspected.")
+        return tuple(lines)
+    return (f"Credential: Missing for {selected.value}",)
 
 
 def _credential_label(credential: str) -> str:
@@ -721,7 +1043,9 @@ def _credential_flow(
             if not stored:
                 active_tester = tester or _default_tester(provider)
                 result = active_tester.test(provider, candidate_credential=candidate)
-                session.statuses[provider.provider_id] = ProviderStatus(provider, status.credential, result.state)
+                session.statuses[provider.provider_id] = replace(
+                    status, connection=result.state,
+                )
                 if result.state is ConnectionState.READY:
                     try:
                         store.set(provider.provider_id, candidate)
@@ -741,7 +1065,12 @@ def _credential_flow(
                     candidate = None
                     stored = True
                     session.changed = True
-                    session.statuses[provider.provider_id] = ProviderStatus(provider, "configured", ConnectionState.READY)
+                    session.statuses[provider.provider_id] = replace(
+                        status,
+                        credential="configured",
+                        connection=ConnectionState.READY,
+                        credential_state=_CredentialState.CONFIGURED_HERE,
+                    )
                     message = "✓ Credential valid\n✓ Connection successful\n" + ("✓ Credential updated securely" if reconfigure else "✓ Credential stored securely")
                 else:
                     message = "✗ Connection failed\n" + ("Existing credential was not changed." if reconfigure else "Credential was not stored.")
@@ -779,17 +1108,20 @@ def _credential_result_screen(provider, reconfigure, providers, message, succeed
             options = [("Enter another API key", "new_candidate"), ("Test again", "test_again")]
         else:
             options = []
-        action = _CredentialMutationAction.RECONFIGURE if reconfigure else _CredentialMutationAction.CONFIGURE
-        alternate = [
-            item for item in providers
-            if item.provider_id != provider.provider_id
-            and _credential_mutation_eligibility(
-                session.statuses[item.provider_id], action, read_only=False,
-            ).allowed
-        ]
-        if alternate:
-            options.append(("Reconfigure another provider" if reconfigure else "Configure another missing provider", "selection"))
-        options.append(("Back to main menu", "dashboard"))
+        if session.scope.is_provider(provider.provider_id):
+            options.extend((("Back to provider", "provider"), ("Exit", "exit")))
+        else:
+            action = _CredentialMutationAction.RECONFIGURE if reconfigure else _CredentialMutationAction.CONFIGURE
+            alternate = [
+                item for item in providers
+                if item.provider_id != provider.provider_id
+                and _credential_mutation_eligibility(
+                    session.statuses[item.provider_id], action, read_only=False,
+                ).allowed
+            ]
+            if alternate:
+                options.append(("Reconfigure another provider" if reconfigure else "Configure another missing provider", "selection"))
+            options.append(("Back to main menu", "dashboard"))
         for index, (label, _action) in enumerate(options, 1): out.write_line(f"{index}. {label}")
         while True:
             choice = _read_selection(reader, out, len(options))
@@ -853,7 +1185,7 @@ def _credential_unavailable_screen(
     out.write_line("What would you like to do?")
     out.write_line("")
     out.write_line("1. View provider details")
-    out.write_line("2. Back to main menu")
+    out.write_line("2. Exit" if session.scope.is_provider(provider.provider_id) else "2. Back to main menu")
     while True:
         choice = _read_selection(reader, out, 2)
         if choice is not None:
@@ -862,13 +1194,17 @@ def _credential_unavailable_screen(
         return _provider_details_screen(
             provider, session, store, tester, prompt, out, reader, read_only, parent="dashboard",
         )
-    return "dashboard"
+    return "exit" if session.scope.is_provider(provider.provider_id) else "dashboard"
 
 
 def _test_flow(provider, providers, session, store, tester, out, reader):
     """Keep connection testing in one provider-scoped selection/result flow."""
     while True:
-        result, message = _test_existing(provider, session, store, tester)
+        _render_connection_waiting(provider, session, out)
+        with _ConnectionSpinner(out):
+            result, message = _test_existing(provider, session, store, tester)
+        if result is not None:
+            _discard_pending_terminal_input()
         session.show_screen()
         out.write_line("Guardrail Hub — Test Connection")
         out.write_line("")
@@ -876,11 +1212,15 @@ def _test_flow(provider, providers, session, store, tester, out, reader):
         out.write_line("")
         out.write_line(message)
         out.write_line("")
-        options = [
-            ("Test again", "again"),
-            ("Test another provider", "another"),
-            ("Back to main menu", "dashboard"),
-        ]
+        options = (
+            [("Test again", "again"), ("Back to provider", "provider"), ("Exit", "exit")]
+            if session.scope.is_provider(provider.provider_id)
+            else [
+                ("Test again", "again"),
+                ("Test another provider", "another"),
+                ("Back to main menu", "dashboard"),
+            ]
+        )
         for index, (label, _action) in enumerate(options, 1): out.write_line(f"{index}. {label}")
         while True:
             choice = _read_selection(reader, out, len(options))
@@ -898,7 +1238,46 @@ def _test_flow(provider, providers, session, store, tester, out, reader):
                 return "dashboard"
             provider = selected
             continue
-        return "dashboard"
+        return action
+
+
+def _render_connection_waiting(provider, session, out) -> None:
+    """Replace the current screen before the synchronous connection probe starts."""
+    session.show_screen()
+    out.write_line("Guardrail Hub — Test Connection")
+    out.write_line("")
+    out.write_line(provider.provider_id)
+    out.write_line("")
+    # This explicit boundary matters even though StreamOutputWriter flushes
+    # individual lines: a waiting screen is not ready until its full header is
+    # visible before the blocking provider call begins.
+    out.flush()
+
+
+def _discard_pending_terminal_input() -> None:
+    """Drop only keystrokes queued while a synchronous probe held the result menu closed."""
+    try:
+        if not sys.stdin.isatty():
+            return
+    except (AttributeError, OSError):
+        return
+
+    if os.name == "nt":
+        try:
+            import msvcrt
+            while msvcrt.kbhit():
+                character = msvcrt.getwch()
+                if character in ("\x00", "\xe0") and msvcrt.kbhit():
+                    msvcrt.getwch()
+        except OSError:
+            return
+        return
+
+    try:
+        import termios
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+    except (ImportError, OSError, AttributeError):
+        return
 
 
 def _test_existing(provider, session, store, tester):
@@ -909,14 +1288,23 @@ def _test_existing(provider, session, store, tester):
             return None, "✗ Connection failed\nMissing credential."
     active_tester = tester or _default_tester(provider)
     result = active_tester.test(provider, candidate_credential=credential)
-    session.statuses[provider.provider_id] = ProviderStatus(provider, session.statuses[provider.provider_id].credential, result.state)
+    session.statuses[provider.provider_id] = replace(
+        session.statuses[provider.provider_id], connection=result.state,
+    )
     if result.state is ConnectionState.READY:
         return result, "✓ Connection successful"
     return result, "✗ Connection failed"
 
 
-def _unknown_provider(provider_id, out):
-    out.write_line(f"Provider '{provider_id}' is not configured."); out.write_line(""); out.write_line("To add or change providers:"); out.write_line(""); out.write_line("  guardrail-hub config apply <llm.yaml>")
+def _unknown_provider(provider_id, providers, out):
+    out.write_line(f"GuardrailHub: unknown provider '{provider_id}'.")
+    out.write_line("")
+    out.write_line("Available providers:")
+    for provider in sorted(providers, key=lambda item: item.provider_id):
+        out.write_line(f"- {provider.provider_id}")
+    out.write_line("")
+    out.write_line("To add or modify provider configuration:")
+    out.write_line("  guardrail-hub config apply <llm.yaml>")
 
 
 def _render_credential_mutation_blocker(

@@ -152,20 +152,30 @@ class ComposeHostCredentialProvisioner:
 
     def get(self, provider_id: str) -> str:
         """Confirm a regular existing target without reading its secret value."""
+        if not self.credential_exists(provider_id):
+            raise CredentialNotFoundError(provider_id)
+        if os.name == "nt":
+            target = self._target_for(provider_id)
+            self._apply_host_permissions(provider_id, self._root, is_directory=True)
+            self._apply_host_permissions(provider_id, target, is_directory=False)
+        return "configured"
+
+    def credential_exists(self, provider_id: str) -> bool:
+        """Inspect only the exact provider path without reading file content."""
         target = self._target_for(provider_id)
-        self._inspect_existing_secret_root(provider_id)
+        try:
+            self._inspect_existing_secret_root(provider_id)
+        except CredentialNotFoundError:
+            return False
         try:
             target_stat = os.lstat(target)
-        except FileNotFoundError as exc:
-            raise CredentialNotFoundError(provider_id) from exc
+        except FileNotFoundError:
+            return False
         except OSError as exc:
             raise CredentialBackendError(provider_id, "cannot inspect host secret") from exc
         if _is_link_or_reparse(target_stat) or not stat.S_ISREG(target_stat.st_mode):
             raise CredentialBackendError(provider_id, "host secret target is not a regular file")
-        if os.name == "nt":
-            self._apply_host_permissions(provider_id, self._root, is_directory=True)
-            self._apply_host_permissions(provider_id, target, is_directory=False)
-        return "configured"
+        return True
 
     def set(self, provider_id: str, credential: str) -> None:
         """Atomically write a credential with restrictive host permissions."""

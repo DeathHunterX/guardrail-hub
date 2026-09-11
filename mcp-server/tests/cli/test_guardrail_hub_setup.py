@@ -5,6 +5,8 @@ from __future__ import annotations
 import io
 import os
 import tempfile
+import threading
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -12,8 +14,11 @@ from unittest import mock
 from app.cli import (
     ProviderStatus,
     _AlternateScreen,
+    _ConnectionSpinner,
     _SetupSession,
+    _SetupScope,
     _credential_flow,
+    _discard_pending_terminal_input,
     _load_validated,
     _main_menu,
     _provider_details_screen,
@@ -74,9 +79,17 @@ _AWS_PROVIDER = """\
 class _Output:
     def __init__(self) -> None:
         self.lines: list[str] = []
+        self.fragments: list[str] = []
+        self.flush_count = 0
 
     def write_line(self, text: str) -> None:
         self.lines.append(text)
+
+    def write(self, text: str) -> None:
+        self.fragments.append(text)
+
+    def flush(self) -> None:
+        self.flush_count += 1
 
     @property
     def text(self) -> str:
@@ -118,6 +131,37 @@ class _TtyStream(io.StringIO):
         return True
 
 
+class _WindowsTtyStream(_TtyStream):
+    def fileno(self) -> int:
+        return 42
+
+
+def _windows_console_modules(
+    events: list[tuple], *, original_mode: int = 0x0003, set_succeeds: bool = True,
+):
+    import ctypes
+
+    class Kernel32:
+        @staticmethod
+        def GetConsoleMode(handle, mode) -> int:
+            events.append(("get", handle))
+            mode._obj.value = original_mode
+            return 1
+
+        @staticmethod
+        def SetConsoleMode(handle, mode) -> int:
+            events.append(("set", handle, mode))
+            return int(set_succeeds)
+
+    fake_ctypes = types.SimpleNamespace(
+        byref=ctypes.byref,
+        c_uint=ctypes.c_uint,
+        windll=types.SimpleNamespace(kernel32=Kernel32()),
+    )
+    fake_msvcrt = types.SimpleNamespace(get_osfhandle=lambda descriptor: descriptor + 100)
+    return {"ctypes": fake_ctypes, "msvcrt": fake_msvcrt}
+
+
 class _TerminalOutput:
     """Route setup presentation through the same pseudo-terminal as ANSI output."""
 
@@ -127,8 +171,115 @@ class _TerminalOutput:
     def write_line(self, text: str) -> None:
         self._terminal.write(text + "\n")
 
+    def write(self, text: str) -> None:
+        self._terminal.write(text)
+
+    def flush(self) -> None:
+        self._terminal.flush()
+
 
 class AlternateScreenTests(unittest.TestCase):
+    def test_windows_tty_without_term_uses_actual_console_capability(self) -> None:
+        terminal = _TtyStream()
+        restore_events: list[str] = []
+
+        with mock.patch("app.cli.os.name", "nt"), \
+             mock.patch(
+                 "app.cli._enable_windows_vt",
+                 create=True,
+                 return_value=(True, lambda: restore_events.append("restore")),
+             ):
+            with _AlternateScreen(terminal, _TtyStream(), term=None):
+                pass
+
+        self.assertEqual(1, terminal.getvalue().count("\x1b[?1049h"))
+        self.assertEqual(1, terminal.getvalue().count("\x1b[?1049l"))
+        self.assertEqual(["restore"], restore_events)
+
+    def test_windows_tty_with_misleading_dumb_term_uses_actual_console_capability(self) -> None:
+        terminal = _TtyStream()
+
+        with mock.patch("app.cli.os.name", "nt"), \
+             mock.patch(
+                 "app.cli._enable_windows_vt",
+                 create=True,
+                 return_value=(True, lambda: None),
+             ):
+            with _AlternateScreen(terminal, _TtyStream(), term="dumb"):
+                pass
+
+        self.assertIn("\x1b[?1049h", terminal.getvalue())
+        self.assertIn("\x1b[?1049l", terminal.getvalue())
+
+    def test_posix_tty_without_term_uses_screen_replacement(self) -> None:
+        terminal = _TtyStream()
+
+        with mock.patch("app.cli.os.name", "posix"), \
+             mock.patch.dict(os.environ, {}, clear=True):
+            with _AlternateScreen(terminal, _TtyStream(), term=None):
+                pass
+
+        self.assertEqual(
+            "\x1b[?1049h\x1b[H\x1b[?25h\x1b[?25h\x1b[?1049l",
+            terminal.getvalue(),
+        )
+
+    def test_posix_tty_with_dumb_term_uses_inline_fallback(self) -> None:
+        terminal = _TtyStream()
+
+        with mock.patch("app.cli.os.name", "posix"):
+            with _AlternateScreen(terminal, _TtyStream(), term="dumb"):
+                pass
+
+        self.assertEqual("", terminal.getvalue())
+
+    def test_one_session_enters_and_leaves_once_across_multiple_transitions(self) -> None:
+        terminal = _TtyStream()
+
+        with mock.patch("app.cli.os.name", "posix"):
+            with _AlternateScreen(terminal, _TtyStream(), term="xterm-256color") as screen:
+                screen.redraw()
+                screen.redraw()
+                screen.redraw()
+
+        rendered = terminal.getvalue()
+        self.assertEqual(1, rendered.count("\x1b[?1049h"))
+        self.assertEqual(3, rendered.count("\x1b[2J\x1b[H"))
+        self.assertEqual(1, rendered.count("\x1b[?1049l"))
+
+    def test_windows_vt_mode_is_enabled_and_exactly_restored_after_exceptions(self) -> None:
+        for exception_type in (KeyboardInterrupt, EOFError, RuntimeError):
+            with self.subTest(exception_type=exception_type.__name__):
+                terminal = _WindowsTtyStream()
+                events: list[tuple] = []
+                modules = _windows_console_modules(events)
+
+                with mock.patch("app.cli.os.name", "nt"), \
+                     mock.patch.dict("sys.modules", modules):
+                    with self.assertRaises(exception_type):
+                        with _AlternateScreen(terminal, _TtyStream(), term=None):
+                            raise exception_type("stop")
+
+                self.assertEqual(
+                    [("get", 142), ("set", 142, 0x0007), ("set", 142, 0x0003)],
+                    events,
+                )
+                self.assertEqual(1, terminal.getvalue().count("\x1b[?1049h"))
+                self.assertEqual(1, terminal.getvalue().count("\x1b[?1049l"))
+
+    def test_native_windows_console_does_not_use_ansi_when_vt_enablement_fails(self) -> None:
+        terminal = _WindowsTtyStream()
+        events: list[tuple] = []
+        modules = _windows_console_modules(events, set_succeeds=False)
+
+        with mock.patch("app.cli.os.name", "nt"), \
+             mock.patch.dict("sys.modules", modules):
+            with _AlternateScreen(terminal, _TtyStream(), term="xterm-256color"):
+                pass
+
+        self.assertEqual([("get", 142), ("set", 142, 0x0007)], events)
+        self.assertEqual("", terminal.getvalue())
+
     def test_alternate_screen_restores_terminal_after_an_error(self) -> None:
         """A thrown setup error must leave the operator's original screen usable."""
         output = _TtyStream()
@@ -275,10 +426,151 @@ class SetupStateMachineTests(unittest.TestCase):
         self.assertEqual(
             0,
             main(["setup", "--provider", "cloud"], credential_store=self._store(), output=output,
-                 input_reader=lambda _prompt, answers=iter(["2", "4"]): next(answers)),
+                 input_reader=lambda _prompt: "2"),
         )
         self.assertIn("Provider Details", output.text)
-        self.assertIn("Back to main menu", output.text)
+        self.assertIn("2. Exit", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
+
+    def test_provider_scoped_details_exit_without_rendering_dashboard(self) -> None:
+        self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
+        output = _Output()
+        store = self._configured_store("nvidia-nim")
+
+        code = main(
+            ["setup", "--provider", "nvidia-nim"],
+            credential_store=store,
+            output=output,
+            input_reader=lambda _prompt, answers=iter(["3"]): next(answers),
+        )
+
+        self.assertEqual(0, code)
+        self.assertIn("Provider Details", output.text)
+        self.assertIn("3. Exit", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
+
+    def test_provider_scoped_test_retries_and_returns_to_same_provider(self) -> None:
+        self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
+        output = _Output()
+        store = self._configured_store("nvidia-nim")
+        tester = _Tester(
+            ConnectionResult(ConnectionState.READY, "Connection successful"),
+            ConnectionResult(ConnectionState.READY, "Connection successful"),
+        )
+
+        code = main(
+            ["setup", "--provider", "nvidia-nim"],
+            credential_store=store,
+            connection_tester=tester,
+            output=output,
+            input_reader=lambda _prompt, answers=iter(["2", "1", "2", "3"]): next(answers),
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual(
+            [("nvidia-nim", "configured-only-for-test")] * 2,
+            tester.calls,
+        )
+        self.assertEqual(2, output.text.count("Provider Details"))
+        self.assertIn("Back to provider", output.text)
+        self.assertNotIn("Test another provider", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
+
+    def test_provider_scoped_configure_returns_to_refreshed_details(self) -> None:
+        self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
+        output = _Output()
+        store = self._store()
+
+        code = main(
+            ["setup", "--provider", "nvidia-nim", "--credential"],
+            credential_store=store,
+            secret_prompt=_Prompt("candidate-only-secret"),
+            connection_tester=_Tester(ConnectionResult(ConnectionState.READY, "Connection successful")),
+            output=output,
+            input_reader=lambda _prompt, answers=iter(["2", "3"]): next(answers),
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("candidate-only-secret", store.get("nvidia-nim"))
+        details = output.text.rsplit("Provider Details", maxsplit=1)[1]
+        self.assertIn("Credential: Configured", details)
+        self.assertNotIn("Configure another missing provider", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
+
+    def test_provider_scoped_failed_configure_backs_to_same_provider(self) -> None:
+        self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
+        output = _Output()
+
+        code = main(
+            ["setup", "--provider", "nvidia-nim"],
+            credential_store=self._store(),
+            secret_prompt=_Prompt("candidate-only-secret"),
+            connection_tester=_Tester(ConnectionResult(ConnectionState.FAILED, "Connection failed")),
+            output=output,
+            input_reader=lambda _prompt, answers=iter(["1", "3", "2"]): next(answers),
+        )
+
+        self.assertEqual(0, code)
+        self.assertIn("Credential: Missing", output.text.rsplit("Provider Details", maxsplit=1)[1])
+        self.assertNotIn("Configure another missing provider", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
+
+    def test_provider_scoped_reconfigure_retries_candidate_then_refreshes_details(self) -> None:
+        self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
+        output = _Output()
+        store = self._configured_store("nvidia-nim")
+        tester = _Tester(
+            ConnectionResult(ConnectionState.FAILED, "Connection failed"),
+            ConnectionResult(ConnectionState.READY, "Connection successful"),
+        )
+
+        code = main(
+            ["setup", "--provider", "nvidia-nim"],
+            credential_store=store,
+            secret_prompt=_Prompt("failed-candidate", "replacement-candidate"),
+            connection_tester=tester,
+            output=output,
+            input_reader=lambda _prompt, answers=iter(["1", "1", "2", "3"]): next(answers),
+        )
+
+        self.assertEqual(0, code)
+        self.assertEqual("replacement-candidate", store.get("nvidia-nim"))
+        self.assertEqual(
+            [("nvidia-nim", "failed-candidate"), ("nvidia-nim", "replacement-candidate")],
+            tester.calls,
+        )
+        self.assertIn("Credential: Configured", output.text.rsplit("Provider Details", maxsplit=1)[1])
+        self.assertNotIn("Reconfigure another provider", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
+
+    def test_provider_scoped_read_only_details_offer_only_exit(self) -> None:
+        self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
+        output = _Output()
+        prompt = _Prompt("must-not-be-read")
+
+        with mock.patch("app.cli._resolve_store", return_value=(self._store(), True, False)):
+            code = main(
+                ["setup", "--provider", "nvidia-nim"],
+                secret_prompt=prompt,
+                output=output,
+                input_reader=lambda _prompt: "1",
+            )
+
+        self.assertEqual(0, code)
+        self.assertEqual(0, prompt.calls)
+        self.assertIn("read-only runtime context", output.text)
+        self.assertIn("Provider Details", output.text)
+        self.assertIn("1. Exit", output.text.rsplit("Provider Details", maxsplit=1)[1])
+        self.assertNotIn("Configure credential", output.text)
+        self.assertNotIn("Reconfigure credential", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
 
     def test_test_result_supports_retry_switch_target_and_dashboard_back(self) -> None:
         """Test result navigation stays in its screen hierarchy instead of appending menus."""
@@ -375,11 +667,13 @@ class SetupStateMachineTests(unittest.TestCase):
             main(
                 ["setup", "--provider", "local"], credential_store=self._store(),
                 connection_tester=_Tester(ConnectionResult(ConnectionState.FAILED, "Connection failed")),
-                output=output, input_reader=lambda _prompt, answers=iter(["1", "3", "4"]): next(answers),
+                output=output, input_reader=lambda _prompt, answers=iter(["1", "3"]): next(answers),
             ),
         )
         self.assertIn("Guardrail Hub — Test Connection", output.text)
-        self.assertIn("Test another provider", output.text)
+        self.assertIn("Back to provider", output.text)
+        self.assertNotIn("Test another provider", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
 
     def test_missing_credential_failure_retests_transient_candidate_then_persists_only_success(self) -> None:
         store, output = self._store(), _Output()
@@ -394,7 +688,7 @@ class SetupStateMachineTests(unittest.TestCase):
             main(
                 ["setup", "--provider", "cloud", "--credential"], credential_store=store,
                 secret_prompt=_Prompt(first, second), connection_tester=tester, output=output,
-                input_reader=lambda _prompt, answers=iter(["2", "1", "2", "4"]): next(answers),
+                input_reader=lambda _prompt, answers=iter(["2", "1", "2", "3"]): next(answers),
             ),
         )
         self.assertEqual(
@@ -407,7 +701,10 @@ class SetupStateMachineTests(unittest.TestCase):
         self.assertIn("Credential was not stored.", output.text)
         self.assertIn("Enter another API key", output.text)
         self.assertIn("Test again", output.text)
-        self.assertNotIn("Exit", output.text.split("Guardrail Hub — LLM Setup", 1)[0])
+        self.assertIn("Back to provider", output.text)
+        self.assertIn("Exit", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
 
     def test_reconfigure_failure_retests_candidate_and_preserves_old_credential(self) -> None:
         store, output = self._store(), _Output()
@@ -422,7 +719,7 @@ class SetupStateMachineTests(unittest.TestCase):
             main(
                 ["setup", "--provider", "cloud", "--reconfigure"], credential_store=store,
                 secret_prompt=_Prompt(replacement), connection_tester=tester, output=output,
-                input_reader=lambda _prompt, answers=iter(["2", "3", "4"]): next(answers),
+                input_reader=lambda _prompt, answers=iter(["2", "3", "3"]): next(answers),
             ),
         )
         self.assertEqual([("cloud", replacement), ("cloud", replacement)], tester.calls)
@@ -485,7 +782,7 @@ class SetupStateMachineTests(unittest.TestCase):
             main(
                 ["setup", "--provider", "cloud", "--credential"], credential_store=store,
                 secret_prompt=_Prompt(candidate), connection_tester=tester, output=output,
-                input_reader=lambda _prompt, answers=iter(["1", "2", "4"]): next(answers),
+                input_reader=lambda _prompt, answers=iter(["1", "2", "3"]): next(answers),
             ),
         )
         self.assertEqual([("cloud", candidate), ("cloud", candidate)], tester.calls)
@@ -505,7 +802,7 @@ class SetupStateMachineTests(unittest.TestCase):
             main(
                 ["setup", "--provider", "cloud", "--reconfigure"], credential_store=store,
                 secret_prompt=_Prompt(replacement), connection_tester=tester, output=output,
-                input_reader=lambda _prompt, answers=iter(["1", "2", "4"]): next(answers),
+                input_reader=lambda _prompt, answers=iter(["1", "2", "3"]): next(answers),
             ),
         )
         self.assertEqual([("cloud", replacement), ("cloud", replacement)], tester.calls)
@@ -683,12 +980,15 @@ class SetupStateMachineTests(unittest.TestCase):
                 ["setup", "--provider", "cloud", "--reconfigure"], credential_store=store,
                 secret_prompt=_Prompt("replacement-secret"),
                 connection_tester=_Tester(ConnectionResult(ConnectionState.READY, "Connection successful")),
-                output=output, input_reader=lambda _prompt, answers=iter(["2", "4"]): next(answers),
+                output=output, input_reader=lambda _prompt, answers=iter(["2", "3"]): next(answers),
             ),
         )
         self.assertIn("Guardrail Hub — Reconfigure Credential", output.text)
         self.assertIn("Credential updated securely", output.text)
         self.assertEqual("replacement-secret", store.get("cloud"))
+        self.assertIn("Provider Details", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
 
     def test_invalid_test_result_input_stays_inline_without_retesting(self) -> None:
         result, _ = _load_validated(self.config)
@@ -702,8 +1002,326 @@ class SetupStateMachineTests(unittest.TestCase):
         )
         self.assertEqual("dashboard", outcome)
         self.assertEqual([("local", None)], tester.calls)
-        self.assertEqual([], redraws)
+        self.assertEqual(["redraw"], redraws)
         self.assertEqual(2, output.text.count("Invalid selection. Please choose 1, 2, or 3."))
+
+    def test_provider_test_waiting_screen_precedes_probe_and_retries_before_each_probe(self) -> None:
+        """A delayed connection probe must never leave the previous screen visible."""
+        result, _ = _load_validated(self.config)
+        local = next(item for item in result.providers if item.provider_id == "local")
+        events: list[str] = []
+
+        class EventOutput(_Output):
+            def write_line(self, text: str) -> None:
+                super().write_line(text)
+                if text == "✓ Connection successful":
+                    events.append("render_result")
+
+            def write(self, text: str) -> None:
+                super().write(text)
+                if text.startswith("\r") and "Testing connection..." in text:
+                    events.append("render_waiting")
+
+        class DelayedTester:
+            def test(self, provider, *, candidate_credential=None) -> ConnectionResult:
+                events.append("probe")
+                return ConnectionResult(ConnectionState.READY, "Connection successful")
+
+        output, redraws = EventOutput(), []
+        session = _SetupSession(
+            {"local": ProviderStatus(local, "not_required")},
+            scope=_SetupScope.provider("local"),
+            redraw=lambda: redraws.append("redraw"),
+        )
+        outcome = _test_flow(
+            local,
+            [local],
+            session,
+            self._store(),
+            DelayedTester(),
+            output,
+            lambda _prompt, answers=iter(["1", "3"]): next(answers),
+        )
+
+        self.assertEqual("exit", outcome)
+        self.assertEqual(
+            [
+                "render_waiting", "probe", "render_result",
+                "render_waiting", "probe", "render_result",
+            ],
+            events,
+        )
+        self.assertEqual(2, sum("Testing connection..." in fragment for fragment in output.fragments))
+        self.assertEqual(2, output.text.count("✓ Connection successful"))
+        self.assertEqual(["redraw", "redraw", "redraw"], redraws)
+        self.assertIn("2. Back to provider", output.text)
+        self.assertIn("3. Exit", output.text)
+        self.assertNotIn("Test another provider", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+
+    def test_connection_spinner_flushes_header_and_first_frame_before_a_blocked_probe(self) -> None:
+        """A probe starts only after an explicitly flushed, live waiting state."""
+        import queue
+
+        result, _ = _load_validated(self.config)
+        local = next(item for item in result.providers if item.provider_id == "local")
+        frames: queue.Queue[str] = queue.Queue()
+        events: list[str] = []
+        release_probe = threading.Event()
+        case = self
+
+        class RecordingOutput(_Output):
+            def write_line(self, text: str) -> None:
+                super().write_line(text)
+                events.append(f"line:{text}")
+
+            def write(self, text: str) -> None:
+                super().write(text)
+                events.append(f"write:{text}")
+                if text.startswith("\r") and "Testing connection..." in text:
+                    frames.put(text)
+
+            def flush(self) -> None:
+                super().flush()
+                events.append("flush")
+
+        class BlockedTester:
+            def test(self, provider, *, candidate_credential=None) -> ConnectionResult:
+                events.append("probe")
+                case.assertLess(events.index(f"line:{local.provider_id}"), events.index("probe"))
+                first_frame = frames.get(timeout=1)
+                case.assertIn("Testing connection...", first_frame)
+                first_frame_index = events.index(f"write:{first_frame}")
+                case.assertEqual("flush", events[first_frame_index - 1])
+                case.assertEqual("flush", events[first_frame_index + 1])
+                second_frame = frames.get(timeout=1)
+                case.assertNotEqual(first_frame, second_frame)
+                case.assertTrue(release_probe.wait(timeout=1))
+                return ConnectionResult(ConnectionState.READY, "Connection successful")
+
+        output = RecordingOutput()
+        release_probe.set()
+        outcome = _test_flow(
+            local, [local],
+            _SetupSession({"local": ProviderStatus(local, "not_required")}, scope=_SetupScope.provider("local")),
+            self._store(), BlockedTester(), output, lambda _prompt: "3",
+        )
+
+        self.assertEqual("exit", outcome)
+        self.assertGreaterEqual(output.flush_count, 3)
+        self.assertTrue(any(fragment.startswith("\r") and fragment.strip("\r ") == "" for fragment in output.fragments))
+
+    def test_connection_spinner_uses_ascii_when_the_output_encoding_cannot_render_braille(self) -> None:
+        """Terminal compatibility changes glyphs, never the probe or presentation flow."""
+        output = _Output()
+        output.encoding = "ascii"  # type: ignore[attr-defined]
+
+        with _ConnectionSpinner(output):
+            pass
+
+        self.assertIn("\r| Testing connection...", output.fragments)
+
+    def test_connection_spinner_stops_after_a_failed_probe(self) -> None:
+        """Failure erases the fixed spinner line before rendering the result."""
+        result, _ = _load_validated(self.config)
+        local = next(item for item in result.providers if item.provider_id == "local")
+        output = _Output()
+
+        outcome = _test_flow(
+            local, [local],
+            _SetupSession({"local": ProviderStatus(local, "not_required")}, scope=_SetupScope.provider("local")),
+            self._store(), _Tester(ConnectionResult(ConnectionState.FAILED, "Connection failed")), output,
+            lambda _prompt: "3",
+        )
+
+        self.assertEqual("exit", outcome)
+        erase = next(index for index, fragment in enumerate(output.fragments) if fragment.startswith("\r") and fragment.strip("\r ") == "")
+        self.assertTrue(any(line == "✗ Connection failed" for line in output.lines))
+        self.assertGreater(output.flush_count, erase)
+
+    def test_connection_spinner_stops_when_the_provider_raises(self) -> None:
+        """A provider exception cannot leave the presentation worker running."""
+        result, _ = _load_validated(self.config)
+        local = next(item for item in result.providers if item.provider_id == "local")
+        output = _Output()
+
+        class RaisingTester:
+            def test(self, provider, *, candidate_credential=None) -> ConnectionResult:
+                raise RuntimeError("safe test exception")
+
+        with self.assertRaisesRegex(RuntimeError, "safe test exception"):
+            _test_flow(
+                local, [local],
+                _SetupSession({"local": ProviderStatus(local, "not_required")}),
+                self._store(), RaisingTester(), output, lambda _prompt: "3",
+            )
+
+        self.assertTrue(any(fragment.startswith("\r") and fragment.strip("\r ") == "" for fragment in output.fragments))
+        self.assertFalse(any(thread.name == "guardrail-connection-spinner" and thread.is_alive() for thread in threading.enumerate()))
+
+    def test_connection_spinner_stops_when_the_probe_is_interrupted(self) -> None:
+        """Ctrl+C follows the same worker cleanup path as provider errors."""
+        result, _ = _load_validated(self.config)
+        local = next(item for item in result.providers if item.provider_id == "local")
+        output = _Output()
+
+        class InterruptedTester:
+            def test(self, provider, *, candidate_credential=None) -> ConnectionResult:
+                raise KeyboardInterrupt
+
+        with self.assertRaises(KeyboardInterrupt):
+            _test_flow(
+                local, [local],
+                _SetupSession({"local": ProviderStatus(local, "not_required")}),
+                self._store(), InterruptedTester(), output, lambda _prompt: "3",
+            )
+
+        self.assertTrue(any(fragment.startswith("\r") and fragment.strip("\r ") == "" for fragment in output.fragments))
+        self.assertFalse(any(thread.name == "guardrail-connection-spinner" and thread.is_alive() for thread in threading.enumerate()))
+
+    def test_test_again_starts_a_second_spinner_worker_before_the_second_probe(self) -> None:
+        """Retry uses the same waiting lifecycle rather than a separate path."""
+        import queue
+
+        result, _ = _load_validated(self.config)
+        local = next(item for item in result.providers if item.provider_id == "local")
+        frames: queue.Queue[str] = queue.Queue()
+        output = _Output()
+        case = self
+
+        original_write = output.write
+
+        def capture_frame(text: str) -> None:
+            original_write(text)
+            if text.startswith("\r") and "Testing connection..." in text:
+                frames.put(text)
+
+        output.write = capture_frame  # type: ignore[method-assign]
+
+        class RetryingTester:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def test(self, provider, *, candidate_credential=None) -> ConnectionResult:
+                self.calls += 1
+                first = frames.get(timeout=1)
+                second = frames.get(timeout=1)
+                case.assertNotEqual(first, second)
+                return ConnectionResult(ConnectionState.READY, "Connection successful")
+
+        tester = RetryingTester()
+        outcome = _test_flow(
+            local, [local],
+            _SetupSession({"local": ProviderStatus(local, "not_required")}, scope=_SetupScope.provider("local")),
+            self._store(), tester, output, lambda _prompt, choices=iter(["1", "3"]): next(choices),
+        )
+
+        self.assertEqual("exit", outcome)
+        self.assertEqual(2, tester.calls)
+        self.assertEqual(2, sum(fragment.startswith("\r") and fragment.strip("\r ") == "" for fragment in output.fragments))
+
+    def test_global_test_waiting_screen_keeps_global_result_navigation(self) -> None:
+        """Waiting presentation must not alter the global connection-test menu."""
+        result, _ = _load_validated(self.config)
+        local = next(item for item in result.providers if item.provider_id == "local")
+        events: list[str] = []
+
+        class EventOutput(_Output):
+            def write_line(self, text: str) -> None:
+                super().write_line(text)
+                if text == "✗ Connection failed":
+                    events.append("render_result")
+
+            def write(self, text: str) -> None:
+                super().write(text)
+                if text.startswith("\r") and "Testing connection..." in text:
+                    events.append("render_waiting")
+
+        class FailedTester:
+            def test(self, provider, *, candidate_credential=None) -> ConnectionResult:
+                events.append("probe")
+                return ConnectionResult(ConnectionState.FAILED, "Connection failed")
+
+        output = EventOutput()
+        outcome = _test_flow(
+            local, [local], _SetupSession({"local": ProviderStatus(local, "not_required")}),
+            self._store(), FailedTester(), output, lambda _prompt: "3",
+        )
+
+        self.assertEqual("dashboard", outcome)
+        self.assertEqual(["render_waiting", "probe", "render_result"], events)
+        self.assertIn("1. Test again", output.text)
+        self.assertIn("2. Test another provider", output.text)
+        self.assertIn("3. Back to main menu", output.text)
+        self.assertNotIn("Back to provider", output.text)
+        self.assertNotIn("Exit", output.text)
+
+    def test_provider_test_failure_keeps_scoped_navigation_and_hides_credential(self) -> None:
+        """A failed API-key probe keeps the provider menu and never renders its key."""
+        result, _ = _load_validated(self.config)
+        cloud = next(item for item in result.providers if item.provider_id == "cloud")
+        secret = "queued-test-only-credential"
+        store = self._store()
+        store.set(cloud.provider_id, secret)
+        candidates: list[str | None] = []
+
+        class FailedTester:
+            def test(self, provider, *, candidate_credential=None) -> ConnectionResult:
+                candidates.append(candidate_credential)
+                return ConnectionResult(ConnectionState.FAILED, "Connection failed")
+
+        output = _Output()
+        outcome = _test_flow(
+            cloud,
+            [cloud],
+            _SetupSession(
+                {"cloud": ProviderStatus(cloud, "configured")},
+                scope=_SetupScope.provider("cloud"),
+            ),
+            store,
+            FailedTester(),
+            output,
+            lambda _prompt: "2",
+        )
+
+        self.assertEqual("provider", outcome)
+        self.assertEqual([secret], candidates)
+        self.assertIn("✗ Connection failed", output.text)
+        self.assertIn("2. Back to provider", output.text)
+        self.assertIn("3. Exit", output.text)
+        self.assertNotIn("Test another provider", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn(secret, output.text)
+        self.assertNotIn(secret, "".join(output.fragments))
+
+    def test_windows_pending_input_is_discarded_only_at_the_result_transition(self) -> None:
+        """Keys entered during a blocking probe cannot select a result-menu action."""
+        terminal_input = _TtyStream()
+        keyboard = mock.Mock()
+        keyboard.kbhit.side_effect = [True, True, False]
+        keyboard.getwch.side_effect = ["7", "\r"]
+
+        with mock.patch("app.cli.sys.stdin", terminal_input), \
+             mock.patch("app.cli.os.name", "nt"), \
+             mock.patch.dict("sys.modules", {"msvcrt": keyboard}):
+            _discard_pending_terminal_input()
+
+        self.assertEqual([mock.call(), mock.call()], keyboard.getwch.call_args_list)
+
+    def test_posix_pending_input_flushes_only_a_tty_queue(self) -> None:
+        """POSIX uses the terminal input queue only after a completed probe."""
+        terminal_input = mock.Mock()
+        terminal_input.isatty.return_value = True
+        terminal_input.fileno.return_value = 42
+        terminal_api = mock.Mock()
+        terminal_api.TCIFLUSH = 7
+
+        with mock.patch("app.cli.sys.stdin", terminal_input), \
+             mock.patch("app.cli.os.name", "posix"), \
+             mock.patch.dict("sys.modules", {"termios": terminal_api}):
+            _discard_pending_terminal_input()
+
+        terminal_api.tcflush.assert_called_once_with(42, 7)
 
     def test_test_result_dashboard_back_propagates_to_provider_details_parent(self) -> None:
         result, _ = _load_validated(self.config)
@@ -782,7 +1400,7 @@ class SetupStateMachineTests(unittest.TestCase):
         self.assertEqual(1, output.text.count("1. local"))
         self.assertIn("Invalid selection. Please choose 1 or 2.", output.text)
 
-    def test_nvidia_credential_shortcut_tests_before_persisting_then_rescans_once(self) -> None:
+    def test_nvidia_credential_shortcut_tests_before_persisting_then_refreshes_selected_provider(self) -> None:
         self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
         output, store = _Output(), self._store()
         secret = "candidate-only-secret"
@@ -793,19 +1411,20 @@ class SetupStateMachineTests(unittest.TestCase):
             secret_prompt=_Prompt(secret),
             connection_tester=tester,
             output=output,
-            input_reader=lambda _prompt, answers=iter(["2", "4"]): next(answers),
+            input_reader=lambda _prompt, answers=iter(["2", "3"]): next(answers),
         )
         self.assertEqual(0, code)
         self.assertEqual([("nvidia-nim", secret)], tester.calls)
         self.assertEqual(secret, store.get("nvidia-nim"))
         self.assertNotIn(secret, output.text)
-        self.assertEqual(1, output.text.count("Ready:"))
+        self.assertEqual(0, output.text.count("Ready:"))
+        self.assertIn("Credential: Configured", output.text.rsplit("Provider Details", maxsplit=1)[1])
 
     def test_failed_reconfigure_preserves_old_credential(self) -> None:
         store, output = self._store(), _Output()
         store.set("cloud", "old-valid-secret")
         tester = _Tester(ConnectionResult(ConnectionState.FAILED, "Connection failed (safe)"))
-        answers = iter(["3", "4"])
+        answers = iter(["3", "3"])
         code = main(
             ["setup", "--provider", "cloud", "--reconfigure"],
             credential_store=store,
@@ -816,7 +1435,7 @@ class SetupStateMachineTests(unittest.TestCase):
         )
         self.assertEqual(0, code)
         self.assertEqual("old-valid-secret", store.get("cloud"))
-        self.assertEqual(1, output.text.count("Ready:"))
+        self.assertEqual(0, output.text.count("Ready:"))
         self.assertNotIn("replacement-secret", output.text)
 
     def test_failed_candidate_can_retry_without_persisting_the_first_value(self) -> None:
@@ -825,7 +1444,7 @@ class SetupStateMachineTests(unittest.TestCase):
             ConnectionResult(ConnectionState.FAILED, "Connection failed"),
             ConnectionResult(ConnectionState.READY, "Connection successful"),
         )
-        answers = iter(["1", "2", "4"])
+        answers = iter(["1", "2", "3"])
         main(
             ["setup", "--provider", "cloud", "--credential"],
             credential_store=store,
@@ -840,9 +1459,9 @@ class SetupStateMachineTests(unittest.TestCase):
 
     def test_provider_menu_reflects_missing_state(self) -> None:
         output = _Output()
-        answers = iter(["2", "4"])
+        answers = iter(["2"])
         main(["setup", "--provider", "cloud"], credential_store=self._store(), output=output, input_reader=lambda _prompt: next(answers))
-        self.assertIn("Status: Missing credential", output.text)
+        self.assertIn("Credential: Missing", output.text)
         self.assertIn("1. Configure credential", output.text)
         self.assertNotIn("Test connection", output.text)
 
@@ -930,8 +1549,56 @@ class SetupStateMachineTests(unittest.TestCase):
         output = _Output()
         code = main(["setup", "--provider", "absent"], credential_store=self._store(), output=output, input_reader=lambda _prompt: "3")
         self.assertEqual(3, code)
-        self.assertIn("Provider 'absent' is not configured.", output.text)
+        self.assertEqual("GuardrailHub: unknown provider 'absent'.", output.lines[0])
+        self.assertIn("Available providers:", output.text)
+        self.assertIn("- local", output.text)
+        self.assertIn("- cloud", output.text)
+        self.assertIn("- disabled", output.text)
         self.assertIn("guardrail-hub config apply <llm.yaml>", output.text)
+
+    def test_unknown_provider_shortcuts_reject_before_provisioning_resolution(self) -> None:
+        first_lines: list[str] = []
+        for shortcut in ([], ["--credential"], ["--reconfigure"]):
+            with self.subTest(shortcut=shortcut):
+                output = _Output()
+                prompt = _Prompt("must-not-be-read")
+                tester = _Tester(ConnectionResult(ConnectionState.READY))
+                with mock.patch("app.cli._resolve_store", return_value=(self._store(), False, False)) as resolve:
+                    code = main(
+                        ["setup", "--provider", "nvidia-ni", *shortcut],
+                        secret_prompt=prompt,
+                        connection_tester=tester,
+                        output=output,
+                        input_reader=lambda _prompt: "4",
+                    )
+
+                self.assertEqual(3, code)
+                resolve.assert_not_called()
+                self.assertEqual(0, prompt.calls)
+                self.assertEqual([], tester.calls)
+                first_lines.append(output.lines[0])
+                self.assertEqual("GuardrailHub: unknown provider 'nvidia-ni'.", output.lines[0])
+                self.assertIn("Available providers:", output.text)
+                self.assertIn("local", output.text)
+                self.assertIn("cloud", output.text)
+                self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
+        self.assertEqual(
+            ["GuardrailHub: unknown provider 'nvidia-ni'."] * 3,
+            first_lines,
+        )
+
+    def test_known_disabled_provider_is_not_unknown(self) -> None:
+        output = _Output()
+        code = main(
+            ["setup", "--provider", "disabled"],
+            credential_store=self._store(),
+            output=output,
+            input_reader=lambda _prompt: "1",
+        )
+
+        self.assertEqual(0, code)
+        self.assertNotIn("is not configured", output.text)
+        self.assertIn("disabled", output.text)
 
     def test_missing_provider_menu_never_forces_configuration(self) -> None:
         output = _Output()
@@ -1048,14 +1715,16 @@ class SetupStateMachineTests(unittest.TestCase):
                 ["setup", "--provider", "cloud", "--credential"],
                 secret_prompt=prompt,
                 output=output,
-                input_reader=lambda _prompt, answers=iter(["2", "3"]): next(answers),
+                input_reader=lambda _prompt, answers=iter(["1", "1"]): next(answers),
             )
 
         self.assertEqual(0, code)
         self.assertEqual(0, prompt.calls)
-        self.assertIn("Status: Missing credential", output.text)
+        self.assertIn("Credential: Missing", output.text)
         self.assertIn("Credential changes are unavailable", output.text)
-        self.assertIn("Back to main menu", output.text)
+        self.assertIn("1. Exit", output.text.rsplit("Provider Details", maxsplit=1)[1])
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
         self.assertIn("read-only runtime context", output.text)
 
     def test_dynamic_read_only_menu_reports_its_rendered_range(self) -> None:
@@ -1094,6 +1763,8 @@ class SetupStateMachineTests(unittest.TestCase):
         self.assertIn("cd mcp-server", output.text)
         self.assertIn("uv run guardrail-hub setup --provider nvidia-nim", output.text)
         self.assertIn("Docker Compose credential provisioning", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
 
     def test_read_only_reconfigure_shortcut_explains_host_provisioning(self) -> None:
         self.config.write_text(_CONFIG.replace("id: cloud", "id: nvidia-nim"), encoding="utf-8")
@@ -1112,6 +1783,8 @@ class SetupStateMachineTests(unittest.TestCase):
         self.assertEqual(0, prompt.calls)
         self.assertIn("running MCP container", output.text)
         self.assertIn("uv run guardrail-hub setup --provider nvidia-nim", output.text)
+        self.assertNotIn("Back to main menu", output.text)
+        self.assertNotIn("Guardrail Hub — LLM Setup", output.text)
 
     def test_credential_shortcut_rejects_ineligible_provider_states_without_prompting(self) -> None:
         self.config.write_text(_CONFIG + _AWS_PROVIDER, encoding="utf-8")
@@ -1230,14 +1903,14 @@ class SetupStateMachineTests(unittest.TestCase):
 
     def test_retry_menu_retries_invalid_input(self) -> None:
         output = _Output()
-        answers = iter(["wrong", "9", "3", "4"])
+        answers = iter(["wrong", "9", "4"])
         main(
             ["setup", "--provider", "cloud", "--credential"],
             credential_store=self._store(), secret_prompt=_Prompt("candidate-only-secret"),
             connection_tester=_Tester(ConnectionResult(ConnectionState.FAILED, "Connection failed")),
             output=output, input_reader=lambda _prompt: next(answers),
         )
-        self.assertEqual(2, output.text.count("Invalid selection. Please choose 1, 2, or 3."))
+        self.assertEqual(2, output.text.count("Invalid selection. Please choose 1, 2, 3, or 4."))
 
     def test_environment_choice_retries_invalid_input(self) -> None:
         from app.intelligence.setup.compose_host import ComposeHostProject
@@ -1272,14 +1945,14 @@ class SetupStateMachineTests(unittest.TestCase):
 
     def test_success_menu_retries_invalid_input(self) -> None:
         output = _Output()
-        answers = iter(["wrong", "9", "2", "4"])
+        answers = iter(["wrong", "9", "3"])
         main(
             ["setup", "--provider", "cloud", "--credential"],
             credential_store=self._store(), secret_prompt=_Prompt("candidate-only-secret"),
             connection_tester=_Tester(ConnectionResult(ConnectionState.READY, "Connection successful")),
             output=output, input_reader=lambda _prompt: next(answers),
         )
-        self.assertEqual(2, output.text.count("Invalid selection. Please choose 1 or 2."))
+        self.assertEqual(2, output.text.count("Invalid selection. Please choose 1, 2, or 3."))
 
     def test_keyboard_interrupt_cancels_setup_without_traceback(self) -> None:
         output = _Output()
@@ -1366,7 +2039,7 @@ class SetupStateMachineTests(unittest.TestCase):
         self.assertEqual(3, code)
         self.assertIn("secure credential entry requires an interactive terminal", output.text)
 
-    def test_backend_inspection_failure_is_safe_setup_error(self) -> None:
+    def test_backend_inspection_failure_is_a_safe_distinct_dashboard_state(self) -> None:
         class BrokenBackend:
             def get(self, provider_id: str) -> str:
                 raise CredentialBackendError(provider_id, "backend unavailable")
@@ -1376,9 +2049,11 @@ class SetupStateMachineTests(unittest.TestCase):
 
         output = _Output()
         code = main(["setup"], credential_store=CredentialStore(BrokenBackend()), output=output, input_reader=lambda _prompt: "3")
-        self.assertEqual(3, code)
-        self.assertIn("credential inspection failed (CredentialBackendError)", output.text)
+        self.assertEqual(0, code)
+        self.assertIn("Credential inspection unavailable", output.text)
+        self.assertNotIn("Missing credential", output.text)
         self.assertNotIn("backend unavailable", output.text)
+
 
 class ConfigCommandTests(unittest.TestCase):
     def setUp(self) -> None:

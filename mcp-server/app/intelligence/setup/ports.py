@@ -57,6 +57,14 @@ class OutputWriter(Protocol):
         """Write a single line of user-facing output."""
         ...
 
+    def write(self, text: str) -> None:
+        """Write terminal presentation without adding a newline."""
+        ...
+
+    def flush(self) -> None:
+        """Make already-rendered terminal presentation visible immediately."""
+        ...
+
 
 __all__ = [
     "AwsCredentialDetector",

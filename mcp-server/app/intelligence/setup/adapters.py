@@ -199,9 +199,24 @@ class StreamOutputWriter(OutputWriter):
 
     def write_line(self, text: str) -> None:
         """Write a single line followed by a newline, then flush."""
+        self.write(text + "\n")
+        self.flush()
+
+    def write(self, text: str) -> None:
+        """Write terminal presentation without imposing line structure."""
         stream = self._stream if self._stream is not None else sys.stdout
-        stream.write(text + "\n")
+        stream.write(text)
+
+    def flush(self) -> None:
+        """Force terminal presentation through any stdout buffering layer."""
+        stream = self._stream if self._stream is not None else sys.stdout
         stream.flush()
+
+    @property
+    def encoding(self) -> str | None:
+        """Expose the destination encoding so progress UI can choose safe glyphs."""
+        stream = self._stream if self._stream is not None else sys.stdout
+        return stream.encoding
 
 
 class Boto3AwsCredentialDetector(AwsCredentialDetector):
