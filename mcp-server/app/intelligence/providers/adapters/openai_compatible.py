@@ -212,9 +212,9 @@ class OpenAICompatibleAdapter(
         client: httpx.AsyncClient | None = getattr(self, "_client", None)
         if client is not None:
             try:
-                aclose_coro = client.aclose
-                if asyncio.iscoroutine(aclose_coro):
-                    await aclose_coro
+                close_result = client.aclose()
+                if asyncio.iscoroutine(close_result):
+                    await close_result
             except AttributeError:
                 # _client is None or missing aclose; skip.
                 pass
