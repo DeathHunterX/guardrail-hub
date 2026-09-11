@@ -570,36 +570,20 @@ class TestBedrockAdapterLifecycle(unittest.IsolatedAsyncioTestCase):
     def tearDown(self):
         _clear_bedrock_env()
 
-    def test_initialize_stores_credentials(self):
-        adapter = BedrockAdapter(_make_record())
-        adapter.initialize()
-        self.assertEqual(adapter._region, "us-east-1")
-        self.assertEqual(adapter._access_key, "AKIAIOSFODNN7EXAMPLE")
-        self.assertEqual(adapter._secret_key, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+    def test_initialize_allows_sdk_chain_without_static_environment_keys(self):
+        _clear_bedrock_env()
+        os.environ["AWS_REGION"] = "us-east-1"
 
-    def test_initialize_stores_session_token(self):
-        _set_bedrock_env(session_token="session-token-xyz")
         adapter = BedrockAdapter(_make_record())
         adapter.initialize()
-        self.assertEqual(adapter._session_token, "session-token-xyz")
+
+        self.assertEqual(adapter._region, "us-east-1")
 
     def test_initialize_raises_when_region_missing(self):
         _clear_bedrock_env()
         with self.assertRaises(LLMConfigurationError) as ctx:
             BedrockAdapter(_make_record()).initialize()
         self.assertIn("AWS_REGION", str(ctx.exception))
-
-    def test_initialize_raises_when_access_key_missing(self):
-        os.environ.pop("AWS_ACCESS_KEY_ID")
-        with self.assertRaises(LLMConfigurationError) as ctx:
-            BedrockAdapter(_make_record()).initialize()
-        self.assertIn("AWS_ACCESS_KEY_ID", str(ctx.exception))
-
-    def test_initialize_raises_when_secret_missing(self):
-        os.environ.pop("AWS_SECRET_ACCESS_KEY")
-        with self.assertRaises(LLMConfigurationError) as ctx:
-            BedrockAdapter(_make_record()).initialize()
-        self.assertIn("AWS_SECRET_ACCESS_KEY", str(ctx.exception))
 
     def test_initialize_raises_on_invalid_region_format(self):
         os.environ["AWS_REGION"] = "not--a--valid--region!!"
@@ -627,6 +611,23 @@ class TestBedrockAdapterLifecycle(unittest.IsolatedAsyncioTestCase):
         mock_client = MagicMock()
         object.__setattr__(adapter, "_client", mock_client)
         await adapter.start()
+        self.assertTrue(adapter.is_started)
+
+    async def test_start_delegates_credential_resolution_to_sdk_chain(self):
+        _clear_bedrock_env()
+        os.environ["AWS_REGION"] = "us-east-1"
+        adapter = BedrockAdapter(_make_record())
+        adapter.initialize()
+        session = MagicMock()
+        session.client.return_value = MagicMock()
+
+        with patch(
+            "app.intelligence.providers.adapters.bedrock.boto3.Session",
+            return_value=session,
+        ) as session_factory:
+            await adapter.start()
+
+        session_factory.assert_called_once_with(region_name="us-east-1")
         self.assertTrue(adapter.is_started)
 
     async def test_close_sets_started_false(self):

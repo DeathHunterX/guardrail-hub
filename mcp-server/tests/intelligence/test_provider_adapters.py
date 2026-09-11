@@ -566,15 +566,12 @@ def _make_bedrock_adapter(region: str = "us-east-1") -> BedrockAdapter:
 # ---------------------------------------------------------------------------
 
 class TestBedrockAdapterInitialize(unittest.TestCase):
-    """initialize() resolves AWS credentials and region from the environment."""
+    """initialize() validates region while the AWS SDK owns credentials."""
 
     def setUp(self):
         _clear_bedrock_env()
 
     def test_resolves_region_from_AWS_REGION(self):
-        # Credentials must be set alongside the region being tested.
-        os.environ["AWS_ACCESS_KEY_ID"] = "AKIAIOSFODNN7EXAMPLE"
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "secret123"
         os.environ["AWS_REGION"] = "us-west-2"
         adapter = BedrockAdapter(
             _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
@@ -583,8 +580,6 @@ class TestBedrockAdapterInitialize(unittest.TestCase):
         self.assertEqual(adapter._region, "us-west-2")
 
     def test_resolves_region_from_AWS_DEFAULT_REGION(self):
-        os.environ["AWS_ACCESS_KEY_ID"] = "AKIAIOSFODNN7EXAMPLE"
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "secret123"
         os.environ["AWS_DEFAULT_REGION"] = "eu-west-1"
         adapter = BedrockAdapter(
             _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
@@ -593,9 +588,6 @@ class TestBedrockAdapterInitialize(unittest.TestCase):
         self.assertEqual(adapter._region, "eu-west-1")
 
     def test_raises_when_region_missing(self):
-        # Only credentials are set; region is absent to exercise the right check.
-        os.environ["AWS_ACCESS_KEY_ID"] = "AKIAIOSFODNN7EXAMPLE"
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "secret123"
         adapter = BedrockAdapter(
             _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
         )
@@ -604,8 +596,6 @@ class TestBedrockAdapterInitialize(unittest.TestCase):
         self.assertIn("AWS_REGION", str(ctx.exception))
 
     def test_constructs_endpoint_from_region(self):
-        os.environ["AWS_ACCESS_KEY_ID"] = "AKIAIOSFODNN7EXAMPLE"
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "secret123"
         os.environ["AWS_REGION"] = "us-west-2"
         adapter = BedrockAdapter(
             _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
@@ -617,8 +607,6 @@ class TestBedrockAdapterInitialize(unittest.TestCase):
         )
 
     def test_raises_on_invalid_region_format(self):
-        os.environ["AWS_ACCESS_KEY_ID"] = "AKIAIOSFODNN7EXAMPLE"
-        os.environ["AWS_SECRET_ACCESS_KEY"] = "secret123"
         os.environ["AWS_REGION"] = "not a valid region with spaces!!!"
         adapter = BedrockAdapter(
             _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
@@ -627,51 +615,13 @@ class TestBedrockAdapterInitialize(unittest.TestCase):
             adapter.initialize()
         self.assertIn("does not look like", str(ctx.exception))
 
-    def test_resolves_access_key(self):
-        _set_bedrock_env()
+    def test_does_not_require_static_environment_credentials(self):
+        os.environ["AWS_REGION"] = "us-east-1"
         adapter = BedrockAdapter(
             _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
         )
         adapter.initialize()
-        self.assertEqual(adapter._access_key, "AKIAIOSFODNN7EXAMPLE")
-
-    def test_raises_when_access_key_missing(self):
-        # Region must be set first so we pass the region check.
-        _set_bedrock_env()
-        os.environ.pop("AWS_ACCESS_KEY_ID", None)
-        adapter = BedrockAdapter(
-            _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
-        )
-        with self.assertRaises(LLMConfigurationError) as ctx:
-            adapter.initialize()
-        self.assertIn("AWS_ACCESS_KEY_ID", str(ctx.exception))
-
-    def test_raises_when_secret_key_missing(self):
-        _set_bedrock_env()
-        os.environ.pop("AWS_SECRET_ACCESS_KEY", None)
-        adapter = BedrockAdapter(
-            _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
-        )
-        with self.assertRaises(LLMConfigurationError) as ctx:
-            adapter.initialize()
-        self.assertIn("AWS_SECRET_ACCESS_KEY", str(ctx.exception))
-
-    def test_stores_session_token_when_present(self):
-        _set_bedrock_env()
-        os.environ["AWS_SESSION_TOKEN"] = "session-token-value"
-        adapter = BedrockAdapter(
-            _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
-        )
-        adapter.initialize()
-        self.assertEqual(adapter._session_token, "session-token-value")
-
-    def test_session_token_none_when_not_set(self):
-        _set_bedrock_env()
-        adapter = BedrockAdapter(
-            _record(provider_type=ProviderType.BEDROCK, deployment=DeploymentType.CLOUD)
-        )
-        adapter.initialize()
-        self.assertIsNone(adapter._session_token)
+        self.assertEqual(adapter._region, "us-east-1")
 
     def tearDown(self):
         _clear_bedrock_env()

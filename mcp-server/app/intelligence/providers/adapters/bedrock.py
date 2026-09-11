@@ -3,8 +3,9 @@
 This adapter implements the :class:`BaseProviderRuntime` lifecycle and
 exposes chat and embedding capabilities through the AWS Bedrock runtime.
 
-Deployment: cloud. The adapter resolves AWS credentials and region from
-environment variables following the standard AWS SDK credential chain.
+Deployment: cloud. The adapter delegates credential resolution to the standard
+AWS SDK credential chain and resolves the Bedrock region from AWS region
+configuration.
 
 **Environment variables**
 
@@ -77,9 +78,9 @@ class BedrockAdapter(
 ):
     """AWS Bedrock inference provider.
 
-    Connects to the Bedrock runtime using AWS credentials from environment
-    variables. Supports chat completion (Anthropic Claude models) and
-    embeddings (Amazon Titan, Cohere).
+    Connects to the Bedrock runtime using the AWS SDK credential chain. Supports
+    chat completion (Anthropic Claude models) and embeddings (Amazon Titan,
+    Cohere).
     """
 
     # -------------------------------------------------------------------------
@@ -106,10 +107,10 @@ class BedrockAdapter(
     # -------------------------------------------------------------------------
 
     def initialize(self) -> None:
-        """Resolve AWS credentials and region from the environment.
+        """Resolve and validate the AWS region.
 
         Raises:
-            LLMConfigurationError: If ``AWS_REGION`` or credentials are missing.
+            LLMConfigurationError: If the AWS region is missing or invalid.
         """
         import os
 
@@ -136,26 +137,6 @@ class BedrockAdapter(
             "_endpoint",
             _BEDROCK_ENDPOINT_TEMPLATE.format(region=region),
         )
-
-        # Credentials.
-        access_key = os.environ.get("AWS_ACCESS_KEY_ID")
-        secret_key = os.environ.get("AWS_SECRET_ACCESS_KEY")
-        session_token = os.environ.get("AWS_SESSION_TOKEN")
-
-        if not access_key or not access_key.strip():
-            raise LLMConfigurationError(
-                f"provider '{self._record.provider_id}': AWS_ACCESS_KEY_ID is not set. "
-                "Set it as an environment variable."
-            )
-        if not secret_key or not secret_key.strip():
-            raise LLMConfigurationError(
-                f"provider '{self._record.provider_id}': AWS_SECRET_ACCESS_KEY is not set. "
-                "Set it as an environment variable."
-            )
-
-        object.__setattr__(self, "_access_key", access_key)
-        object.__setattr__(self, "_secret_key", secret_key)
-        object.__setattr__(self, "_session_token", session_token)
 
     def validate_configuration(self) -> None:
         """Validate the Bedrock provider configuration.
@@ -187,15 +168,7 @@ class BedrockAdapter(
             return
 
         try:
-            session_kwargs: dict[str, Any] = {
-                "aws_access_key_id": self._access_key,
-                "aws_secret_access_key": self._secret_key,
-                "region_name": self._region,
-            }
-            if self._session_token:
-                session_kwargs["aws_session_token"] = self._session_token
-
-            session = boto3.Session(**session_kwargs)
+            session = boto3.Session(region_name=self._region)
             client = session.client(
                 "bedrock-runtime",
                 endpoint_url=_BEDROCK_ENDPOINT_TEMPLATE.format(region=self._region),
