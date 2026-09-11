@@ -89,10 +89,14 @@ class ConnectionConfig:
             (OpenAI, Ollama, OpenAI-compatible). Not used for AWS Bedrock.
         region: AWS region for Bedrock providers. When set, the adapter constructs
             the Bedrock endpoint from the region; base_url is not required.
+        auth_probe_model: Optional non-secret model identifier for providers whose
+            credential must be verified with an authenticated chat operation.
+            Providers that omit it retain their existing connection probe.
     """
 
     base_url: str = ""
     region: Optional[str] = None  # AWS region (Bedrock)
+    auth_probe_model: Optional[str] = None
 
 
 @dataclass(frozen=True, slots=True)

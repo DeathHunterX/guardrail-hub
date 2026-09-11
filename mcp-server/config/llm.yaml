@@ -28,7 +28,8 @@ llm:
       deployment: cloud
       enabled: true
       connection:
-        base_url: https://integrate.api.nvidia.com/v1
+        base_url: https://integrate.api.nvidia.com/
+        auth_probe_model: moonshotai/kimi-k3
       auth:
         type: api_key
         api_key_env: NVIDIA_API_KEY

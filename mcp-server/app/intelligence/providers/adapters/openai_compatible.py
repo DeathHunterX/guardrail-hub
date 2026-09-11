@@ -221,13 +221,29 @@ class OpenAICompatibleAdapter(
         object.__setattr__(self, "_started", False)
 
     async def check_connection(self) -> bool:
-        """Perform a non-generative authenticated OpenAI-compatible probe."""
+        """Probe connectivity, using an authoritative auth operation when opted in."""
         self._check_started()
         try:
-            response = await self._client.get("/v1/models")
+            probe_model = self._record.connection.auth_probe_model
+            if probe_model is not None:
+                response = await self._client.post(
+                    "/v1/chat/completions",
+                    json={
+                        "model": probe_model,
+                        "messages": [{"role": "user", "content": "ping"}],
+                        "max_tokens": 1,
+                        "stream": False,
+                    },
+                )
+            else:
+                response = await self._client.get("/v1/models")
             response.raise_for_status()
+            if probe_model is not None:
+                payload = response.json()
+                choices = payload.get("choices") if isinstance(payload, dict) else None
+                return isinstance(choices, list) and bool(choices)
             return True
-        except httpx.HTTPError:
+        except (httpx.HTTPError, TypeError, ValueError):
             return False
 
     # -------------------------------------------------------------------------

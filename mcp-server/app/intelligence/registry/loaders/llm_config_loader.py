@@ -386,6 +386,14 @@ class LLmConfigLoader:
         region = conn_data.get("region")
         if region is not None and not isinstance(region, str):
             raise TypeError("connection.region must be a string")
+        auth_probe_model = conn_data.get("auth_probe_model")
+        if auth_probe_model is not None:
+            if not isinstance(auth_probe_model, str):
+                raise TypeError("connection.auth_probe_model must be a string")
+            auth_probe_model = auth_probe_model.strip()
+            if not auth_probe_model:
+                raise ValueError("connection.auth_probe_model must not be empty")
+
         # Auth config.
         auth_data = data.get("auth", {})
         if not isinstance(auth_data, dict):
@@ -427,6 +435,7 @@ class LLmConfigLoader:
             deployment=deployment,
             base_url=base_url,
             region=region,
+            auth_probe_model=auth_probe_model,
             auth=AuthConfig(
                 type=auth_type_value,  # may be the sentinel when type is absent
                 api_key_env=api_key_env,
@@ -570,6 +579,18 @@ class LLmConfigLoader:
         if model_errors:
             raise ValueError("; ".join(model_errors))
 
+        if raw.auth_probe_model is not None:
+            usable_chat_models = {
+                model.deployment_name or model.model_id
+                for model in models
+                if Capability.CHAT in model.capabilities
+            }
+            if raw.auth_probe_model not in usable_chat_models:
+                raise ValueError(
+                    "connection.auth_probe_model must identify a declared "
+                    "chat-capable model for this provider"
+                )
+
         # Derive provider capabilities as the union of its models' capabilities.
         # This prevents configuration drift: provider capabilities are NOT
         # independently configured in the YAML — they are derived.
@@ -581,6 +602,7 @@ class LLmConfigLoader:
         connection = ConnectionConfig(
             base_url=raw.base_url,
             region=raw.region,
+            auth_probe_model=raw.auth_probe_model,
         )
 
         provider_record = ProviderRecord(
@@ -640,7 +662,7 @@ def _strict_schema_errors(data: Any) -> list[str]:
             continue
         reject_unknown(
             provider.get("connection"),
-            {"base_url", "region"},
+            {"base_url", "region", "auth_probe_model"},
             f"{location}.connection",
         )
         reject_unknown(provider.get("auth"), {"type", "api_key_env", "auth_header"}, f"{location}.auth")
@@ -690,6 +712,7 @@ class _RawProviderRecord:
     deployment: DeploymentType
     base_url: str
     region: str | None
+    auth_probe_model: str | None
     auth: AuthConfig
     enabled: bool
     priority: int
