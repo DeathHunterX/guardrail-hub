@@ -1,141 +1,60 @@
-"""Tests for the AWS Bedrock adapter.
-
-All tests are isolated from real AWS by injecting fake boto3/botocore/httpx
-modules into sys.modules before any adapter is imported.
-"""
+"""Tests for the AWS Bedrock adapter with outbound SDK calls mocked."""
 
 import json
 import os
-import sys
 import unittest
 from base64 import b64encode
 from unittest.mock import MagicMock, patch
 
-# ---------------------------------------------------------------------------
-# Fake exception classes — must be defined before _inject_all_fakes()
-# ---------------------------------------------------------------------------
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ConnectTimeoutError,
+    DataNotFoundError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+    ResponseStreamingError,
+    UnknownServiceError,
+)
 
-class _FakeClientError(Exception):
-    """Fake botocore ClientError with a .response dict."""
 
-    def __init__(self, response, operation_name):
-        super().__init__(str(response))
-        self.response = response
+class _FakeClientError(ClientError):
+    pass
 
 
-class _FakeEndpointConnectionError(Exception):
+class _FakeEndpointConnectionError(EndpointConnectionError):
     def __init__(self, endpoint_url=None, **kwargs):
-        super().__init__(f"Could not connect to {endpoint_url}")
+        super().__init__(endpoint_url=endpoint_url)
 
 
-class _FakeConnectTimeoutError(Exception):
+class _FakeConnectTimeoutError(ConnectTimeoutError):
     def __init__(self, endpoint_url=None, **kwargs):
-        super().__init__(f"Connect timeout to {endpoint_url}")
+        super().__init__(endpoint_url=endpoint_url)
 
 
-class _FakeReadTimeoutError(Exception):
+class _FakeReadTimeoutError(ReadTimeoutError):
     def __init__(self, endpoint_url=None, **kwargs):
-        super().__init__(f"Read timeout from {endpoint_url}")
+        super().__init__(endpoint_url=endpoint_url)
 
 
-class _FakeResponseStreamingError(Exception):
+class _FakeResponseStreamingError(ResponseStreamingError):
     def __init__(self, **kwargs):
-        super().__init__("Response streaming error")
+        super().__init__(error="response streaming error")
 
 
-class _FakeDataNotFoundError(Exception):
+class _FakeDataNotFoundError(DataNotFoundError):
     def __init__(self, key=None, *args, **kwargs):
-        super().__init__(f"Data not found: {key}")
-        self.key = key
+        super().__init__(data_path=key)
 
 
-class _FakeUnknownServiceError(Exception):
+class _FakeUnknownServiceError(UnknownServiceError):
     def __init__(self, *args, **kwargs):
-        super().__init__("Unknown service")
+        super().__init__(service_name="unknown", known_service_names=[])
 
 
-class _FakeBotoCoreError(Exception):
+class _FakeBotoCoreError(BotoCoreError):
     def __init__(self, *args, **kwargs):
-        super().__init__("BotoCore error")
-
-
-# ---------------------------------------------------------------------------
-# Inject fake modules — must happen before any adapter import
-# ---------------------------------------------------------------------------
-
-def _inject_all_fakes():
-    """Install fake boto3, botocore, and httpx into sys.modules.
-
-    The fake boto3.Session is a real class so that it accepts the kwargs
-    that the adapter passes. botocore must be a real module object (not a
-    MagicMock) so that ``import botocore.exceptions as botocore`` inside the
-    adapter gets the actual fake exception classes, making isinstance() work.
-    """
-    # --- httpx (needed by OllamaAdapter imported in __init__) ---
-    fake_httpx = MagicMock()
-    fake_httpx.AsyncClient = MagicMock
-    fake_httpx.Timeout = type("Timeout", (), {"__init__": lambda s, *a, **k: None})
-    fake_httpx.TimeoutException = type("TimeoutException", (Exception,), {})
-    fake_httpx.ConnectError = type("ConnectError", (Exception,), {})
-    fake_httpx.PoolTimeout = type("PoolTimeout", (Exception,), {})
-    fake_httpx.ProtocolError = type("ProtocolError", (Exception,), {})
-    fake_httpx.HTTPStatusError = type("HTTPStatusError", (Exception,), {})
-    fake_httpx.Response = type("Response", (), {})
-    sys.modules["httpx"] = fake_httpx
-
-    # --- botocore — real module object so isinstance() works inside the adapter ---
-    class _FakeBotocoreExceptions:
-        ClientError = _FakeClientError
-        BotoCoreError = _FakeBotoCoreError
-        EndpointConnectionError = _FakeEndpointConnectionError
-        ConnectTimeoutError = _FakeConnectTimeoutError
-        ReadTimeoutError = _FakeReadTimeoutError
-        ResponseStreamingError = _FakeResponseStreamingError
-        DataNotFoundError = _FakeDataNotFoundError
-        UnknownServiceError = _FakeUnknownServiceError
-
-    class _FakeBotocoreModule:
-        """Fake botocore module: both the module and .exceptions are real objects."""
-        exceptions = _FakeBotocoreExceptions()
-        ClientError = _FakeClientError
-        BotoCoreError = _FakeBotoCoreError
-        EndpointConnectionError = _FakeEndpointConnectionError
-        ConnectTimeoutError = _FakeConnectTimeoutError
-        ReadTimeoutError = _FakeReadTimeoutError
-        ResponseStreamingError = _FakeResponseStreamingError
-        DataNotFoundError = _FakeDataNotFoundError
-        UnknownServiceError = _FakeUnknownServiceError
-
-    fake_botocore = _FakeBotocoreModule()
-    # Both are required so import botocore.exceptions works inside the adapter.
-    sys.modules["botocore"] = fake_botocore
-    sys.modules["botocore.exceptions"] = fake_botocore.exceptions
-
-    # --- boto3 ---
-    # Must be a real class so Session() accepts kwargs.
-    class _FakeBoto3Session:
-        def __init__(self, **kwargs):
-            self._kwargs = kwargs
-
-        def client(self, name, **kw):
-            return _FakeBedrockClient()
-
-    class _FakeBoto3SessionConfig:
-        def __init__(self, **kwargs):
-            pass
-
-    fake_boto3 = MagicMock()
-    fake_boto3.Session = _FakeBoto3Session
-    fake_boto3.__version__ = "1.0.0"
-    fake_boto3.botocore = fake_botocore
-    fake_boto3.session = MagicMock()
-    fake_boto3.session.Config = _FakeBoto3SessionConfig
-    sys.modules["boto3"] = fake_boto3
-    sys.modules["boto3.session"] = fake_boto3.session
-    sys.modules["boto3.session.Config"] = fake_boto3.session.Config
-
-
-_inject_all_fakes()
+        super().__init__()
 
 # ---------------------------------------------------------------------------
 # Imports from the application

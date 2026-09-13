@@ -380,8 +380,12 @@ class HappyPathReadTests(_BackendTestBase):
                 )
 
     def test_custom_secrets_dir_is_used(self) -> None:
-        # The backend reads from whatever directory it was configured with.
-        self.assertIn(self.secrets_dir, repr(self.backend))
+        self._write_secret("custom-provider", TEST_SECRET_DO_NOT_LEAK.encode("utf-8"))
+
+        self.assertEqual(
+            self.backend.get("custom-provider"),
+            TEST_SECRET_DO_NOT_LEAK,
+        )
 
 
 class ProviderIdPathSafetyTests(_BackendTestBase):

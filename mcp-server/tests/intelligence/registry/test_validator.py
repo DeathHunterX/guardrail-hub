@@ -2,7 +2,7 @@
 
 import unittest
 
-from app.intelligence.registry.exceptions import ValidationIssue, ValidationReport
+from app.intelligence.registry.exceptions import ValidationIssue
 from app.intelligence.registry.models.model import ModelRecord
 from app.intelligence.registry.models.provider import (
     AuthConfig,
@@ -116,13 +116,64 @@ class ValidateWithReportTests(unittest.TestCase):
         self.assertGreater(len(report.warnings), 0)
 
 
-class ValidationReportStringTests(unittest.TestCase):
-    """Sanity checks on the report shape."""
+class RegistryValidatorCompatibilityTests(unittest.TestCase):
+    """Preserve the validator result-object contracts from the original suite."""
 
-    def test_empty_report_is_ok(self):
-        report = ValidationReport()
-        self.assertTrue(report.ok)
-        self.assertEqual(report.count, 0)
+    def setUp(self):
+        self.validator = RegistryValidator()
+
+    def test_validate_valid_records(self):
+        result = self.validator.validate([_make_provider()], [_make_model()])
+
+        self.assertTrue(result.valid)
+        self.assertEqual(result.error_count, 0)
+
+    def test_validate_duplicate_provider_id(self):
+        result = self.validator.validate(
+            [_make_provider(provider_id="duplicate"), _make_provider(provider_id="duplicate")],
+            [],
+        )
+
+        self.assertFalse(result.valid)
+        self.assertGreater(result.error_count, 0)
+
+    def test_validate_invalid_priority(self):
+        result = self.validator.validate([_make_provider(priority=-1)], [])
+
+        self.assertFalse(result.valid)
+        self.assertGreater(result.error_count, 0)
+
+    def test_validate_invalid_context_window(self):
+        result = self.validator.validate([], [_make_model(context_window=0)])
+
+        self.assertFalse(result.valid)
+        self.assertGreater(result.error_count, 0)
+
+    def test_validate_model_without_capabilities(self):
+        result = self.validator.validate([], [_make_model(capabilities=frozenset())])
+
+        self.assertFalse(result.valid)
+        self.assertGreater(result.error_count, 0)
+
+    def test_validate_unknown_provider_reference(self):
+        result = self.validator.validate(
+            [_make_provider()],
+            [_make_model(model_id="orphan", provider_id="unknown-provider")],
+        )
+
+        self.assertFalse(result.valid)
+        self.assertTrue(
+            any("unknown provider" in issue.message.lower() for issue in result.errors)
+        )
+
+    def test_warns_on_provider_without_capabilities(self):
+        result = self.validator.validate(
+            [_make_provider(provider_id="no-caps", capabilities=frozenset())],
+            [],
+        )
+
+        self.assertTrue(result.valid)
+        self.assertGreater(result.warning_count, 0)
 
 
 if __name__ == "__main__":

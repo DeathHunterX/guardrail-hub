@@ -1,4 +1,4 @@
-"""Comprehensive tests for Phase 3 provider adapters.
+"""Configuration, lifecycle, and registration contracts for provider adapters.
 
 Tests cover:
 - OllamaAdapter
@@ -12,127 +12,12 @@ For each adapter the test matrix covers:
 4. Lifecycle: start() / close()
 5. register_all_adapters helper
 
-Note: httpx is not installed in the test environment. A fake httpx module is
-injected into sys.modules before adapter imports so that adapter.start() can
-construct an AsyncClient without a real HTTP dependency.
 """
 
 import os
-import sys
 import unittest
-from unittest.mock import MagicMock
-
-# Fake httpx — injected before any adapter import so AsyncClient construction works.
-# Replaces the real httpx module for the entire test suite. The adapter's start()
-# method calls httpx.AsyncClient(...); _FakeAsyncClient accepts all real parameters.
-class _FakeAsyncClient:
-    def __init__(self, **kwargs):
-        self.base_url = kwargs.get("base_url", "")
-        self.headers = kwargs.get("headers", {})
-        self.timeout = kwargs.get("timeout")
-        self._closed = False
-
-    async def post(self, path, **kw):
-        return _FakeResponse(200, {})
-
-    async def aclose(self):
-        self._closed = True
-
-    def stream(self, method, path, **kw):
-        return _FakeStreamContext([])
-
-
-class _FakeResponse:
-    def __init__(self, status_code, json_data):
-        self.status_code = status_code
-        self._json = json_data
-
-    def json(self):
-        return self._json
-
-    def raise_for_status(self):
-        if 400 <= self.status_code < 600:
-            raise Exception(f"HTTP {self.status_code}")
-
-
-class _FakeStreamContext:
-    def __init__(self, lines):
-        self._lines = lines
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-
-_fake_httpx = MagicMock()
-_fake_httpx.AsyncClient = _FakeAsyncClient
-_fake_httpx.Timeout = type("Timeout", (object,), {
-    "__init__": lambda self, *args, **kwargs: None
-})
-_fake_httpx.TimeoutException = type("TimeoutException", (Exception,), {})
-_fake_httpx.ConnectError = type("ConnectError", (Exception,), {})
-_fake_httpx.PoolTimeout = type("PoolTimeout", (Exception,), {})
-_fake_httpx.ProtocolError = type("ProtocolError", (Exception,), {})
-_fake_httpx.HTTPStatusError = type("HTTPStatusError", (Exception,), {})
-sys.modules["httpx"] = _fake_httpx
-
-# --- boto3 / botocore (needed by BedrockAdapter imported above) ---
-class _FakeBoto3Session:
-    def __init__(self, **kwargs): pass
-    def client(self, name, **kw): return MagicMock()
-
-class _FakeBoto3SessionConfig:
-    def __init__(self, **kwargs): pass
-
-class _FakeClientError(Exception):
-    def __init__(self, response, operation_name):
-        super().__init__(str(response))
-        self.response = response
-
-class _FakeBotoCoreError(Exception):
-    def __init__(self, *args, **kwargs): super().__init__("BotoCore error")
-
-class _FakeBotocoreExceptions:
-    ClientError = _FakeClientError
-    BotoCoreError = _FakeBotoCoreError
-    EndpointConnectionError = type("ECE", (Exception,), {})
-    ConnectTimeoutError = type("CTE", (Exception,), {})
-    ReadTimeoutError = type("RTE", (Exception,), {})
-    # These are real botocore.exceptions classes referenced by
-    # BedrockAdapter._translate_boto_error. They must exist on the fake so that
-    # the adapter's isinstance() checks resolve regardless of which test module
-    # last installed the shared sys.modules["botocore.exceptions"] entry.
-    ResponseStreamingError = type("RSE", (Exception,), {})
-    DataNotFoundError = type("DNF", (Exception,), {})
-    UnknownServiceError = type("USE", (Exception,), {})
-
-class _FakeBotocoreModule:
-    exceptions = _FakeBotocoreExceptions()
-    ClientError = _FakeClientError
-    BotoCoreError = _FakeBotoCoreError
-
-_fake_boto3 = MagicMock()
-_fake_boto3.Session = _FakeBoto3Session
-_fake_boto3.__version__ = "1.0.0"
-_fake_boto3.botocore = _FakeBotocoreModule()
-_fake_boto3.session = MagicMock()
-_fake_boto3.session.Config = _FakeBoto3SessionConfig
-sys.modules["boto3"] = _fake_boto3
-sys.modules["botocore"] = _fake_boto3.botocore
-sys.modules["botocore.exceptions"] = _fake_boto3.botocore.exceptions
-sys.modules["boto3.session"] = _fake_boto3.session
-sys.modules["boto3.session.Config"] = _fake_boto3.session.Config
-
 
 from app.intelligence.exceptions import LLMConfigurationError
-from app.intelligence.ports.chat import ChatOptions
-from app.intelligence.ports.embedding import EmbeddingOptions
 from app.intelligence.providers.adapters import (
     BedrockAdapter,
     OllamaAdapter,

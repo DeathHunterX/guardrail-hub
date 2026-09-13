@@ -4,8 +4,7 @@ These tests verify that:
 1. RegistryRuntime correctly loads llm.yaml (not split config)
 2. The catalog is built with correct provider_id normalization
 3. Routing decisions return model_id (not deployment_name)
-4. LLMService propagates deployment_name from ModelRecord → ChatOptions
-5. PriorityStrategy behavior is preserved with the unified config
+4. PriorityStrategy behavior is preserved with the unified config
 """
 
 import os
@@ -13,15 +12,11 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 from app.intelligence.inference.router.router import Router
-from app.intelligence.inference.services.llm_service import LLMService
 from app.intelligence.inference.strategies.priority import PriorityStrategy
 from app.intelligence.credentials.backend_factory import build_provider_env_var_names
-from app.intelligence.ports.chat import ChatMessage, ChatOptions
 from app.intelligence.providers.provider_factory import ProviderFactory
-from app.intelligence.providers.provider_manager import ProviderManager
 from app.intelligence.registry.catalog.catalog import ModelCatalog
 from app.intelligence.registry.loaders.llm_config_loader import LLmConfigLoader
 from app.intelligence.registry.models.model import ModelRecord
@@ -225,8 +220,8 @@ class TestRegistryRuntimeUnifiedConfig(unittest.TestCase):
 class TestRouterWithDeploymentName(unittest.TestCase):
     """Router.route() returns RoutingDecision with model_id (not deployment_name).
 
-    The LLMService is responsible for resolving deployment_name from the
-    ModelRecord and injecting it into ChatOptions.
+    Deployment names are provider metadata; routing remains keyed by the
+    stable logical model ID.
     """
 
     def setUp(self):
@@ -316,119 +311,6 @@ class TestRouterWithDeploymentName(unittest.TestCase):
         model = self.catalog.get_model("mistral")
         self.assertIsNotNone(model)
         self.assertIsNone(model.deployment_name)
-
-
-# ---------------------------------------------------------------------------
-# LLMService deployment_name propagation
-# ---------------------------------------------------------------------------
-
-class TestLLMServiceDeploymentNamePropagation(unittest.IsolatedAsyncioTestCase):
-    """LLMService resolves deployment_name from ModelRecord and passes it to adapters."""
-
-    async def test_chat_propagates_deployment_name_to_adapter(self):
-        catalog = ModelCatalog()
-
-        p_ollama = ProviderRecord(
-            provider_id="ollama",
-            provider_type=ProviderType.OLLAMA,
-            deployment=DeploymentType.SELF_HOSTED,
-            auth=AuthConfig(),
-            connection=ConnectionConfig(base_url="http://localhost:11434"),
-            capabilities=frozenset({Capability.CHAT}),
-        )
-        m_model = ModelRecord(
-            model_id="llama3",
-            provider_id="ollama",
-            model_type=ModelType.CHAT,
-            deployment_name="llama3:latest",
-            capabilities=frozenset({Capability.CHAT}),
-            priority=10,
-        )
-
-        catalog.register_provider(p_ollama)
-        catalog.register_model(m_model)
-        catalog.freeze()
-
-        # Build a mock adapter.
-        mock_provider = MagicMock()
-        mock_provider._check_started = MagicMock()
-        mock_provider.chat = AsyncMock(
-            return_value=MagicMock(
-                content="hello",
-                model="llama3",
-                finish_reason="stop",
-                usage=None,
-            )
-        )
-
-        # Patch ProviderManager to return our mock.
-        pm = ProviderManager(MagicMock(), catalog)
-        pm._providers = {"ollama": mock_provider}
-        pm._initialized = True
-
-        service = LLMService(pm, catalog)
-        response = await service.chat(
-            [ChatMessage(role="user", content="hi")],
-            model="llama3",
-        )
-
-        # Verify chat was called with the correct ChatOptions.
-        call_args = mock_provider.chat.call_args
-        opts = call_args[0][1]  # second positional arg = ChatOptions
-        self.assertIsInstance(opts, ChatOptions)
-        self.assertEqual(opts.model, "llama3")
-        self.assertEqual(opts.deployment_name, "llama3:latest")
-
-    async def test_chat_with_no_deployment_name_in_record(self):
-        catalog = ModelCatalog()
-
-        p_ollama = ProviderRecord(
-            provider_id="ollama",
-            provider_type=ProviderType.OLLAMA,
-            deployment=DeploymentType.SELF_HOSTED,
-            auth=AuthConfig(),
-            connection=ConnectionConfig(base_url="http://localhost:11434"),
-            capabilities=frozenset({Capability.CHAT}),
-        )
-        m_model = ModelRecord(
-            model_id="mistral",
-            provider_id="ollama",
-            model_type=ModelType.CHAT,
-            deployment_name=None,
-            capabilities=frozenset({Capability.CHAT}),
-            priority=10,
-        )
-
-        catalog.register_provider(p_ollama)
-        catalog.register_model(m_model)
-        catalog.freeze()
-
-        mock_provider = MagicMock()
-        mock_provider._check_started = MagicMock()
-        mock_provider.chat = AsyncMock(
-            return_value=MagicMock(
-                content="hello",
-                model="mistral",
-                finish_reason="stop",
-                usage=None,
-            )
-        )
-
-        pm = ProviderManager(MagicMock(), catalog)
-        pm._providers = {"ollama": mock_provider}
-        pm._initialized = True
-
-        service = LLMService(pm, catalog)
-        response = await service.chat(
-            [ChatMessage(role="user", content="hi")],
-            model="mistral",
-        )
-
-        call_args = mock_provider.chat.call_args
-        opts = call_args[0][1]
-        self.assertIsInstance(opts, ChatOptions)
-        self.assertEqual(opts.model, "mistral")
-        self.assertIsNone(opts.deployment_name)
 
 
 # ---------------------------------------------------------------------------

@@ -29,145 +29,16 @@ Proven properties (Phase 3 spec, section "Security Tests"):
 10. OpenAI-compatible providers authenticate with the resolved API key, which
     is wired into the HTTP client's Authorization header.
 
-The HTTP layer (httpx) and AWS SDK (boto3/botocore) are faked before the
-adapters are imported, so the whole lifecycle runs without a network or the
-real SDKs. This mirrors the injection pattern in test_provider_adapters.py.
+Outbound calls are not made; lifecycle assertions use the installed transport
+and SDK packages with test-only credentials.
 """
 
 import dataclasses
 import logging
 import os
 import tempfile
-import sys
 import unittest
 from unittest import mock
-from unittest.mock import MagicMock
-
-# ---------------------------------------------------------------------------
-# Fake httpx — injected before any adapter import so AsyncClient construction
-# works without a real network dependency. _FakeAsyncClient records the headers
-# it is constructed with, which lets the tests assert on the Authorization
-# header wired from the resolved credential.
-# ---------------------------------------------------------------------------
-
-class _FakeAsyncClient:
-    def __init__(self, **kwargs):
-        self.base_url = kwargs.get("base_url", "")
-        self.headers = kwargs.get("headers", {})
-        self.timeout = kwargs.get("timeout")
-        self._closed = False
-
-    async def post(self, path, **kw):
-        return _FakeResponse(200, {})
-
-    async def aclose(self):
-        self._closed = True
-
-    def stream(self, method, path, **kw):
-        return _FakeStreamContext([])
-
-
-class _FakeResponse:
-    def __init__(self, status_code, json_data):
-        self.status_code = status_code
-        self._json = json_data
-
-    def json(self):
-        return self._json
-
-    def raise_for_status(self):
-        if 400 <= self.status_code < 600:
-            raise Exception(f"HTTP {self.status_code}")
-
-
-class _FakeStreamContext:
-    def __init__(self, lines):
-        self._lines = lines
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-
-_fake_httpx = MagicMock()
-_fake_httpx.AsyncClient = _FakeAsyncClient
-_fake_httpx.Timeout = type("Timeout", (object,), {
-    "__init__": lambda self, *args, **kwargs: None
-})
-_fake_httpx.TimeoutException = type("TimeoutException", (Exception,), {})
-_fake_httpx.ConnectError = type("ConnectError", (Exception,), {})
-_fake_httpx.PoolTimeout = type("PoolTimeout", (Exception,), {})
-_fake_httpx.ProtocolError = type("ProtocolError", (Exception,), {})
-_fake_httpx.HTTPStatusError = type("HTTPStatusError", (Exception,), {})
-sys.modules.setdefault("httpx", _fake_httpx)
-
-# ---------------------------------------------------------------------------
-# Fake boto3 / botocore — required because importing the adapters package pulls
-# in the Bedrock adapter, which does ``import boto3`` at module load time.
-# ---------------------------------------------------------------------------
-
-class _FakeBoto3Session:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-    def client(self, name, **kw):
-        return MagicMock()
-
-
-class _FakeBoto3SessionConfig:
-    def __init__(self, **kwargs):
-        pass
-
-
-class _FakeClientError(Exception):
-    def __init__(self, response, operation_name):
-        super().__init__(str(response))
-        self.response = response
-
-
-class _FakeBotoCoreError(Exception):
-    def __init__(self, *args, **kwargs):
-        super().__init__("BotoCore error")
-
-
-class _FakeBotocoreExceptions:
-    ClientError = _FakeClientError
-    BotoCoreError = _FakeBotoCoreError
-    EndpointConnectionError = type("ECE", (Exception,), {})
-    ConnectTimeoutError = type("CTE", (Exception,), {})
-    ReadTimeoutError = type("RTE", (Exception,), {})
-    ResponseStreamingError = type("RSE", (Exception,), {})
-    DataNotFoundError = type("DNF", (Exception,), {})
-    UnknownServiceError = type("USE", (Exception,), {})
-
-
-class _FakeBotocoreModule:
-    exceptions = _FakeBotocoreExceptions()
-    ClientError = _FakeClientError
-    BotoCoreError = _FakeBotoCoreError
-
-
-_fake_boto3 = MagicMock()
-_fake_boto3.Session = _FakeBoto3Session
-_fake_boto3.__version__ = "1.0.0"
-_fake_boto3.botocore = _FakeBotocoreModule()
-_fake_boto3.session = MagicMock()
-_fake_boto3.session.Config = _FakeBoto3SessionConfig
-sys.modules.setdefault("boto3", _fake_boto3)
-sys.modules.setdefault("botocore", _fake_boto3.botocore)
-sys.modules.setdefault("botocore.exceptions", _fake_boto3.botocore.exceptions)
-sys.modules.setdefault("boto3.session", _fake_boto3.session)
-
-
-# ---------------------------------------------------------------------------
-# Application imports (after the fakes are installed).
-# ---------------------------------------------------------------------------
 
 from app.intelligence.credentials import CredentialStore, InMemoryCredentialBackend
 from app.intelligence.credentials.container_backend import ContainerFileCredentialBackend

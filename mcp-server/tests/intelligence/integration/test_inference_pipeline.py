@@ -1,4 +1,4 @@
-"""Integration verification — Phase 4 Commit 5.
+"""End-to-end inference pipeline and architecture contracts.
 
 Verifies the complete inference pipeline end-to-end.
 No test may call real cloud services. No new architecture.
@@ -6,151 +6,13 @@ No test may call real cloud services. No new architecture.
 
 import asyncio
 import base64
+import httpx
 import json
 import os
 import re
-import sys
 import unittest
 from unittest.mock import AsyncMock, MagicMock
-
-# ── Inject fake boto3/botocore before any adapter import ──────────────────
-class _FakeClientError(Exception):
-    # botocore ClientError is constructed as: ClientError(error_response, operation_name)
-    # error_response must be dict-shaped as {"Error": {"Code": "...", "Message": "..."}}
-    def __init__(self, error_response=None, operation_name=""):
-        if error_response is None:
-            error_response = {}
-        msg = error_response.get("Error", {}).get("Message", str(error_response))
-        super().__init__(msg)
-        self.response = error_response
-
-class _FakeBotocoreExceptions:
-    ClientError = _FakeClientError
-    EndpointConnectionError = type("ECE", (Exception,), {})
-    ConnectTimeoutError = type("CTE", (Exception,), {})
-    ResponseStreamingError = type("RSE", (Exception,), {})
-    DataNotFoundError = type("DNF", (Exception,), {})
-    UnknownServiceError = type("USE", (Exception,), {})
-    BotoCoreError = type("BCE", (Exception,), {})
-    ReadTimeoutError = type("RTE", (Exception,), {})
-    InternalError = type("IE", (Exception,), {})
-
-
-class _FakeBotocoreModule:
-    exceptions = _FakeBotocoreExceptions()
-    ClientError = _FakeClientError
-    EndpointConnectionError = _FakeBotocoreExceptions.EndpointConnectionError
-    ConnectTimeoutError = _FakeBotocoreExceptions.ConnectTimeoutError
-    ResponseStreamingError = _FakeBotocoreExceptions.ResponseStreamingError
-    DataNotFoundError = _FakeBotocoreExceptions.DataNotFoundError
-    UnknownServiceError = _FakeBotocoreExceptions.UnknownServiceError
-    BotoCoreError = _FakeBotocoreExceptions.BotoCoreError
-    ReadTimeoutError = _FakeBotocoreExceptions.ReadTimeoutError
-
-
-# boto3.Session is a real class; its __init__ must accept **kwargs and
-# .client() must return a synchronous mock so asyncio.to_thread works in tests.
-class _FakeBoto3Session:
-    def __init__(self, **kwargs):
-        pass  # accept all keyword args (aws_access_key_id, region_name, ...)
-
-    def client(self, name, **kw):
-        return MagicMock()  # sync mock; invoke_model is called via asyncio.to_thread
-
-
-class _FakeBoto3SessionConfig:
-    def __init__(self, **kwargs): pass
-
-
-_fake_boto3 = MagicMock()
-_fake_boto3.Session = _FakeBoto3Session
-_fake_boto3.botocore = _FakeBotocoreModule()
-_fake_boto3.session = MagicMock()
-_fake_boto3.session.Config = _FakeBoto3SessionConfig
-sys.modules["boto3"] = _fake_boto3
-sys.modules["botocore"] = _fake_boto3.botocore
-sys.modules["botocore.exceptions"] = _fake_boto3.botocore.exceptions
-sys.modules["boto3.session"] = _fake_boto3.session
-sys.modules["boto3.session.Config"] = _fake_boto3.session.Config
-
-# Keep a reference so adapters can import it directly for isinstance checks.
-sys.modules["botocore"].exceptions = _fake_boto3.botocore.exceptions
-sys.modules["botocore"].exceptions.ResponseStreamingError = \
-    _fake_boto3.botocore.exceptions.ResponseStreamingError
-
-# ── Fake httpx ─────────────────────────────────────────────────────────────
-# ── Fake httpx AsyncClient — mirrors the real httpx.AsyncClient interface ──────
-# Used so adapter.start() can construct a client without importing real httpx.
-# The test fixtures inject their own _FakeAsyncOllamaClient / _FakeAsyncOpenAIClient
-# into _client via object.__setattr__, which is preserved by the sticky start() guard.
-
-class _FakeAsyncClient:
-    """Minimal fake httpx.AsyncClient — all methods are real so await works."""
-
-    def __init__(self, **kwargs):
-        self.base_url = kwargs.get("base_url", "")
-        self.headers = kwargs.get("headers", {})
-        self.timeout = kwargs.get("timeout")
-        self._closed = False
-
-    async def post(self, path, **kw):
-        return _FakeResponse(200, {})
-
-    async def aclose(self):
-        self._closed = True
-
-    def stream(self, method, path, **kw):
-        return _FakeStreamContext([])
-
-
-class _FakeResponse:
-    def __init__(self, status_code, json_data):
-        self.status_code = status_code
-        self._json = json_data
-
-    def json(self):
-        return self._json
-
-    def raise_for_status(self):
-        if 400 <= self.status_code < 600:
-            raise Exception(f"HTTP {self.status_code}")
-
-
-class _FakeStreamContext:
-    def __init__(self, lines):
-        self._lines = lines
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
-
-    async def aiter_lines(self):
-        for line in self._lines:
-            yield line
-
-
-_fake_httpx = MagicMock()
-_fake_httpx.AsyncClient = _FakeAsyncClient
-_fake_httpx.Timeout = type("Timeout", (object,), {"__init__": lambda self, *a, **k: None})
-_fake_httpx.TimeoutException = type("TimeoutException", (Exception,), {})
-_fake_httpx.ConnectError = type("ConnectError", (Exception,), {})
-_fake_httpx.PoolTimeout = type("PoolTimeout", (Exception,), {})
-_fake_httpx.ProtocolError = type("ProtocolError", (Exception,), {})
-_fake_httpx.HTTPStatusError = type("HTTPStatusError", (Exception,), {})
-sys.modules["httpx"] = _fake_httpx
-
-# Import the (now-faked) httpx module so tests can raise its exception types
-# exactly as the real transport would (e.g. httpx.TimeoutException on timeout).
-import httpx  # noqa: E402  (must follow the sys.modules injection above)
-
-# ── Set env vars before adapter imports ────────────────────────────────────
-os.environ.setdefault("OLLAMA_BASE_URL", "http://localhost:11434")
-os.environ.setdefault("OPENAI_API_KEY", "test-key")
-os.environ.setdefault("AWS_REGION", "us-east-1")
-os.environ.setdefault("AWS_ACCESS_KEY_ID", "test-key")
-os.environ.setdefault("AWS_SECRET_ACCESS_KEY", "test-secret")
+from botocore.exceptions import ClientError, ConnectTimeoutError, EndpointConnectionError
 
 # ── Imports ────────────────────────────────────────────────────────────────
 from app.intelligence.exceptions import (
@@ -171,6 +33,7 @@ from app.intelligence.providers.adapters import (
     OpenAICompatibleAdapter,
     register_all_adapters,
 )
+from app.intelligence.providers.credential import ProviderCredential
 from app.intelligence.providers.provider_factory import ProviderFactory
 from app.intelligence.providers.provider_manager import ProviderManager
 from app.intelligence.registry.catalog.catalog import ModelCatalog
@@ -306,6 +169,7 @@ class _FakeOpenAIStreamContext:
 
 def _make_started_openai(record):
     adapter = OpenAICompatibleAdapter(record)
+    adapter.attach_credential(ProviderCredential(api_key="test-key"))
     adapter.initialize()
     mc = _FakeAsyncOpenAIClient()
     mc.set_mock_post(_FakeAsyncOpenAIResponse(
@@ -357,6 +221,12 @@ class _MockFactory(ProviderFactory):
 
     def create(self, record, **kwargs):
         ctor = self._ctor_map.get(record.provider_type.value)
+        if ctor is None:
+            ctor = {
+                ProviderType.OLLAMA.value: _make_started_ollama,
+                ProviderType.OPENAI_COMPATIBLE.value: _make_started_openai,
+                ProviderType.BEDROCK.value: _make_started_bedrock,
+            }.get(record.provider_type.value)
         if ctor:
             return ctor(record, **kwargs)
         return super().create(record, **kwargs)
@@ -380,7 +250,7 @@ def _make_catalog():
 
     cat.register_provider(ProviderRecord(
         provider_id="openai-cloud", provider_type=ProviderType.OPENAI_COMPATIBLE,
-        deployment=DeploymentType.CLOUD, auth=AuthConfig(api_key="test-key"),
+        deployment=DeploymentType.CLOUD, auth=AuthConfig(),
         connection=ConnectionConfig(base_url="https://api.openai.com"),
         capabilities=frozenset({Capability.CHAT, Capability.EMBEDDING}),
         enabled=True, priority=2,
@@ -416,31 +286,7 @@ def _make_catalog():
 # ═══════════════════════════════════════════════════════════════════════════
 
 class _FakeModuleIsolationMixin:
-    """Re-pin this module's fake boto3/botocore/httpx for the duration of a test.
-
-    The Bedrock adapter resolves ``botocore.exceptions`` at call time via
-    ``import botocore.exceptions as botocore`` and then runs ``isinstance``
-    checks against those classes. When the whole ``tests/intelligence`` package
-    is discovered in one process, sibling test modules also install their own
-    fake ``botocore`` into ``sys.modules`` at import time. Whichever module was
-    imported last wins the shared slot, so an exception constructed from *this*
-    module's fake classes would be tested against *another* module's fake
-    classes — a different object identity — and every ``isinstance`` check would
-    miss, collapsing to a generic error.
-
-    This mixin makes the module hermetic: each test restores this module's fakes
-    before running and puts back whatever was there afterwards, so results no
-    longer depend on test discovery order. It changes no production behaviour.
-    """
-
-    _ISOLATED_MODULES = (
-        "httpx",
-        "boto3",
-        "boto3.session",
-        "boto3.session.Config",
-        "botocore",
-        "botocore.exceptions",
-    )
+    """Provide the environment required by the in-memory integration pipeline."""
 
     # Environment the pipeline needs to initialize every adapter. Re-asserted per
     # test because sibling test modules pop these vars in their own tearDown; our
@@ -455,34 +301,6 @@ class _FakeModuleIsolationMixin:
 
     def setUp(self):
         super().setUp()
-        self._saved_modules = {
-            name: sys.modules.get(name) for name in self._ISOLATED_MODULES
-        }
-        sys.modules["httpx"] = _fake_httpx
-        sys.modules["boto3"] = _fake_boto3
-        sys.modules["boto3.session"] = _fake_boto3.session
-        sys.modules["boto3.session.Config"] = _fake_boto3.session.Config
-        sys.modules["botocore"] = _fake_boto3.botocore
-        sys.modules["botocore.exceptions"] = _fake_boto3.botocore.exceptions
-
-        # The httpx adapters bind `httpx` with a module-level import, so their
-        # reference is frozen at first import. If a sibling test module imported
-        # them first (installing its own fake httpx), their `httpx.TimeoutException`
-        # etc. are different class objects than the ones this module raises, and
-        # the adapters' isinstance() checks would miss. Rebind the already-imported
-        # adapter modules' httpx global to this module's fake for the test's
-        # duration (restored in tearDown) — the same swap mock.patch.object makes.
-        from app.intelligence.providers.adapters import ollama as _ollama_mod
-        from app.intelligence.providers.adapters import (
-            openai_compatible as _openai_mod,
-        )
-        self._httpx_bound_modules = (_ollama_mod, _openai_mod)
-        self._saved_httpx = {
-            mod: getattr(mod, "httpx", None) for mod in self._httpx_bound_modules
-        }
-        for mod in self._httpx_bound_modules:
-            mod.httpx = _fake_httpx
-
         self._saved_env = {
             name: os.environ.get(name) for name in self._REQUIRED_ENV
         }
@@ -495,14 +313,6 @@ class _FakeModuleIsolationMixin:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
-        for mod, prior in self._saved_httpx.items():
-            if prior is not None:
-                mod.httpx = prior
-        for name, mod in self._saved_modules.items():
-            if mod is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = mod
         super().tearDown()
 
 
@@ -1017,7 +827,7 @@ class TestProviderFactoryVerification(unittest.TestCase):
         self.assertIn(Capability.EMBEDDING, caps)
         record = ProviderRecord(
             provider_id="test-openai", provider_type=ProviderType.OPENAI_COMPATIBLE,
-            deployment=DeploymentType.CLOUD, auth=AuthConfig(api_key="k"),
+            deployment=DeploymentType.CLOUD, auth=AuthConfig(),
             connection=ConnectionConfig(base_url="https://api.example.com"),
             capabilities=frozenset(), enabled=True, priority=1,
         )
@@ -1122,12 +932,17 @@ class TestExceptionPropagation(_FakeModuleIsolationMixin, unittest.IsolatedAsync
     async def test_openai_validation_422(self):
         def make_val(record):
             adapter = OpenAICompatibleAdapter(record)
+            adapter.attach_credential(ProviderCredential(api_key="test-key"))
             adapter.initialize()
             mc = MagicMock()
             resp = MagicMock(status_code=422)
             # Real httpx raises HTTPStatusError (carrying .response.status_code)
             # from raise_for_status(); the adapter maps 422 -> LLMValidationError.
-            status_err = httpx.HTTPStatusError("HTTP 422 Unprocessable Entity")
+            status_err = httpx.HTTPStatusError(
+                "HTTP 422 Unprocessable Entity",
+                request=httpx.Request("POST", "https://example.test/chat"),
+                response=httpx.Response(422),
+            )
             status_err.response = resp
             resp.raise_for_status = MagicMock(side_effect=status_err)
             mc.post = AsyncMock(return_value=resp)
@@ -1152,7 +967,7 @@ class TestExceptionPropagation(_FakeModuleIsolationMixin, unittest.IsolatedAsync
             adapter = BedrockAdapter(record)
             adapter.initialize()
             mc = MagicMock()
-            mc.invoke_model = MagicMock(side_effect=_FakeClientError(
+            mc.invoke_model = MagicMock(side_effect=ClientError(
                 {"Error": {"Code": "ExpiredTokenException", "Message": "expired"}},
                 "InvokeModel",
             ))
@@ -1178,7 +993,7 @@ class TestExceptionPropagation(_FakeModuleIsolationMixin, unittest.IsolatedAsync
             adapter.initialize()
             mc = MagicMock()
             mc.invoke_model = MagicMock(
-                side_effect=_FakeBotocoreExceptions.EndpointConnectionError()
+                side_effect=EndpointConnectionError(endpoint_url="https://bedrock.test")
             )
             object.__setattr__(adapter, "_client", mc)
             object.__setattr__(adapter, "_started", True)
@@ -1202,7 +1017,7 @@ class TestExceptionPropagation(_FakeModuleIsolationMixin, unittest.IsolatedAsync
             adapter.initialize()
             mc = MagicMock()
             mc.invoke_model = MagicMock(
-                side_effect=_FakeBotocoreExceptions.ConnectTimeoutError()
+                side_effect=ConnectTimeoutError(endpoint_url="https://bedrock.test")
             )
             object.__setattr__(adapter, "_client", mc)
             object.__setattr__(adapter, "_started", True)
@@ -1262,7 +1077,7 @@ class TestStreamingVerification(_FakeModuleIsolationMixin, unittest.IsolatedAsyn
         try:
             llm = LLMService(manager, catalog)
             chunks = []
-            stream = await llm.chat_stream(
+            _model, stream = await llm.chat_stream(
                 messages=[ChatMessage(role="user", content="hi")],
                 provider="ollama-local",
             )
@@ -1293,6 +1108,7 @@ class TestStreamingVerification(_FakeModuleIsolationMixin, unittest.IsolatedAsyn
     async def test_openai_stream_yields_deltas(self):
         def make_stream_openai(record):
             adapter = OpenAICompatibleAdapter(record)
+            adapter.attach_credential(ProviderCredential(api_key="test-key"))
             adapter.initialize()
             mc = MagicMock()
 
@@ -1326,7 +1142,7 @@ class TestStreamingVerification(_FakeModuleIsolationMixin, unittest.IsolatedAsyn
         try:
             llm = LLMService(manager, catalog)
             chunks = []
-            stream = await llm.chat_stream(
+            _model, stream = await llm.chat_stream(
                 messages=[ChatMessage(role="user", content="hi")],
                 provider="openai-cloud",
             )
@@ -1365,7 +1181,7 @@ class TestStreamingVerification(_FakeModuleIsolationMixin, unittest.IsolatedAsyn
         try:
             llm = LLMService(manager, catalog)
             chunks = []
-            stream = await llm.chat_stream(
+            _model, stream = await llm.chat_stream(
                 messages=[ChatMessage(role="user", content="hi")],
                 provider="bedrock-cloud",
             )

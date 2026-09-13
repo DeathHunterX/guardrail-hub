@@ -17,65 +17,12 @@ LLM API is contacted. Does NOT mock ProviderManager lifecycle itself.
 
 from __future__ import annotations
 
-import asyncio
-import sys
 import unittest
-from datetime import datetime, timezone
 from typing import AsyncIterator
 
-# Inject fake httpx so adapters can start without a real network.
-# Mirrors the pattern in test_integration_verification.py.
-
-class _FakeAsyncClient:
-    """Minimal fake httpx.AsyncClient — all methods are real so await works."""
-
-    def __init__(self, **kwargs):
-        self.base_url = kwargs.get("base_url", "")
-        self.headers = kwargs.get("headers", {})
-        self.timeout = kwargs.get("timeout")
-        self._closed = False
-
-    async def post(self, path, **kw):
-        return _FakeResponse(200, {})
-
-    async def aclose(self):
-        self._closed = True
-
-    def stream(self, method, path, **kw):
-        return _FakeStreamContext([])
-
-
-class _FakeResponse:
-    def __init__(self, status_code, json_data):
-        self.status_code = status_code
-        self._json = json_data
-
-    def json(self):
-        return self._json
-
-    def raise_for_status(self):
-        if 400 <= self.status_code < 600:
-            raise Exception(f"HTTP {self.status_code}")
-
-
-class _FakeStreamContext:
-    def __init__(self, lines):
-        self._lines = list(lines)
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *args):
-        pass
-
-    async def __aiter__(self):
-        for line in self._lines:
-            yield line
-
-
-_fake_httpx = type(sys)("httpx")
-_fake_httpx.AsyncClient = _FakeAsyncClient
-sys.modules["httpx"] = _fake_httpx  # type: ignore[assignment]
+from app.intelligence.providers.base_provider import BaseProviderRuntime
+from app.intelligence.registry.types.capability import Capability
+from app.intelligence.registry.types.provider import ProviderType
 
 
 # ---------------------------------------------------------------------------
@@ -122,12 +69,11 @@ def _make_frozen_catalog():
     return cat
 
 
-class FakeStreamChatAdapter:
+class FakeStreamChatAdapter(BaseProviderRuntime):
     """A started chat-only adapter that yields fake streaming chunks."""
 
     def __init__(self, record):
-        self._record = record
-        self._started = False
+        super().__init__(record)
         self._started_called = False
         self._close_called = False
 
@@ -137,11 +83,10 @@ class FakeStreamChatAdapter:
 
     @property
     def provider_type(self):
-        return "test_provider_type"
+        return ProviderType.OLLAMA
 
     @property
     def capabilities(self):
-        from app.intelligence.registry.types.capability import Capability
         return frozenset({Capability.CHAT})
 
     def initialize(self):
@@ -151,11 +96,11 @@ class FakeStreamChatAdapter:
         pass
 
     async def start(self):
-        self._started = True
+        await super().start()
         self._started_called = True
 
     async def close(self):
-        self._started = False
+        await super().close()
         self._close_called = True
 
     async def chat(self, messages, options):
@@ -296,10 +241,11 @@ class TestProviderLifecycleBoundary(unittest.IsolatedAsyncioTestCase):
 
         try:
             svc = LLMService(provider_manager=mgr, catalog=cat)
-            stream = await svc.chat_stream(
+            resolved_model, stream = await svc.chat_stream(
                 [ChatMessage(role="user", content="hello")],
                 model="test-model",
             )
+            self.assertEqual(resolved_model, "test-model")
             chunks = [c async for c in stream]
             self.assertEqual(chunks, ["Hel", "lo ", "world"])
         finally:
@@ -339,7 +285,7 @@ class TestConversationServiceLifecycleIntegration(unittest.IsolatedAsyncioTestCa
         from app.intelligence.conversation.infrastructure.in_memory_store import (
             InMemoryConversationStore,
         )
-        from app.intelligence.core.events.dispatcher import InProcessEventDispatcher
+        from app.core.events.dispatcher import InProcessEventDispatcher
         from app.intelligence.inference.services.llm_service import LLMService
         from app.intelligence.providers.provider_factory import ProviderFactory
         from app.intelligence.providers.provider_manager import ProviderManager
@@ -378,7 +324,7 @@ class TestConversationServiceLifecycleIntegration(unittest.IsolatedAsyncioTestCa
         from app.intelligence.conversation.infrastructure.in_memory_store import (
             InMemoryConversationStore,
         )
-        from app.intelligence.core.events.dispatcher import InProcessEventDispatcher
+        from app.core.events.dispatcher import InProcessEventDispatcher
         from app.intelligence.inference.services.llm_service import LLMService
         from app.intelligence.providers.provider_factory import ProviderFactory
         from app.intelligence.providers.provider_manager import ProviderManager

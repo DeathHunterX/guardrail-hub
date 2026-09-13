@@ -1,4 +1,4 @@
-"""Unit tests for the frozen catalog and lookup indexes (Phase 2)."""
+"""Unit tests for the model catalog and its frozen lookup indexes."""
 
 import unittest
 
@@ -88,6 +88,64 @@ class CatalogFreezeTests(unittest.TestCase):
         providers_view = self.catalog.providers_view
         with self.assertRaises(TypeError):
             providers_view["mutate"] = "x"  # type: ignore[index]
+
+
+class ModelCatalogTests(unittest.TestCase):
+    """Primary catalog operations remain covered alongside secondary indexes."""
+
+    def setUp(self):
+        self.catalog = ModelCatalog()
+
+    def test_register_and_get_provider(self):
+        self.catalog.register_provider(_provider("test-provider"))
+
+        result = self.catalog.get_provider("test-provider")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.provider_id, "test-provider")
+
+    def test_register_and_get_model(self):
+        self.catalog.register_model(_model("test-model", "test-provider"))
+
+        result = self.catalog.get_model("test-model")
+
+        self.assertIsNotNone(result)
+        self.assertEqual(result.model_id, "test-model")
+
+    def test_list_providers_enabled_only(self):
+        self.catalog.register_provider(_provider("enabled-provider"))
+        self.catalog.register_provider(_provider("disabled-provider", enabled=False))
+
+        enabled_ids = {
+            provider.provider_id
+            for provider in self.catalog.list_providers(enabled_only=True)
+        }
+
+        self.assertEqual(enabled_ids, {"enabled-provider"})
+
+    def test_find_models_by_capability(self):
+        self.catalog.register_provider(_provider("test-provider"))
+        self.catalog.register_model(_model("chat-model", "test-provider"))
+        self.catalog.register_model(
+            _model(
+                "embedding-model",
+                "test-provider",
+                model_type=ModelType.EMBEDDING,
+                capabilities=frozenset({Capability.EMBEDDING}),
+            )
+        )
+
+        models = self.catalog.find_models_by_capability(Capability.CHAT)
+
+        self.assertEqual([model.model_id for model in models], ["chat-model"])
+
+    def test_clear_catalog(self):
+        self.catalog.register_provider(_provider("test-provider"))
+
+        self.catalog.clear()
+
+        self.assertTrue(self.catalog.is_empty)
+        self.assertIsNone(self.catalog.get_provider("test-provider"))
 
 
 class CatalogIndexesTests(unittest.TestCase):
@@ -192,28 +250,13 @@ class CatalogBuilderFreezeTests(unittest.TestCase):
 
     def test_catalog_is_frozen_after_build(self):
         from app.intelligence.registry.builders.catalog_builder import CatalogBuilder
-        from app.intelligence.registry.loaders.registry_loader import RegistryLoader
+        from app.intelligence.registry.loaders.llm_config_loader import LLmConfigLoadResult
 
-        builder = CatalogBuilder(RegistryLoader())
-        catalog, _ = builder.build_combined(
-            {
-                "providers": [
-                    {
-                        "provider_id": "p1",
-                        "provider_type": "openai_compatible",
-                        "deployment": "cloud",
-                        "connection": {"base_url": "https://api.example.com"},
-                    }
-                ],
-                "models": [
-                    {
-                        "model_id": "m1",
-                        "provider_id": "p1",
-                        "model_type": "chat",
-                        "capabilities": ["chat"],
-                    }
-                ],
-            }
+        catalog, _, _ = CatalogBuilder().build_from_llm_config_result(
+            LLmConfigLoadResult(
+                providers=[_provider("p1")],
+                models=[_model("m1", "p1")],
+            )
         )
         self.assertTrue(catalog.frozen)
         with self.assertRaises(CatalogFrozenError):
