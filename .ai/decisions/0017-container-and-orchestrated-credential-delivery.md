@@ -1,6 +1,6 @@
 # 0017 — Container & Orchestrated Credential Delivery
 
-Status: **Accepted** — ratified 2026-08-22 by the backend owner (Loi Phan). The original acceptance authorized Phase 5B only. **Amendment 1 ratified 2026-09-09 by the repository owner (Loi Phan)** and supersedes Decision H and the stale Phase 5 sequencing limitations identified in §8 and §11. The amendment records the contract implemented by the Phase 5 corrective commits; it does not ratify those commits by itself.
+Status: **Accepted and closed for Phase 5** — ratified 2026-08-22 by the backend owner (Loi Phan). The original acceptance authorized Phase 5B only. **Amendment 1 was ratified 2026-09-09 by the repository owner (Loi Phan)** and supersedes Decision H and the stale Phase 5 sequencing limitations identified in §8 and §11. **Final owner ratification was explicitly recorded 2026-09-13 by the repository owner (Loi Phan), closing Phase 5** at implementation/test HEAD `8161ca8ff8def37ad662378f9c0e062f0b3d2efc`.
 Owner: Loi Phan
 Date: 2026-08-21
 Relates to: [Decision 0009](0009-execution-capability.md) (the same refusal to abstract over a set of one — here, one backend serves Docker, Podman and orchestrated deployments); [Decision 0012](0012-runtime-boundary.md) (its four-condition Scope test is what classifies this backend as application code, **not** a runtime boundary); [Decision 0007](0007-domain-layer-justification.md) (the present-tense-evidence standard this ADR is held to).
@@ -57,7 +57,7 @@ When the env backend is disabled (file backend active), `api_key_env` is inert-b
 
 ## 4A. Amendment 1 — Phase 5 credential setup contract correction
 
-**Amendment status:** Ratified 2026-09-09 by the repository owner (Loi Phan). This section is the controlling Phase 5 setup contract wherever it conflicts with historical Decision H, §7, §8, or §11. Historical text remains in place for traceability.
+**Amendment status:** Ratified 2026-09-09 by the repository owner (Loi Phan); final owner ratification and Phase 5 closure recorded 2026-09-13. This section is the controlling Phase 5 setup contract wherever it conflicts with historical Decision H, §7, §8, or §11. Historical text remains in place for traceability.
 
 **Scope classification:** **PHASE 5 CONTRACT CORRECTION + PHASE 5 MISSING OPERATOR PROVISIONING CONTRACT.** This is not authorization for a generic secret-management platform.
 
@@ -294,7 +294,7 @@ The original ratification established this sequence, with each phase gated by te
 - **Phase 5D — Deployment Integration.** Deployment-aware backend factory selection (`windows | file | env`, fail-closed per INV-2); optional `EnvVarCredentialBackend` (opt-in, Decision F); and repair of the `bootstrap.py:630` wiring (Decision I) — without changing `_resolve_and_attach_credential()` semantics.
 - **Phase 5E — Documentation / Deployment UX.** Docker/Podman/orchestrator deployment documentation; `config/llm.yaml` comment cleanup and correction of its dangling "Decision 0014" reference (which points at the reserved *Provider & Routing* ADR, not this one); ignore rules for a `secrets/` directory; optional `guardrail-hub setup --check`.
 
-The ADR itself implemented none of those phases. Later Phase 5 work now exists, so the original “Phase 5B only” sequencing statement is historical rather than a current description of repository state. Amendment 1 does not ratify the committed corrective work until the repository owner accepts it. Ratification confirms the corrected operator-provisioning contract in H1-H10 against commits `106942e` and `e356ef2`; it authorizes no broader follow-on implementation.
+The ADR itself implemented none of those phases. Later Phase 5 work now exists, so the original “Phase 5B only” sequencing statement is historical rather than a current description of repository state. The 2026-09-09 ratification confirmed the corrected operator-provisioning contract in H1-H10 against commits `106942e` and `e356ef2`. The final 2026-09-13 owner ratification accepts the completed corrective implementation recorded in §11 and closes Phase 5; it authorizes no broader follow-on implementation.
 
 ## 9. Governance / Change-Ladder classification
 
@@ -314,12 +314,18 @@ Repository evidence (source; cited as paths, not links): `mcp-server/app/intelli
 
 Phase 5A audit: `mcp-server/docs/phase-5a-final-audit-and-refinement.md`; `mcp-server/docs/phase-5a-container-credential-architecture-audit.md`.
 
-## 11. Ratification / Acceptance
+## 11. Ratification / Acceptance and Phase 5 Closure
 
 **Original acceptance.** Decisions A–I and invariants INV-1..INV-10 were accepted on 2026-08-22. The decisions index already records ADR-0017 as Accepted.
 
-**Amendment 1 acceptance criteria.** The repository owner ratifies H1-H10 as the controlling Phase 5 credential setup contract, confirms that historical Decision H is superseded, and confirms the H10 implementation boundary. On acceptance, update the Status and Amendment-status lines with the ratification date and authority; the decisions-index status remains Accepted.
+**Amendment 1 acceptance criteria.** The repository owner ratifies H1-H10 as the controlling Phase 5 credential setup contract, confirms that historical Decision H is superseded, and confirms the H10 implementation boundary. The 2026-09-09 ratification satisfied this contract-acceptance gate; the decisions-index status remains Accepted.
 
-**Sequencing.** The original acceptance authorized Phase 5B only; that statement is retained as history, not as the current Phase 5 contract. The bounded corrective implementation described by H10 is already committed and verified. Ratification of Amendment 1 accepts that corrected contract and permits Phase 5 to proceed to user acceptance; it does not authorize additional implementation.
+**Final owner ratification.** The repository owner (Loi Phan) explicitly ratified the completed Phase 5 implementation on 2026-09-13. This is the owner-acceptance gate following the clean-head audit verdict: **PASS — PHASE 5 IS READY FOR OWNER RATIFICATION**.
+
+**Final implementation evidence.** The ratified implementation/test HEAD is `8161ca8ff8def37ad662378f9c0e062f0b3d2efc` (`test(intelligence): reorganize and clean test suite`). The final corrective range is commits `acd9eb6` through `8161ca8` (inclusive): `acd9eb6`, `7ad5bdc`, `96efb50`, `b8e1c9d`, `119f74f`, `0329d75`, `0cc1442`, `ed70c94`, and `8161ca8`. This final ratification accepts that bounded implementation as aligned with Amendment 1 H1-H10 and its preserved runtime invariants.
+
+**Closure status.** Phase 5 is closed. This closure records governance acceptance of the completed work only; it does not start Phase 6 or authorize further implementation.
+
+**Known non-blocking debt excluded from this closure.** The following items remain outside Phase 5 closure criteria and are not Phase 5 blockers: AIOS source-hash drift maintenance; legacy broader-suite test debt; archived corrupted-repository cleanup; and the local-only untracked `.claude/settings.local.json`. No intelligence source-hash baseline is updated by this closure record.
 
 **Still not authorized:** any further runtime credential-backend or adapter change beyond the narrow, already committed H10 support; changing the credential-backend contract, `bootstrap.py`, `ProviderManager`, model routing, AWS authentication, or credential identity semantics; putting secrets in `config/llm.yaml` or `.env`; adding `setup --check` without separate justification; introducing any orchestrator/Vault/CSI SDK; or implementing hot rotation. This amendment is a governance record and changes no production code.
