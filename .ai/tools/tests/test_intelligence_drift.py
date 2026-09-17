@@ -85,6 +85,68 @@ class GitVisibleHashTests(unittest.TestCase):
             self.assertNotEqual(baseline, drift.hash_path(source, repo_root=repo))
 
 
+class PortableContentHashTests(unittest.TestCase):
+    """Prove source hashes describe content, not checkout newline policy."""
+
+    def _init_repo(self, repo: Path) -> None:
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+
+    def test_equivalent_lf_and_crlf_text_files_hash_identically(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._init_repo(repo)
+            source = repo / "source.txt"
+            source.write_bytes(b"line1\nline2\n")
+            subprocess.run(["git", "add", "source.txt"], cwd=repo, check=True)
+
+            baseline = drift.hash_path(source, repo_root=repo)
+            source.write_bytes(b"line1\r\nline2\r\n")
+
+            self.assertEqual(baseline, drift.hash_path(source, repo_root=repo))
+
+    def test_real_text_edit_changes_the_hash_after_canonicalization(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._init_repo(repo)
+            source = repo / "source.txt"
+            source.write_bytes(b"line1\n")
+            subprocess.run(["git", "add", "source.txt"], cwd=repo, check=True)
+
+            baseline = drift.hash_path(source, repo_root=repo)
+            source.write_bytes(b"line1 changed\r\n")
+
+            self.assertNotEqual(baseline, drift.hash_path(source, repo_root=repo))
+
+    def test_binary_content_is_not_newline_normalized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._init_repo(repo)
+            source = repo / "asset.bin"
+            source.write_bytes(b"\x00binary\r\n")
+            subprocess.run(["git", "add", "asset.bin"], cwd=repo, check=True)
+
+            baseline = drift.hash_path(source, repo_root=repo)
+            source.write_bytes(b"\x00binary\n")
+
+            self.assertNotEqual(baseline, drift.hash_path(source, repo_root=repo))
+
+    def test_directory_hash_is_identical_for_lf_and_crlf_representations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self._init_repo(repo)
+            source = repo / "source"
+            source.mkdir()
+            (source / "one.txt").write_bytes(b"one\n")
+            (source / "two.txt").write_bytes(b"two\n")
+            subprocess.run(["git", "add", "source"], cwd=repo, check=True)
+
+            baseline = drift.hash_path(source, repo_root=repo)
+            (source / "one.txt").write_bytes(b"one\r\n")
+            (source / "two.txt").write_bytes(b"two\r\n")
+
+            self.assertEqual(baseline, drift.hash_path(source, repo_root=repo))
+
+
 class AiosCheckTests(unittest.TestCase):
     """Catch accidental removal of Intelligence drift from the aggregate gate."""
 

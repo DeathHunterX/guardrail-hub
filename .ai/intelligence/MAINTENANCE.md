@@ -26,6 +26,11 @@ Directory hashes use Git's view of the repository:
 
 This makes a baseline portable between developer machines and CI while still detecting meaningful additions, removals and edits. If Git metadata is unavailable, the script uses a filesystem fallback so the diagnostic remains usable, but the repository CI path always runs from a Git checkout.
 
+Content hashing is checkout-portable: files Git treats as text have CRLF
+sequences canonicalized to LF before hashing, while binary files retain their
+exact bytes. The checker still reads the working tree, so substantive
+uncommitted edits remain visible; a newline-only checkout conversion does not.
+
 The hash only identifies which prose may be stale. It cannot decide whether a capability is implemented, planned, safe or correctly described. That judgment remains a human/AI re-review.
 
 ### Commands
@@ -64,4 +69,4 @@ When a new subsystem affects an existing document, extend that document's `sourc
 
 ## Last Updated
 
-2026-08-28 — Git-stable hashing and blocking CI integration.
+2026-09-17 — Canonical text hashing across LF and CRLF checkouts.

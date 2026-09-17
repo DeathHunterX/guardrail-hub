@@ -1,5 +1,5 @@
 {
-  "verified_commit": "363239442f1bee4cada07c0984dc4e6afac12751",
+  "verified_commit": "672050d0e9371795e6fe545cb382477dd1209b18",
   "verified_date": "2026-09-17",
   "documents": {
     "system-overview.md": {
@@ -13,7 +13,7 @@
         "architecture",
         ".github/workflows"
       ],
-      "hash": "0ded36a40a61ddb410fb44452b578e5f9ec1a990c9cd5026dd14b2bad9700fcc"
+      "hash": "cffc338a5990707588cce3a940bad4be2c023859bfdb4b8946cd9f4cd24c3f9f"
     },
     "project-map.md": {
       "sources": [
@@ -25,7 +25,7 @@
         "architecture",
         ".github/workflows"
       ],
-      "hash": "41ae90c2a197f9751b75f09f2a5354b4db6c440a809b88335ca907098bf08740"
+      "hash": "b37f5dedf6d25aa5c5b471d2ae7d38daa7ea28edfd0504df17f356fab5f8bdbd"
     },
     "module-map.md": {
       "sources": [
@@ -36,7 +36,7 @@
         "web/lib",
         "web/hooks"
       ],
-      "hash": "0bd6fb6968448dc9f7a6b5ff485347c575aef0caac072de23e9d361cc733d4a7"
+      "hash": "acff8264995887484b638039339e0945677626b9f9ab1b1aab7bb76cff51f347"
     },
     "codegraph.md": {
       "sources": [
@@ -51,7 +51,7 @@
         "mcp-server/app/intelligence",
         "mcp-server/app/runtime"
       ],
-      "hash": "ca5dd3635979890f8ed41d1807ad6dba763a70a753e44f7975144e70214cd37c"
+      "hash": "da54ce555d3100c5f4dce04767bffaa97042a5b2a8909bbbd78b3e828bbb7321"
     },
     "dependency-graph.md": {
       "sources": [
@@ -59,7 +59,7 @@
         "web/package.json",
         "mcp-server/app"
       ],
-      "hash": "30f9b61fb1ea75c3358c59d3fe367bac06130517ba37b3dbd5e8fac19a6b7758"
+      "hash": "a4f1e09c4c7d3aafd8836d80fd1dc3eec580857983d3eaab6140267ed7eccbe3"
     },
     "api-map.md": {
       "sources": [
@@ -68,7 +68,7 @@
         "mcp-server/app/main.py",
         "mcp-server/app/runtime/jmeter"
       ],
-      "hash": "51dc972c6be060ad9a8be3ee1833e92af3c99adb08f46ccb1878145b193cd1b0"
+      "hash": "6dce23d46e85dbbd09213c124c10e9493b2c61a6820ba98fad27077fb0a056b3"
     },
     "database-map.md": {
       "sources": [
@@ -80,7 +80,7 @@
         "mcp-server/app/schemas/tools/owasp_zap",
         "mcp-server/app/constants"
       ],
-      "hash": "eadaa356f5806f19dbaa46d3c7d3147f63f8071649cf7c15b3371b3360460745"
+      "hash": "ab6ccdd49c16caa84a86e4282da54f172d6b471747707f74bd6efcc6e6f4a148"
     },
     "deployment-map.md": {
       "sources": [
@@ -91,7 +91,7 @@
         "mcp-server/app/core/config",
         ".github/workflows"
       ],
-      "hash": "6a7abc9db6633a66b8dde3f52168a675ddb1dcc853d0739ead451d062179c05e"
+      "hash": "ffc73929e2ba04d536eb488d5131a18c30824cc65a180b2b20e05a2145d25f2d"
     },
     "security-map.md": {
       "sources": [
@@ -106,7 +106,7 @@
         "mcp-server/.env.example",
         ".github/workflows"
       ],
-      "hash": "12c93db204b86c2142ef52830ffab7f32532740736f75b6caa18cdbfde10fafb"
+      "hash": "f58238501c5f97762fd5441e65e7419e5e49bce44b460c233a7842e9df1364a2"
     },
     "technology-stack.md": {
       "sources": [
@@ -116,7 +116,7 @@
         "mcp-server/docker-compose.yml",
         "mcp-server/docker"
       ],
-      "hash": "9aedec8677836dcf0550f2bf611d87ca8adc119c05b28398f9638cb5ad40da26"
+      "hash": "22ea62c3693111c36216c5d5da1dc2452497f244ae4c0687db94c44aa6af2857"
     },
     "conventions.md": {
       "sources": [
@@ -129,7 +129,7 @@
         "web/lib",
         "web/package.json"
       ],
-      "hash": "b3b12f5fbccb9e6f0b976c77878e7e12d9b10e4a080495c157008583a35df78f"
+      "hash": "7553a0a2b7c0167686130c0b37276abeb222ec6b333d270776034918ba6915fb"
     },
     "glossary.md": {
       "sources": [
@@ -141,7 +141,7 @@
         "mcp-server/app/intelligence",
         "mcp-server/app/services"
       ],
-      "hash": "605c283cae1ac5837349c0869acac125131140f6cf202efecde2103caff6ca94"
+      "hash": "dff1c1f8590002648e91aff00af344e3e834eea13701fc3aa4d0100a986066bf"
     }
   }
 }
