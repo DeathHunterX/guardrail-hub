@@ -26,6 +26,7 @@ Use project manifests as final authority before adding a dependency. Prefer exis
 | HTTPX | `>=0.28.0` | Async HTTP integrations/providers |
 | boto3 | `>=1.38.0` | AWS Bedrock and DynamoDB access |
 | psycopg2-binary | `>=2.9.10` | PostgreSQL access |
+| PyYAML | `>=6.0.3` | LLM provider/model configuration loading |
 | zaproxy | `>=0.5.0` | OWASP ZAP client |
 | PyJWT / bcrypt | `>=2.13.0` / `>=5.0.0` | Security primitives present in dependencies |
 
@@ -65,4 +66,4 @@ No Kubernetes, Terraform, Helm or application observability SDK is evidenced in 
 
 ## Last Updated
 
-2026-08-28 — dependency manifests and container definitions re-reviewed.
+2026-09-17 — dependency manifests and container definitions re-reviewed at `3632394`.

@@ -32,7 +32,9 @@ Prefer these terms in code and documentation. When a transport/tool uses a diffe
 | Provider | Concrete LLM inference backend such as Ollama, OpenAI-compatible HTTP, or Bedrock. |
 | Provider Manager | Runtime owner that resolves and invokes configured provider adapters. |
 | Registry/catalog | Validated provider and model definitions built from `mcp-server/config/llm.yaml`. |
+| LLM topology | Non-secret provider/model configuration in `config/llm.yaml`, managed separately from credentials through `guardrail-hub config`. |
 | Credential backend | Platform/storage mechanism used to retrieve provider secrets. |
+| Credential target | The operator-selected secure destination for a provider credential, currently Windows Credential Manager or a recognized Compose-host secret file. |
 | Conversation | Stateful sequence of messages and transitions orchestrated by `ConversationService`. |
 | ChatOps | Event-driven lifecycle/status delivery through a channel-neutral notification layer, currently with Slack support. |
 | MCP tool | Only an HTTP operation whose operation ID is explicitly included in `MCP_OPERATIONS`. |
@@ -46,4 +48,4 @@ Prefer these terms in code and documentation. When a transport/tool uses a diffe
 
 ## Last Updated
 
-2026-08-28 — terminology re-reviewed against current product and AIOS.
+2026-09-17 — terminology re-reviewed against current product and AIOS at `3632394`.

@@ -28,10 +28,10 @@ PostgreSQL migrations currently establish the operations table, queue-oriented i
 
 ### Conversations
 
-Conversation persistence stores conversation identity, state, messages/turns and state-transition history. Startup selects:
+Conversation persistence stores conversation identity, state, messages/turns and state-transition history. Startup currently selects:
 
-- PostgreSQL store when a PostgreSQL connection is available.
-- In-memory store otherwise; this is ephemeral and unsuitable for durable multi-instance operation.
+- In-memory store when `DATABASE_PROVIDER=NONE`; this is ephemeral and unsuitable for durable multi-instance operation.
+- PostgreSQL store whenever an operation DAO exists. This is correct for `POSTGRES`, but the current wiring also selects it for `DYNAMODB`; there is no DynamoDB conversation-store adapter.
 
 Conversation redaction updates stored message content through the conversation service. Published audit events are in-process; persistence of conversation data must not be mistaken for a durable, tamper-evident audit log.
 
@@ -42,6 +42,7 @@ Scan reports and public artifacts are written under the configured public/report
 ### Known data constraints
 
 - No cross-store transaction spans operation persistence, notifications and external engines.
+- DynamoDB operation mode does not provide a matching conversation store; conversation wiring still depends on PostgreSQL.
 - Worker registration is not a durable service-discovery system.
 - The application owns SQL directly rather than through an ORM.
 - Multi-instance behavior depends on the selected durable backend and is not provided by in-memory conversation/worker state.
@@ -52,4 +53,4 @@ Scan reports and public artifacts are written under the configured public/report
 
 ## Last Updated
 
-2026-08-28 — DAOs, migrations and conversation stores re-reviewed.
+2026-09-17 — DAOs, migrations and conversation-store selection re-reviewed at `3632394`.

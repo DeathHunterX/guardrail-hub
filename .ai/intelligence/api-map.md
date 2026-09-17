@@ -55,4 +55,4 @@ No inbound authentication or authorization dependency/middleware is applied to t
 
 ## Last Updated
 
-2026-08-28 — route tables and MCP whitelist re-inspected.
+2026-09-17 — route tables, schemas and MCP whitelist re-inspected at `3632394`; no surface change required.

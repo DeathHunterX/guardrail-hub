@@ -40,7 +40,7 @@ Follow nearby code and the applicable routed Standards. This document reports cu
 
 ### Tests
 
-- Backend tests mirror architectural concerns under `mcp-server/tests/` and include unit, integration, flow and boundary checks.
+- Backend tests mirror architectural concerns under `mcp-server/tests/` and include unit, integration, flow and boundary checks. Intelligence tests are grouped by capability (`credentials`, `providers`, `registry`, `routing`, `services`, `setup`) with cross-capability behavior under `integration`.
 - Add tests at the owning layer and verify observable behavior, including failure paths and dependency boundaries.
 - Run AIOS mechanical checks only through `python .ai/tools/aios.py check` when `.ai/` is changed.
 
@@ -56,4 +56,4 @@ Follow nearby code and the applicable routed Standards. This document reports cu
 
 ## Last Updated
 
-2026-08-28 — conventions re-derived from current code and tests.
+2026-09-17 — conventions re-derived from current code and reorganized tests at `3632394`.

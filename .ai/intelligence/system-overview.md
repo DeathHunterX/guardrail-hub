@@ -20,8 +20,8 @@ Guardrail Hub is becoming a security and performance-testing orchestration platf
 |---|---|
 | MCP server | Implemented for queued ZAP API scans, JMeter execution/result analysis, and operation queries. |
 | HTTP API | Health, history, worker lifecycle, and conversation endpoints are implemented. |
-| Intelligence | Provider registry/catalog, Ollama, OpenAI-compatible and Bedrock adapters, credentials, chat/stream/embed/rerank/vision service paths, and conversations are implemented. Generic policy engines and provider health are incomplete. |
-| Persistence | Operations use PostgreSQL when configured and DynamoDB otherwise; conversations use PostgreSQL when available and an in-memory store otherwise. |
+| Intelligence | Provider registry/catalog, Ollama, OpenAI-compatible and Bedrock adapters, credentials, chat/stream/embed/rerank/vision service paths, conversations, and an operator CLI for provider setup and validated `llm.yaml` topology changes are implemented. Generic policy engines and provider health are incomplete. |
+| Persistence | Operations use PostgreSQL or DynamoDB when configured and have no durable store in `NONE` mode. Conversations use memory in `NONE` mode and currently select the PostgreSQL store whenever an operation DAO exists, including DynamoDB mode. |
 | ChatOps | Event-driven notification architecture and Slack adapter are implemented. |
 | Web | A multi-page marketing/product site exists. It is not an operational Guardrail Hub dashboard and is not integrated with the backend. |
 | Mobile/API/docs | Mobile and top-level API remain scaffolds; `docs/` is a documentation-site scaffold. |
@@ -36,4 +36,4 @@ The main architectural boundary is deliberate: transport routers call applicatio
 
 ## Last Updated
 
-2026-08-28 — full repository re-review on branch `feature/llm-intelligence-bootstrap`.
+2026-09-17 — full mapped-source re-review at `3632394`.

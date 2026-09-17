@@ -63,6 +63,13 @@ runtime consumption plane:
        or EnvVarCredentialBackend -> api_key_env/fallback (externally managed, read-only)
   AWS/Bedrock -> AWS SDK credential chain (outside CredentialStore)
 ConversationService -> LLMService -> ProviderManager
+
+configuration plane:
+  guardrail-hub config show/validate/apply
+    -> LLmConfigLoader (strict for candidates)
+    -> CatalogBuilder + registry validation
+    -> semantic diff + interactive confirmation
+    -> atomic config/llm.yaml replacement
 ```
 
 ### External systems
@@ -84,4 +91,4 @@ The web application is independently built and currently has no operational depe
 
 ## Last Updated
 
-2026-09-09 — Phase 5 provisioning/runtime credential dependencies re-reviewed.
+2026-09-17 — dependency directions and external systems re-reviewed at `3632394`.

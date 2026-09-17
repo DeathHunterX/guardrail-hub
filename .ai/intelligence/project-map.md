@@ -19,9 +19,9 @@ Use this map to find the correct work area. A directory's presence is not eviden
 | `.ai/` | AI Operating System: guardrails, routing, agents, standards, decisions, intelligence and tooling | Active; maturity varies by module |
 | `.github/workflows/` | Repository automation | AIOS validation workflow present |
 | `mcp-server/app/` | FastAPI/MCP product backend | Substantially implemented |
-| `mcp-server/tests/` | Unit, integration, flow and architecture tests | Substantial suite |
-| `mcp-server/config/` | LLM provider/model registry | Implemented configuration |
-| `mcp-server/migrations/` | SQL schema migrations | Implemented |
+| `mcp-server/tests/` | Unit, integration, flow and architecture tests | Substantial suite; intelligence tests are grouped by owning capability |
+| `mcp-server/config/` | LLM provider/model registry | Implemented configuration; inspected and changed through the operator CLI |
+| `mcp-server/app/dao/postgres/migrations/` | PostgreSQL schema migrations | Implemented |
 | `mcp-server/docs/` | Backend-specific design and operational notes | Populated |
 | `web/app/` | Next.js routes and layouts | Multi-page marketing site |
 | `web/components/`, `web/features/`, `web/hooks/`, `web/lib/` | Web UI, feature composition and client utilities | Implemented for site experience |
@@ -29,7 +29,7 @@ Use this map to find the correct work area. A directory's presence is not eviden
 | `api/` | Separate API target | Near-empty scaffold; backend lives in `mcp-server/` |
 | `docs/` | Documentation-site project | Scaffold/content shell |
 | `architecture/` | Product architecture notes for ZAP, JMeter and ChatOps | Populated evidence/design material |
-| `docker-compose.yml`, `Dockerfile*` | Local/container runtime definitions | Implemented for server and workers |
+| `mcp-server/docker-compose.yml`, `mcp-server/docker/*/Dockerfile` | Local/container runtime definitions | Implemented for server and workers |
 
 Important backend subtrees:
 
@@ -50,4 +50,4 @@ Important backend subtrees:
 
 ## Last Updated
 
-2026-08-28 — full repository tree re-review.
+2026-09-17 — full mapped-source re-review at `3632394`.

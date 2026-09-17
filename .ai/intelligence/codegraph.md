@@ -19,7 +19,7 @@ Trace a requested change through the appropriate flow before editing. Keep trans
 | Entry point | Location | Role |
 |---|---|---|
 | Backend API/MCP | `mcp-server/app/main.py` | FastAPI app, routers, static reports and `/mcp` mount |
-| Operator CLI | `mcp-server/app/cli.py` | Credential readiness, selected-provider testing and approved host provisioning |
+| Operator CLI | `mcp-server/app/cli.py` | Credential readiness, selected-provider testing, approved host provisioning, and safe provider/model topology management |
 | Backend lifecycle | `app/core/startup.py` | Registry, credentials, providers, database, workers and notifications |
 | Composition root | `app/bootstrap.py` | Constructs concrete services and adapters |
 | JMeter worker | `app/runtime/jmeter/main.py` | Isolated ASGI assignment runtime |
@@ -53,6 +53,24 @@ guardrail-hub setup
 ```
 
 File-backed and environment-backed runtime stores remain read-only. Generic Linux, running-container, Kubernetes and externally managed environment contexts receive validation/guidance rather than mutation.
+
+### LLM configuration flow
+
+```text
+guardrail-hub config show
+  -> load the canonical llm.yaml and render non-secret provider/model metadata
+
+guardrail-hub config validate <candidate>
+  -> strictly reject unsupported fields and literal credentials
+  -> build and validate the candidate catalog without changing runtime state
+
+guardrail-hub config apply <candidate>
+  -> validate the exact candidate bytes and show a semantic diff
+  -> require interactive confirmation
+  -> atomically replace the canonical llm.yaml while preserving file mode
+```
+
+Provider setup and connection tests remain separate from topology changes. An OpenAI-compatible provider may opt into an authenticated one-token chat probe through `connection.auth_probe_model`; otherwise its connection test uses the models endpoint.
 
 ### Tool execution
 
@@ -90,4 +108,4 @@ No inbound authentication/authorization middleware protects these routes. Config
 
 ## Last Updated
 
-2026-09-09 — Phase 5 setup and runtime credential paths re-traced from source.
+2026-09-17 — entry points and runtime flows re-traced at `3632394`.

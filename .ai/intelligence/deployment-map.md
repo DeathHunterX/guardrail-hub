@@ -67,4 +67,4 @@ Repository workflow presence does not by itself make a check required: GitHub br
 
 ## Last Updated
 
-2026-09-09 — Phase 5 Compose host provisioning and read-only runtime mount re-reviewed.
+2026-09-17 — deployment, startup and automation sources re-reviewed at `3632394`; no content change required.

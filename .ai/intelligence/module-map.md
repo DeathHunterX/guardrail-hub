@@ -19,6 +19,7 @@ Choose the owner by responsibility, then confirm its public API and tests before
 | Module | Owns | Current state |
 |---|---|---|
 | `main.py` | FastAPI application and router mounting | Implemented |
+| `cli.py` | Operator setup plus safe `llm.yaml` show/validate/apply commands | Implemented; configuration apply is interactive, strictly validated and atomic |
 | `bootstrap.py`, `core/startup.py` | Dependency construction, migrations, provider and worker startup | Implemented |
 | `core/config/` | Typed environment settings split by concern | Implemented; several policy settings are not yet enforced at request boundaries |
 | `core/events/`, `core/ports/` | In-process event contracts and infrastructure ports | Implemented |
@@ -34,8 +35,8 @@ Choose the owner by responsibility, then confirm its public API and tests before
 | `services/platform/`, `services/evaluations/` | Platform reporting and scan evaluation abstractions | Implemented supporting capabilities |
 | `services/public/` | Health and history use cases | Implemented |
 | `services/conversation/` | Conversation use cases and state transitions | Implemented |
-| `intelligence/registry/`, `intelligence/catalog/` | Provider/model definitions and catalog validation | Implemented from `config/llm.yaml` |
-| `intelligence/providers/` | Ollama, OpenAI-compatible and Bedrock adapters plus manager | Implemented outbound calls |
+| `intelligence/registry/` | Provider/model definitions, loading and catalog validation | Implemented from `config/llm.yaml` |
+| `intelligence/providers/` | Ollama, OpenAI-compatible and Bedrock adapters plus manager | Implemented outbound calls, authenticated opt-in probes and provider client shutdown |
 | `intelligence/credentials/` | Runtime credential consumption through Windows Credential Manager, mounted-file and environment backends | Implemented; file and environment backends are read-only |
 | `intelligence/setup/` | Operator credential setup, selected-provider connection checks and recognized Compose-host provisioning | Implemented for Windows-local and recognized Guardrail Hub Compose hosts |
 | `intelligence/inference/` | LLM service for chat, stream, embeddings, rerank and vision | Implemented; generic policy classes are incomplete |
@@ -61,4 +62,4 @@ Choose the owner by responsibility, then confirm its public API and tests before
 
 ## Last Updated
 
-2026-09-09 — Phase 5 credential setup and runtime-consumption boundaries re-reviewed.
+2026-09-17 — mapped backend and web modules re-reviewed at `3632394`.

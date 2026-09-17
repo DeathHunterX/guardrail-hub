@@ -23,6 +23,8 @@ Treat missing controls as risks, not implied features. Security-sensitive change
 - Provider secrets are resolved at runtime rather than stored in `config/llm.yaml` or `.env`.
 - Mounted-file and environment runtime backends are read-only. The running MCP container does not provision or reconfigure secrets.
 - Host-side setup accepts masked input and tests a candidate against only the selected provider before persistence. Recognized Compose-host files are replaced atomically with POSIX `0700`/`0600` permissions or hardened Windows ACLs.
+- `guardrail-hub config validate/apply` rejects unsupported fields and literal `auth.api_key` values; apply requires confirmation and atomically replaces the canonical configuration.
+- OpenAI-compatible providers can declare an `auth_probe_model` so setup verifies credentials with an authenticated one-token chat request instead of relying on a potentially public model-list endpoint.
 - AWS/Bedrock authentication remains outside the API-key credential store and uses the AWS SDK credential chain.
 - Domain and isolated-runtime import boundaries are mechanically checked by AIOS tooling.
 - ZAP/JMeter work is queued and assigned through worker services instead of arbitrary direct execution from MCP payloads.
@@ -56,4 +58,4 @@ The AIOS workflow checks repository governance artifacts, not dependency vulnera
 
 ## Last Updated
 
-2026-09-09 — Phase 5 credential provisioning and consumption controls traced to executable enforcement points.
+2026-09-17 — credential, configuration and provider-probe controls traced at `3632394`.
