@@ -1,74 +1,53 @@
 # Project Map
 
-> **2026-07-10 — Hardening Sync ([ADR-0005](../decisions/0005-architecture-hardening-refactor.md)).** The empty scaffold directories previously listed under `app/` (`client/`, `policies/`, `runner/`, `security/`, `integrations/jmeter/`, `services/internal/`, `services/tools/jmeter/`, `schemas/public/`, `schemas/tools/{playwright,selenium}/`, `routers/internal/`) and the `prompts/`/`utils/` roles were **removed**. `tests/` is no longer flat — it mirrors the source tree (`tests/services/…`, `tests/integrations/chat/slack/`, `tests/flows/`).
-
 ## Purpose
-Map every top-level and second-level directory in the repository to its purpose and implementation status, so an AI assistant can find the right place to work without scanning the whole tree.
+
+Map repository locations to their current responsibilities and maturity.
 
 ## Scope
-Directory structure only — for what's inside each directory architecturally, see [module-map.md](module-map.md); for individual files, see [codegraph.md](codegraph.md).
+
+Top-level and important second-level directories. Use [module-map.md](module-map.md) for internal ownership.
 
 ## AI Usage Guidance
-Use this to answer "where does X live" or "is Y already built." Directories marked **Empty** contain no files — do not assume conventions for them beyond what's stated in the root [`README.md`](../../README.md)'s aspirational layout, and treat any code written into them as greenfield.
+
+Use this map to find the correct work area. A directory's presence is not evidence that its advertised feature is complete.
 
 ## Main Content
 
-### Top Level
-
-```mermaid
-graph TD
-    Root[guardrail-hub/] --> MCP[mcp-server/]
-    Root --> Web[web/]
-    Root --> Mobile[mobile/]
-    Root --> Api[api/]
-    Root --> Docs[docs/]
-    Root --> Architecture[architecture/]
-    Root --> AI[.ai/]
-    Root --> ClaudeDir[.claude/]
-```
-
-| Directory | Status | Purpose |
+| Path | Responsibility | Status |
 |---|---|---|
-| `mcp-server/` | **Implemented** | Python/FastAPI backend; the only functionally complete part of the system |
-| `web/` | **Scaffolded** | Next.js frontend; currently a marketing landing page, no product features |
-| `mobile/` | **Empty scaffold** | `android/` and `apple/` subfolders, both completely empty |
-| `api/` | **Empty, reserved** | No files |
-| `docs/` | **Empty, reserved** | Gitignored; reserved for a Docusaurus site (MCP server + API reference docs) |
-| `architecture/` | **Active** | Design/architecture docs, one subfolder per subsystem (currently `chatops/` only) — see [`architecture/README.md`](../../architecture/README.md) |
-| `.ai/` | **Active** | AIOS knowledge system for AI assistants — see [`.ai/README.md`](../README.md) |
-| `.claude/` | **Config only** | `settings.local.json`, Claude Code permission allowlist |
+| `.ai/` | AI Operating System: guardrails, routing, agents, standards, decisions, intelligence and tooling | Active; maturity varies by module |
+| `.github/workflows/` | Repository automation | AIOS validation workflow present |
+| `mcp-server/app/` | FastAPI/MCP product backend | Substantially implemented |
+| `mcp-server/tests/` | Unit, integration, flow and architecture tests | Substantial suite; intelligence tests are grouped by owning capability |
+| `mcp-server/config/` | LLM provider/model registry | Implemented configuration; inspected and changed through the operator CLI |
+| `mcp-server/app/dao/postgres/migrations/` | PostgreSQL schema migrations | Implemented |
+| `mcp-server/docs/` | Backend-specific design and operational notes | Populated |
+| `web/app/` | Next.js routes and layouts | Multi-page marketing site |
+| `web/components/`, `web/features/`, `web/hooks/`, `web/lib/` | Web UI, feature composition and client utilities | Implemented for site experience |
+| `mobile/` | Mobile application target | Near-empty scaffold |
+| `api/` | Separate API target | Near-empty scaffold; backend lives in `mcp-server/` |
+| `docs/` | Documentation-site project | Scaffold/content shell |
+| `architecture/` | Product architecture notes for ZAP, JMeter and ChatOps | Populated evidence/design material |
+| `mcp-server/docker-compose.yml`, `mcp-server/docker/*/Dockerfile` | Local/container runtime definitions | Implemented for server and workers |
 
-### `mcp-server/` — Second Level
+Important backend subtrees:
 
-| Directory | Status | Purpose |
-|---|---|---|
-| `app/` | Implemented | Application code — see [module-map.md](module-map.md) |
-| `config/` | Empty | Reserved for `tool-policy.json`, `allowed-tools.json` (referenced by settings, not yet created) |
-| `dependencies/` | Empty | Reserved for FastAPI `Depends()`-based middleware (e.g. auth) — not yet implemented |
-| `audit/` | Empty | Reserved for audit-log output — audit settings exist (`AUDIT_*` env vars) but no dedicated implementation |
-| `batch_jobs/` | Empty | Reserved, unimplemented |
-| `data/` | Partial | `data/zap/` — ZAP working-directory mount point (empty at rest, populated at scan time) |
-| `docker/` | Implemented | `fastapi/Dockerfile`, `owasp_zap/Dockerfile` |
-| `tests/` | Empty | No test files exist yet — no testing convention established |
-| `logs/` | Runtime artifacts | Populated log files from local runs (`MCPLogger` output) |
-| `reports/` | Partial | `reports/zap/` — mount target for ZAP report generation (empty at rest) |
-| `public/` | Implemented, has data | `public/report/owasp-zap/detail-report/` contains real scan report artifacts (HTML+JSON pairs) served statically |
-| `docs/` | Empty | Reserved |
-| `.vscode/` | Config only | `mcp.json`, `settings.json` |
+| Path | Responsibility |
+|---|---|
+| `app/core/` | Settings, startup, events, ports and shared infrastructure |
+| `app/domain/` | Framework-free findings and operation lifecycle vocabulary |
+| `app/routers/` | HTTP and MCP transport adapters |
+| `app/services/` | Application use cases: operations, tools, notifications, conversations and health/history |
+| `app/integrations/` | ZAP, JMeter and Slack adapters |
+| `app/dao/` | Operation persistence abstractions and concrete stores |
+| `app/intelligence/` | LLM catalog, providers, credentials, inference and conversation infrastructure |
+| `app/runtime/` | Isolated runtime entry points, currently the JMeter worker |
 
-### `web/` — Second Level
+## Related Documents
 
-| Directory | Status | Purpose |
-|---|---|---|
-| `app/` | Implemented (marketing only) | Next.js App Router — one route group `(marketing)/` |
-| `components/` | Implemented (marketing only) | `layout/`, `sections/`, `shared/`, `ui/` (shadcn/ui primitives) |
-| `lib/` | Implemented | `gsap/` animation helpers, `hooks/`, `screens.ts`, `utils.ts` |
-| `hooks/` | Empty (unused) | Contains only `.gitkeep`; real hooks live under `lib/hooks/` instead |
-| `config/`, `content/` | Implemented | `site.ts` config/content for the marketing site |
-| `types/` | Empty | Reserved |
-| `public/` | Static assets | Standard Next.js public assets |
+[system-overview.md](system-overview.md) · [module-map.md](module-map.md) · [deployment-map.md](deployment-map.md)
 
-### `mobile/`
+## Last Updated
 
-| Directory | Status |
-|--
+2026-09-17 — full mapped-source re-review at `3632394`.

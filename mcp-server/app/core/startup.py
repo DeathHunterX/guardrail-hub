@@ -16,6 +16,14 @@ until lifespan startup completes, and aborts the whole process (non-zero
 exit) if that phase raises — so "stop startup on migration failure, exit
 non-zero" falls directly out of raising here rather than being a convention
 someone has to remember to check.
+
+Phase 2 adds a pre-step (step 0): the Intelligence Registry Runtime is
+constructed and started before everything else. If the registry YAML is
+missing or invalid, the application refuses to boot — same fail-fast
+contract as the database schema check.
+
+Phase 5 adds ConversationService to the startup: LLMService + ConversationStore
++ EventPublisher assembled once here, made available to routes via StartupResult.
 """
 
 from dataclasses import dataclass
@@ -44,6 +52,18 @@ class StartupResult:
     elapsed-time refresh ticker; and ``operation_service``/``dao`` let the
     shutdown path fail any operation still RUNNING at teardown. All are
     process-scoped singletons assembled once here.
+
+    ``registry_runtime`` (Phase 2) is the Intelligence Layer's
+    :class:`RegistryRuntime` — it owns the in-memory catalog built from
+    ``providers.yaml`` / ``models.yaml``. Held for shutdown symmetry.
+
+    ``conversation_service`` (Phase 5) is the conversation orchestrator.
+    It has no shutdown lifecycle; it is held here to be attached to the
+    FastAPI app lifespan state for use by conversation routes.
+
+    ``provider_manager`` (Phase 7) owns provider singletons and their
+    lifecycle. Started during boot and stopped during shutdown, before
+    ``registry_runtime`` is stopped.
     """
 
     dispatcher: object
@@ -51,6 +71,9 @@ class StartupResult:
     dao: object
     notifier: object = None
     jmeter_dispatcher: object = None
+    registry_runtime: object = None
+    provider_manager: object = None
+    conversation_service: object = None
 
 
 def recover_interrupted_operations(
@@ -120,7 +143,7 @@ def recover_interrupted_operations(
     return len(recovered_ids)
 
 
-def run_startup_sequence(settings) -> Optional[StartupResult]:
+async def run_startup_sequence(settings) -> Optional[StartupResult]:
     """Run steps 1-4 of the startup sequence and start the ZAP queue dispatcher.
 
     Returns a :class:`StartupResult` (dispatcher + notifier + operation service +
@@ -137,13 +160,62 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
     """
     logger = MCPLogger("startup")
 
+    # 0. Intelligence Registry Runtime — built first so the catalog is
+    #    available before any consumer (Provider Manager, Health Monitor,
+    #    future routing layers) reads it. Fail-fast on registry errors
+    #    matches the database schema fail-fast contract below.
+    from app.bootstrap import build_registry_runtime  # noqa: PLC0415
+
+    registry_runtime = build_registry_runtime(config=settings)
+    try:
+        registry_runtime.start()
+    except FileNotFoundError as exc:
+        logger.error("Startup aborted — registry file missing: %s", exc)
+        raise StartupError(f"Intelligence registry file missing: {exc}") from exc
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.error("Startup aborted — registry load/validation failed: %s", exc)
+        raise StartupError(f"Intelligence registry failed: {exc}") from exc
+
+    # Build the event dispatcher once — shared by both the notification pipeline
+    # and Phase 5 ConversationService.  Built here so it is available regardless
+    # of whether a database is present.
+    from app.core.events.dispatcher import InProcessEventDispatcher
+
+    event_dispatcher = InProcessEventDispatcher()
+
+    # Phase 5: assemble ConversationService once.
+    # Uses InMemoryConversationStore when dao is None (minimal mode).
+    from app.bootstrap import build_conversation_service  # noqa: PLC0415
+
+    provider_manager, conversation_service = _build_conversation_service(
+        registry_runtime=registry_runtime,
+        event_dispatcher=event_dispatcher,
+        dao=None,
+    )
+
+    # Phase 7: start providers before any inference-capable work begins.
+    # Missing API keys leave only the affected providers unavailable; unrelated
+    # provider configuration and lifecycle failures still abort startup.
+    await provider_manager.start()
+
     if settings.database_provider == "NONE":
-        logger.warning(
-            "DATABASE_PROVIDER=NONE — operations are not persisted, so the ZAP "
-            "queue dispatcher will not start. Endpoints that don't require "
-            "persistence (health, etc.) are unaffected."
+        logger.info(
+            "Startup sequence complete (minimal) — registry runtime built "
+            "(%d provider(s), %d model(s)), "
+            "conversation service assembled (in-memory store)",
+            len(list(registry_runtime.catalog.iter_providers())),
+            len(list(registry_runtime.catalog.iter_models())),
         )
-        return None
+        return StartupResult(
+            dispatcher=None,
+            operation_service=None,
+            dao=None,
+            notifier=None,
+            jmeter_dispatcher=None,
+            registry_runtime=registry_runtime,
+            conversation_service=conversation_service,
+            provider_manager=provider_manager,
+        )
 
     # 1. Database Ready / 2. Run Migrations / 3. Verify required tables
     from app.dao.operation_dao import get_operation_dao  # noqa: PLC0415
@@ -154,6 +226,18 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
     except Exception as exc:  # pylint: disable=broad-except
         logger.error("Startup aborted — database schema not ready: %s", exc)
         raise StartupError(f"Database schema initialization failed: {exc}") from exc
+
+    # Re-assemble ConversationService with the real DAO (PostgresConversationStore).
+    provider_manager, conversation_service = _build_conversation_service(
+        registry_runtime=registry_runtime,
+        event_dispatcher=event_dispatcher,
+        dao=dao,
+    )
+
+    # Phase 7: start providers before any inference-capable work begins.
+    # Missing API keys leave only the affected providers unavailable; unrelated
+    # provider configuration and lifecycle failures still abort startup.
+    await provider_manager.start()
 
     # 4. Initialize services. Assemble EXACTLY ONE notification pipeline (one
     #    event bus, one OperationService, one OperationNotifier subscribed only
@@ -204,8 +288,13 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
 
     logger.info(
         "Startup sequence complete — database ready, notification pipeline wired "
-        "(%d channel(s)), ZAP and JMeter queue dispatchers running",
+        "(%d channel(s)), ZAP and JMeter queue dispatchers running; "
+        "intelligence registry: %d provider(s), %d model(s); "
+        "conversation service: %s store",
         len(flow.notification_service.channels),
+        len(list(registry_runtime.catalog.iter_providers())),
+        len(list(registry_runtime.catalog.iter_models())),
+        "PostgreSQL" if dao is not None else "in-memory",
     )
     return StartupResult(
         dispatcher=dispatcher,
@@ -213,4 +302,23 @@ def run_startup_sequence(settings) -> Optional[StartupResult]:
         dao=dao,
         notifier=flow.notifier,
         jmeter_dispatcher=jmeter_dispatcher,
+        registry_runtime=registry_runtime,
+        conversation_service=conversation_service,
+        provider_manager=provider_manager,
     )
+
+
+def _build_conversation_service(registry_runtime, event_dispatcher, dao):
+    """Assemble Phase 5 ConversationService with the given dependencies.
+
+    Encapsulated here so the call site stays readable; follows the same
+    factory-assembly pattern as all other bootstrap helpers.
+    """
+    from app.bootstrap import build_conversation_service as _factory
+
+    _, conversation_service, provider_manager = _factory(
+        registry_runtime=registry_runtime,
+        event_dispatcher=event_dispatcher,
+        dao=dao,
+    )
+    return provider_manager, conversation_service

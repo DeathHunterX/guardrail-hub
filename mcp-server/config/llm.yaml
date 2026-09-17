@@ -1,0 +1,49 @@
+# Runtime LLM provider and model configuration.
+# Never store credential values here; configure only the authentication method.
+# See examples/config/llm.example.yaml for reusable provider templates.
+
+llm:
+  providers:
+
+    # Ollama — local/self-hosted inference
+    - id: ollama-local
+      type: ollama
+      deployment: self_hosted
+      enabled: true
+      connection:
+        base_url: http://localhost:11434/
+      auth:
+        type: none
+      models:
+        - id: llama3.2
+          type: chat
+          deployment_name: llama3.2
+          context_window: 128000
+          capabilities:
+            - chat
+
+    # NVIDIA NIM
+    - id: nvidia-nim
+      type: openai_compatible
+      deployment: cloud
+      enabled: true
+      connection:
+        base_url: https://integrate.api.nvidia.com/
+        auth_probe_model: moonshotai/kimi-k3
+      auth:
+        type: api_key
+        api_key_env: NVIDIA_API_KEY
+      models:
+        - id: moonshotai/kimi-k3
+          type: chat
+          deployment_name: moonshotai/kimi-k3
+          context_window: 1048576
+          capabilities:
+            - chat
+
+        - id: deepseek-ai/deepseek-v4-pro-0813
+          type: chat
+          deployment_name: deepseek-ai/deepseek-v4-pro-0813
+          context_window: 1048576
+          capabilities:
+            - chat

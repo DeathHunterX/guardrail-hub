@@ -3,7 +3,7 @@
 
 Concrete, current-state facts about the Guardrail Hub *product repository* — its structure, code, dependencies, APIs, data, deployment, and security posture — written for AI assistants to consume with minimal context cost. Distinct from the rest of `.ai/`, which governs the AIOS itself (see [Relationship to the AIOS](#relationship-to-the-aios) below).
 
-Status: Active — populated from a direct inspection of the repository at commit `10bd79b` (branch `main`).
+Status: Active — all twelve documents re-reviewed against the repository working tree on 2026-08-28; source hashes are enforced by `aios check`.
 
 ---
 
@@ -61,4 +61,4 @@ It sits closest to [`knowledge/`](../knowledge/README.md) conceptually — both 
 [`.ai/README.md`](../README.md) · [`.ai/knowledge/README.md`](../knowledge/README.md) · [`.ai/foundation/architecture.md`](../foundation/architecture.md) · [MAINTENANCE.md](MAINTENANCE.md)
 
 ## Last Updated
-2026-07-03 — verified against commit `10bd79b`.
+2026-08-28 — full re-review and CI-enforced drift baseline.

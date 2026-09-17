@@ -25,8 +25,9 @@ python .ai/tools/aios.py <command>
 | `index [--dry-run]` | (Re)generates `<module>/<category>/INDEX.md` from unit frontmatter. Never hand-edit an INDEX. | 0 |
 | `impact <id> [--change major\|minor\|patch]` | Reverse-dependency walk + Impact Report per [governance rules](../governance/README.md#impact-analysis). | 0 |
 | `lint` | Line-count ceiling (150) on routing files (MANIFEST/ROUTER/INDEX). | nonzero if any over |
-| `arch` | Domain-layer boundary enforcement: scans `mcp-server/app/domain/**` for imports violating [domain-layer](../standards/architecture/domain-layer.md) **D2** (framework/transport/infrastructure) and **D3** (any dependency outside Domain). | nonzero if any violation |
-| `check` | `validate` + `links` + `lint` + `arch` as one CI gate. | nonzero on any failure |
+| `arch` | Domain and isolated-runtime boundary enforcement from the applicable architecture Standards/Decisions. | nonzero if any violation |
+| `intelligence-drift` | Compare all Intelligence baselines with their Git-visible tracked and non-ignored source files. | nonzero if any document needs re-review |
+| `check` | `validate` + `links` + `lint` + `arch` + `intelligence-drift` as one CI gate. | nonzero on any failure |
 | `selftest` | Proves the impact + validation engines on synthetic fixtures. | nonzero on any failure |
 
 `--root <path>` overrides the `.ai/` root (default: this script's own `.ai/`); `selftest` uses it to exercise the engine against temp fixtures. `arch` is the one subcommand that reads the **product** tree rather than `.ai/` — it resolves the repository root as the `.ai/` parent, because the rule it enforces is about application code. Its scanned paths are `DOMAIN_ROOTS` in the CLI; a second Domain root (a future subsystem) is added there.
@@ -42,4 +43,4 @@ Per [Decision 0001](../decisions/0001-aios-bootstrap-roadmap.md)'s dependency pr
 
 ## For CI
 
-`python .ai/tools/aios.py check` is the single gate. It is intended to run non-blocking until the product repository gains CI (see [intelligence/deployment-map.md](../intelligence/deployment-map.md)), then as a required check. `impact` runs per-PR when a unit's version changes.
+`python .ai/tools/aios.py check` is the single gate and runs in [`.github/workflows/aios-check.yml`](../../.github/workflows/aios-check.yml). Configure GitHub branch protection or a repository ruleset to require the workflow's `AIOS Check` status before merge. `impact` remains an explicit per-change analysis command when a unit's version changes.
