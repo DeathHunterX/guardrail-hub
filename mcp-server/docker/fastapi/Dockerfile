@@ -12,12 +12,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml uv.lock ./
+# Keep dependency installation in its own cached layer. The project itself is
+# installed only after its source is copied below so the console entrypoint is
+# generated without invalidating this layer on every application-code change.
+COPY pyproject.toml uv.lock README.md ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
 COPY app ./app
 COPY config ./config
+
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev
+
+# Login shells may replace PATH with the system default. Keep the installed
+# operator command discoverable there as well as through the virtualenv PATH.
+RUN ln -s /app/.venv/bin/guardrail-hub /usr/local/bin/guardrail-hub
+
+ENV PATH="/app/.venv/bin:${PATH}"
 
 RUN mkdir -p /app/data /app/logs /app/reports
 

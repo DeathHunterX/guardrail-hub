@@ -19,6 +19,7 @@ Usage (run from anywhere; paths are resolved relative to this script):
 
 import hashlib
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -27,26 +28,94 @@ REPO_ROOT = SCRIPT_DIR.parents[2]  # .ai/intelligence/scripts -> .ai/intelligenc
 MANIFEST_PATH = SCRIPT_DIR / "sources.json"
 
 
-def hash_path(path: Path) -> str:
-    """Hash a file's content, or a directory's recursive file listing + each file's content.
-    Missing paths hash to a fixed sentinel so a path appearing/disappearing is detected as drift."""
+def _git_visible_files(path: Path, repo_root: Path) -> list[Path] | None:
+    """Return tracked and non-ignored untracked files below *path*.
+
+    ``None`` means Git metadata is unavailable and the caller should use the
+    filesystem fallback. Deleted tracked files are retained so removal changes
+    the hash.
+    """
+    try:
+        rel = path.resolve().relative_to(repo_root.resolve()).as_posix()
+    except ValueError:
+        return None
+    result = subprocess.run(
+        [
+            "git", "-c", "core.quotePath=false", "-c", "core.excludesFile=",
+            "ls-files", "-z",
+            "--cached", "--others", "--exclude-per-directory=.gitignore", "--", rel,
+        ],
+        cwd=repo_root,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    names = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    return [repo_root / name for name in sorted(set(names) - {""})]
+
+
+def _git_text_attributes(paths: list[Path], repo_root: Path) -> dict[Path, str]:
+    """Return Git's ``text`` attribute for each path when available."""
+    try:
+        rel_paths = [path.resolve().relative_to(repo_root.resolve()).as_posix() for path in paths]
+    except ValueError:
+        return {}
+    if not rel_paths:
+        return {}
+    result = subprocess.run(
+        ["git", "-c", "core.quotePath=false", "check-attr", "-z", "--stdin", "text"],
+        cwd=repo_root,
+        input=("\0".join(rel_paths) + "\0").encode("utf-8"),
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return {}
+    fields = result.stdout.decode("utf-8", errors="surrogateescape").split("\0")
+    attributes = {}
+    for index in range(0, len(fields) - 2, 3):
+        rel, attribute, value = fields[index:index + 3]
+        if attribute == "text":
+            attributes[repo_root / rel] = value
+    return attributes
+
+
+def _canonical_file_bytes(data: bytes, text_attribute: str) -> bytes:
+    """Normalize checkout newlines only for content Git treats as text."""
+    is_text = text_attribute == "set" or (
+        text_attribute != "unset" and b"\0" not in data
+    )
+    return data.replace(b"\r\n", b"\n") if is_text else data
+
+
+def hash_path(path: Path, *, repo_root: Path = REPO_ROOT) -> str:
+    """Hash a file or a directory's Git-visible files and their contents.
+
+    Ignored artifacts such as virtual environments, logs and build output do
+    not invalidate shared baselines. Missing paths use a fixed sentinel.
+    """
     h = hashlib.sha256()
     if not path.exists():
         h.update(b"__MISSING__")
         return h.hexdigest()
     if path.is_file():
-        h.update(path.read_bytes())
+        attributes = _git_text_attributes([path], repo_root)
+        h.update(_canonical_file_bytes(path.read_bytes(), attributes.get(path, "unspecified")))
         return h.hexdigest()
-    # Directory: hash sorted relative file list, then each file's content, for stability.
-    # Exclude this scripts/ folder itself so a source path (e.g. ".ai") can never hash
-    # sources.json's own bytes — that would make --update self-invalidate on every run.
-    files = sorted(
-        p for p in path.rglob("*")
-        if p.is_file() and SCRIPT_DIR not in p.parents
-    )
+    files = _git_visible_files(path, repo_root)
+    if files is None:
+        files = sorted(
+            p for p in path.rglob("*")
+            if p.is_file() and SCRIPT_DIR not in p.parents
+        )
+    attributes = _git_text_attributes(files, repo_root)
     for f in files:
-        h.update(str(f.relative_to(path)).encode("utf-8"))
-        h.update(f.read_bytes())
+        h.update(f.relative_to(path).as_posix().encode("utf-8"))
+        h.update(
+            _canonical_file_bytes(f.read_bytes(), attributes.get(f, "unspecified"))
+            if f.is_file() else b"__MISSING__"
+        )
     return h.hexdigest()
 
 

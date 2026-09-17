@@ -1,82 +1,69 @@
 # Technology Stack
 
-> **2026-07-10 — Hardening Sync ([ADR-0005](../decisions/0005-architecture-hardening-refactor.md)).** Frontend versions below are stale: `web/` is now **Next.js 16** and **ESLint 9 (flat config)**, not 15.x / 8.x. Backend: `LoggerUtils` moved from `app/utils/` to `app/core/logger_utils.py`; no runtime dependencies were added in this refactor.
-
 ## Purpose
-List the concrete technologies, versions, and package managers in use, in one place, so an AI assistant doesn't have to reconstruct this from multiple config files.
+
+Record the technologies and declared versions currently used by the product.
 
 ## Scope
-Runtime and tooling versions currently declared in the repository's own config files (`pyproject.toml`, `package.json`, Dockerfiles, `docker-compose.yml`). Does not include tools the root README lists as future/planned (see [system-overview.md](system-overview.md) for that distinction).
+
+Backend, web, workers, persistence and local tooling. Version constraints come from manifests and images, not installed developer environments.
 
 ## AI Usage Guidance
-Use this as the source of truth for "what version/framework are we on" instead of inferring from import statements. When adding a dependency, check here first for an existing package that already covers the need.
+
+Use project manifests as final authority before adding a dependency. Prefer existing libraries and patterns.
 
 ## Main Content
 
-### Backend — `mcp-server/`
+### Backend
 
-| Layer | Technology | Version | Source |
-|---|---|---|---|
-| Language | Python | ≥3.12 (`.python-version` = 3.12) | `pyproject.toml`, `.python-version` |
-| Package manager | `uv` | — | `uv.lock`, Dockerfile |
-| Web framework | FastAPI | ≥0.136.3 | `pyproject.toml` |
-| MCP exposure | `fastapi-mcp` | ≥0.4.0 | `pyproject.toml` |
-| ASGI server | `uvicorn` | — | `pyproject.toml` |
-| Config | `pydantic-settings` | — | `pyproject.toml` |
-| Postgres driver | `psycopg2-binary` | — | `pyproject.toml` |
-| AWS SDK | `boto3` | — | `pyproject.toml` (DynamoDB backend) |
-| JWT | `pyjwt` | — | `pyproject.toml` (declared, unused — see [security-map.md](security-map.md)) |
-| Password hashing | `bcrypt` | — | `pyproject.toml` (declared, unused) |
-| ZAP SDK | `zaproxy` | — | `pyproject.toml` |
-| Container base | `python:3.12-slim` | — | `docker/fastapi/Dockerfile` |
-
-### Frontend — `web/`
-
-| Layer | Technology | Version | Source |
-|---|---|---|---|
-| Framework | Next.js | ^15.3.4 (App Router) | `package.json` |
-| UI library | React / React DOM | ^19.1.0 | `package.json` |
-| Language | TypeScript | ^5.8.3 | `package.json` (devDependency) |
-| Package manager | `bun` | — | `bun.lock` present |
-| Styling | Tailwind CSS | ^3.4.17 | `package.json` |
-| Component primitives | Radix UI (via shadcn/ui) | various | `package.json`, `components.json` |
-| Animation | GSAP + `@gsap/react` | — | `package.json` |
-| Icons | `lucide-react` | — | `package.json` |
-| Theming | `next-themes` | — | `package.json` |
-| Linting | ESLint (`eslint-config-next`) | ^8.57.1 | `package.json` |
-| Formatting | Prettier + `prettier-plugin-tailwindcss` | — | `package.json` |
-
-### Data Storage
-
-| Store | Version/Image | Role |
+| Technology | Declared version/range | Use |
 |---|---|---|
-| PostgreSQL | `postgres:16-alpine` | One of two pluggable persistence backends (`DATABASE_PROVIDER=POSTGRES`) |
-| DynamoDB | AWS or local (`DYNAMODB_ENDPOINT_URL`) | The other pluggable backend (`DATABASE_PROVIDER=DYNAMODB`) |
+| Python | `>=3.12` | Backend and AIOS tooling |
+| FastAPI | `>=0.136.3` | HTTP API |
+| Uvicorn | `>=0.49.0` | ASGI server |
+| FastAPI-MCP | `>=0.4.0` | MCP exposure |
+| Pydantic Settings | `>=2.14.1` | Typed configuration |
+| HTTPX | `>=0.28.0` | Async HTTP integrations/providers |
+| boto3 | `>=1.38.0` | AWS Bedrock and DynamoDB access |
+| psycopg2-binary | `>=2.9.10` | PostgreSQL access |
+| PyYAML | `>=6.0.3` | LLM provider/model configuration loading |
+| zaproxy | `>=0.5.0` | OWASP ZAP client |
+| PyJWT / bcrypt | `>=2.13.0` / `>=5.0.0` | Security primitives present in dependencies |
 
-No ORM — raw `psycopg2` and `boto3` calls through a hand-written DAO layer (see [database-map.md](database-map.md)).
+The project uses `uv.lock`; tests and quality tooling are declared in the backend's development configuration/lockfile rather than being runtime requirements.
 
-### Security Tooling
+### Web
 
-| Tool | Status |
+| Technology | Declared version/range |
 |---|---|
-| OWASP ZAP (`zaproxy/zap-stable` image) | Implemented — see [security-map.md](security-map.md) |
-| Semgrep, Gitleaks, Trivy, Checkov, MobSF, OSV-Scanner, Schemathesis, Playwright, Selenium, JMeter | Not implemented — named in root README as MVP/target tools only |
+| Next.js | `^16.2.10` |
+| React / React DOM | `^19.2.7` |
+| TypeScript | `^5.9.3` |
+| Tailwind CSS | `^3.4.19` |
+| ESLint | `^9.39.4` |
+| GSAP | `^3.15.0` |
+| Radix UI | Component packages at current declared ranges |
 
-### Infrastructure
+The web scripts are `dev`, `build`, `start`, `lint`, and `typecheck`.
 
-| Aspect | Technology |
+### Runtime infrastructure
+
+| Technology | Use |
 |---|---|
-| Local orchestration | Docker Compose (`mcp-server/docker-compose.yml`) |
-| Container runtime | Docker |
-| Orchestration at scale | None yet (no Kubernetes/Helm — see [deployment-map.md](deployment-map.md)) |
-| CI/CD | None yet |
+| Docker Compose | Local multi-service orchestration |
+| PostgreSQL | Durable operations and conversations |
+| DynamoDB | Alternative operation store |
+| OWASP ZAP stable image | DAST workers |
+| Apache JMeter 5.6.3 / Temurin 21 | Performance workers |
+| Ollama, OpenAI-compatible APIs, AWS Bedrock | LLM providers |
+| Slack Web API | Optional notifications |
 
-### Mobile
-
-No technology chosen yet — `mobile/android/` and `mobile/apple/` are empty scaffolds with no project files, dependency manifests, or build config of any kind.
+No Kubernetes, Terraform, Helm or application observability SDK is evidenced in the repository.
 
 ## Related Documents
-[dependency-graph.md](dependency-graph.md) · [deployment-map.md](deployment-map.md) · [project-map.md](project-map.md)
+
+[deployment-map.md](deployment-map.md) · [dependency-graph.md](dependency-graph.md) · [conventions.md](conventions.md)
 
 ## Last Updated
-2026-07-03 — verified against commit `10bd79b`.
+
+2026-09-17 — dependency manifests and container definitions re-reviewed at `3632394`.

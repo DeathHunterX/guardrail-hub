@@ -5,11 +5,13 @@
 **Constraints honoured:** no redesign, no new architectural concepts, no new ADRs. Every invariant below is already ratified; nothing here invents one.
 **Deliverable type:** plan. Implementation follows the roadmap in §8.
 
+> **Status update — 2026-08-28:** the historical baseline below no longer describes automation coverage exactly. CI now runs `aios check` on pushes and pull requests, and that gate includes domain/runtime boundaries plus Intelligence drift. The remaining fitness-test matrix has not been re-audited; GitHub branch protection must still mark the workflow status as required.
+
 ---
 
 ## 0. The finding that shapes everything
 
-Measured today:
+Measured on 2026-07-20:
 
 | | Count |
 |---|---|

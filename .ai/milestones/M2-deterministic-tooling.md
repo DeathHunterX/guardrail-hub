@@ -51,7 +51,7 @@ All via CLI invocation — no hand checks:
 
 - **M1 open question still open (now with a provisional handling): guardrail rule granularity.** `schema-map.json` maps `guardrails/core.md → base` and `guardrails/**/*.md → guardrail` as a placeholder. M3 must decide whether core rules live in `core.md`'s body or as per-rule files, then update the map. Flagged for M3, not resolved here.
 - **`index` and `impact` are proven by logic (selftest) but not yet by real repo data**, because no category units or inter-unit dependencies exist yet. M3 is their first real exercise — watch for surprises when the first Standard/Agent lands.
-- **No CI to run `aios check` automatically.** It is manual-invoke until the product repo gains CI ([intelligence/deployment-map.md](../intelligence/deployment-map.md) confirms none exists). Expected, not a defect; wiring `aios check` as a non-blocking CI step is the natural task once a pipeline exists.
+- **Resolved 2026-08-28:** [`.github/workflows/aios-check.yml`](../../.github/workflows/aios-check.yml) now runs `aios check` on pushes and pull requests, including Intelligence drift. Repository branch protection/rulesets still need to require the emitted `AIOS Check` status.
 - **Latent from M0/M1, unchanged:** lifecycle-restatement debt (6 modules) and the `Retired` terminology note. Neither blocks M3.
 
 ## 8. Prerequisites Met for M3

@@ -18,7 +18,7 @@ validated_against: [standards/architecture/frontend-component-layering@2.0.0, st
 
 # Frontend Agent
 
-> The second Capability Agent — proving the Agent contract generalizes beyond Backend without any change to the contract, schema, or routing. Domain: Frontend (`web/`). Authored in M5; status `Review` pending Acceptance. Frontmatter is the machine half ([schema/agent.schema.json](../../schema/agent.schema.json)); the 13-field contract below is the human half ([agents/README.md](../README.md#the-agent-contract)).
+> The second Capability Agent — proving the Agent contract generalizes beyond Backend without any change to the contract, schema, or routing. Domain: Frontend (`web/`). Active since M5. Frontmatter is the machine half ([schema/agent.schema.json](../../schema/agent.schema.json)); the 13-field contract below is the human half ([agents/README.md](../README.md#the-agent-contract)).
 
 | Field | Value |
 |---|---|

@@ -19,6 +19,7 @@ from app.routers.endpoints import MCP_OPERATIONS, tools_router
 from app.routers.public.health_router import health_router
 from app.routers.public.jmeter_worker_router import jmeter_worker_router
 from app.routers.public.worker_directory_router import worker_directory_router
+from app.routers.public.conversation_router import conversation_router
 from app.routers.public.zap_worker_router import (
     zap_worker_legacy_router,
     zap_worker_router,
@@ -62,7 +63,8 @@ async def lifespan(_app):
     # happen — which, for uvicorn, is exactly "this lifespan startup returns".
     from app.core.startup import run_startup_sequence
 
-    startup = run_startup_sequence(settings)
+    startup = await run_startup_sequence(settings)
+    _app.state.conversation_service = startup.conversation_service
 
     reporter = None
     try:
@@ -144,6 +146,24 @@ async def lifespan(_app):
         except Exception:  # noqa: BLE001 - shutdown must never crash teardown
             pass
 
+    # 4) Stop the intelligence registry runtime (Phase 2). Runs regardless
+    #    of DATABASE_PROVIDER so the registry is symmetric across modes.
+    #    No-op today but kept for future phases (hot-reload, SDK lifetime).
+    if startup is not None:
+        # Phase 7: stop all providers before shutting down the registry runtime.
+        # Preserves shutdown ordering: providers -> registry.
+        try:
+            if startup.provider_manager is not None:
+                await startup.provider_manager.stop()
+        except Exception:  # noqa: BLE001 - shutdown must never crash teardown
+            pass
+
+        try:
+            if startup.registry_runtime is not None:
+                startup.registry_runtime.stop()
+        except Exception:  # noqa: BLE001 - shutdown must never crash teardown
+            pass
+
     try:
         if reporter is not None:
             from app.services.platform.lifecycle import report_shutdown
@@ -179,6 +199,7 @@ app.include_router(zap_worker_router)
 app.include_router(zap_worker_legacy_router)
 app.include_router(jmeter_worker_router)
 app.include_router(tools_router)
+app.include_router(conversation_router)
 
 # Static files — generic public asset server (reports, future tools UI, etc.)
 _public_dir = Path(ReportPaths.BASE_DIR)

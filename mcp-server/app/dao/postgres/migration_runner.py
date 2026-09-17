@@ -31,7 +31,7 @@ _TRACKING_TABLE_SQL = """
 """
 
 # Tables the application depends on existing before it accepts requests.
-REQUIRED_TABLES = ("operations",)
+REQUIRED_TABLES = ("operations", "conversations")
 
 _logger = MCPLogger("PostgresMigrationRunner")
 

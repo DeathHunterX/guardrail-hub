@@ -15,6 +15,7 @@ with settings and the real DAO when one exists.
 """
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from app.constants.batch import BatchType
@@ -247,6 +248,36 @@ def build_zap_evaluation_service(operation_service, *, scan_runner=None):
 
         scan_runner = ZapScanRunner()
     return EvaluationService(operation_service, scan_runner)
+
+
+def build_registry_runtime(config=None):
+    """Construct the :class:`RegistryRuntime` from settings.
+
+    Builds the runtime from ``llm.yaml`` (the only canonical LLM configuration
+    source) and does not call ``start()``. The bootstrap layer
+    (``app/core/startup.py``) calls ``start()`` so the catalog is built before
+    the HTTP server accepts traffic.
+
+    Args:
+        config: Settings object; defaults to ``app.core.config.settings``
+            (lazy import to keep this module light).
+
+    Returns:
+        A configured but unstarted :class:`RegistryRuntime`.
+    """
+    if config is None:
+        from app.core.config import settings as config
+
+    from app.intelligence.runtime import (
+        RegistryRuntime,
+        RegistryRuntimeSettings,
+    )
+
+    settings = RegistryRuntimeSettings.from_mapping({
+        "registry_llm_config_path": getattr(config, "registry_llm_config_path", None),
+        "registry_require_files": getattr(config, "registry_require_files", True),
+    })
+    return RegistryRuntime(settings=settings)
 
 
 def build_notification_flow_from_settings(
@@ -552,3 +583,111 @@ def build_operation_notification_flow_from_settings(
         dispatcher=dispatcher,
         notifier=notifier,
     )
+
+# ----------------------------------------------------------------------
+# Phase 5 — Conversation Context
+# ----------------------------------------------------------------------
+
+
+def build_conversation_service(
+    *,
+    registry_runtime,
+    event_dispatcher,
+    dao=None,
+):
+    """Build Phase 5 ConversationService and its associated runtime dependencies.
+
+    This function follows the same functional-assembly pattern as the rest of
+    bootstrap.py: it receives all its dependencies and returns a wiring graph.
+    It is testable with no mocks beyond injected fakes.
+
+    The store adapter is selected from the database provider:
+      - "POSTGRES"  -> PostgresConversationStore
+      - "NONE"      -> InMemoryConversationStore  (testing / no-persistence)
+
+    The credential backend is selected by build_credential_backend() from
+    GUARDRAILHUB_CREDENTIAL_BACKEND (platform-default for Windows, 'file' or 'env'
+    on Linux/Darwin). The backend is wrapped in a CredentialStore and wired into
+    the ProviderManager so api-key providers can resolve their credentials at
+    startup. A ProviderFactory is constructed and all known adapters are registered.
+
+    Args:
+        registry_runtime: The started RegistryRuntime (provides the frozen catalog).
+        event_dispatcher: An InProcessEventDispatcher (EventPublisher) for audit.
+        dao: Optional BaseOperationDAO. When None, InMemoryConversationStore is used
+            (useful for tests or DATABASE_PROVIDER=NONE).
+
+    Returns:
+        A tuple of (ConversationStore, ConversationService, ProviderManager).
+
+    Raises:
+        CredentialBackendError: When build_credential_backend() cannot select a
+            supported backend for this platform and mode combination.
+    """
+    from app.core.config import settings
+    from app.core.events.dispatcher import InProcessEventDispatcher
+    from app.intelligence.conversation.infrastructure.in_memory_store import (
+        InMemoryConversationStore,
+    )
+    from app.intelligence.credentials import CredentialStore
+    from app.intelligence.credentials.backend_factory import (
+        build_credential_backend,
+        build_provider_env_var_names,
+    )
+    from app.intelligence.inference.services.llm_service import LLMService
+    from app.intelligence.providers import ProviderFactory
+    from app.intelligence.providers.adapters import register_all_adapters
+    from app.intelligence.providers.provider_manager import ProviderManager
+    from app.services.conversation.conversation_service import ConversationService
+
+    # RegistryRuntime.start() must have been called before this function.
+    catalog = registry_runtime.catalog
+
+    # The CredentialStore namespace is always provider_id. Only the env backend
+    # projects provider IDs to physical environment-variable names.
+    env_var_names = build_provider_env_var_names(catalog.iter_providers())
+
+    # Build the credential store from the runtime backend.
+    # build_credential_backend() reads GUARDRAILHUB_CREDENTIAL_BACKEND and
+    # GUARDRAILHUB_SECRETS_DIR and selects the appropriate backend. It raises
+    # CredentialBackendError fail-closed on unsupported platform+mode combinations.
+    backend = build_credential_backend(env_var_names=env_var_names)
+    credential_store = CredentialStore(backend)
+
+    # Build the provider factory and register all known adapters.
+    factory = ProviderFactory()
+    register_all_adapters(factory)
+
+    # Build LLMService from the already-started registry runtime.
+    provider_manager = ProviderManager(
+        factory,
+        catalog,
+        credential_store=credential_store,
+    )
+    # Note: provider_manager.start() must be called by the caller before
+    # the ConversationService is used for inference.  This function only
+    # assembles the wiring; lifecycle management is the caller's responsibility.
+    llm_service = LLMService(
+        provider_manager=provider_manager,
+        catalog=catalog,
+    )
+
+    # Select the ConversationStore adapter based on database provider.
+    if dao is not None:
+        # DAO is present; use the PostgresConversationStore adapter.
+        # (DAO is passed as a signal that a real DB is available.)
+        from app.intelligence.conversation.infrastructure.dao_store import (
+            PostgresConversationStore,
+        )
+        store: "ConversationStore" = PostgresConversationStore()
+    else:
+        # No DAO (DATABASE_PROVIDER=NONE or testing): use in-memory store.
+        store = InMemoryConversationStore()
+
+    conversation_service = ConversationService(
+        store=store,
+        llm_service=llm_service,
+        publisher=event_dispatcher,
+    )
+
+    return store, conversation_service, provider_manager

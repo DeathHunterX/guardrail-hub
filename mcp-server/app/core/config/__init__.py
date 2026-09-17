@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from app.core.config._app import AppMixin
 from app.core.config._auth import AuthMixin
 from app.core.config._database import DatabaseMixin
+from app.core.config._intelligence import IntelligenceMixin
 from app.core.config._security import SecurityMixin
 from app.core.config._server import ServerMixin
 from app.core.config._slack import SlackMixin
@@ -29,6 +30,7 @@ class Settings(
     AppMixin,
     AuthMixin,
     DatabaseMixin,
+    IntelligenceMixin,
     SecurityMixin,
     ServerMixin,
     ZapMixin,

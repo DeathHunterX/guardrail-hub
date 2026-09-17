@@ -17,7 +17,8 @@ Commands:
     index      (Re)generate <module>/<category>/INDEX.md from unit frontmatter.
     impact     Reverse-dependency + Impact Report for a changed unit.
     lint       Enforce the line-count ceiling on routing files.
-    check      Run validate + links + lint as one CI gate (nonzero on any fail).
+    intelligence-drift  Check Intelligence documents against Git-visible sources.
+    check      Run all deterministic checks as one CI gate (nonzero on any fail).
     selftest   Prove the impact/validation engines on synthetic fixtures.
 """
 
@@ -25,6 +26,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -611,12 +613,33 @@ def cmd_arch(root, verbose=True):
     return 1 if violations else 0
 
 
+def cmd_intelligence_drift(root, verbose=True):
+    """Run the Intelligence source-baseline check through the unified CLI."""
+    script = root / "intelligence" / "scripts" / "check_drift.py"
+    if not script.is_file():
+        print("intelligence-drift: FAIL (missing %s)" % script)
+        return 1
+    result = subprocess.run(
+        [sys.executable, str(script)],
+        cwd=root.parent,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.stdout:
+        print(result.stdout.rstrip())
+    if result.stderr:
+        print(result.stderr.rstrip(), file=sys.stderr)
+    return result.returncode
+
+
 def cmd_check(root):
     print("== validate =="); rc1 = cmd_validate(root, verbose=False)
     print("== links ==");    rc2 = cmd_links(root, verbose=False)
     print("== lint ==");     rc3 = cmd_lint(root, verbose=False)
     print("== arch ==");     rc4 = cmd_arch(root, verbose=False)
-    rc = rc1 | rc2 | rc3 | rc4
+    print("== intelligence-drift =="); rc5 = cmd_intelligence_drift(root, verbose=False)
+    rc = rc1 | rc2 | rc3 | rc4 | rc5
     print("\ncheck: %s" % ("PASS" if rc == 0 else "FAIL"))
     return rc
 
@@ -752,6 +775,7 @@ def main(argv=None):
     mp = sub.add_parser('impact'); mp.add_argument('unit'); mp.add_argument('--change', choices=['major', 'minor', 'patch'], default='major')
     sub.add_parser('lint')
     sub.add_parser('arch')
+    sub.add_parser('intelligence-drift')
     sub.add_parser('check')
     sub.add_parser('selftest')
     args = p.parse_args(argv)
@@ -769,6 +793,8 @@ def main(argv=None):
         return cmd_lint(root)
     if args.cmd == 'arch':
         return cmd_arch(root)
+    if args.cmd == 'intelligence-drift':
+        return cmd_intelligence_drift(root)
     if args.cmd == 'check':
         return cmd_check(root)
     if args.cmd == 'selftest':
